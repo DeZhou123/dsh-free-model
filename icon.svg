@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="WorkBuddy lanes">
+  <rect x="4" y="4" width="56" height="56" rx="14" fill="#2a3550"/>
+  <path d="M18 24h20a6 6 0 0 1 0 12H26" fill="none" stroke="#7fa0ff" stroke-width="4" stroke-linecap="round"/>
+  <path d="M18 24v18" fill="none" stroke="#c8d6ff" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="18" cy="24" r="3.4" fill="#ffd479"/>
+  <circle cx="46" cy="42" r="3.4" fill="#7fe0b0"/>
+  <path d="M46 42v-8" fill="none" stroke="#7fe0b0" stroke-width="3.4" stroke-linecap="round"/>
+</svg>

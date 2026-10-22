@@ -1,0 +1,65 @@
+{
+  "name": "dsh-free-model",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Free-model console for DSH: CodeBuddy + WorkBuddy account lanes and the local OpenCode free tier in one settings page. Runs standalone; shares the account pool with dsh-our-free-model when present.",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "icon": "./icon.svg",
+  "files": [
+    "index.js",
+    "client.js",
+    "src",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "check": "node --check index.js && node --check client.js && node --check src/opencode/client.js && node --check src/opencode/adapter.js && node --check src/opencode/service.js",
+    "test": "node --import ./test/hooks.mjs test/smoke.mjs && node test/render.mjs",
+    "test:e2e": "node --import ./test/hooks.mjs test/e2e-opencode.mjs",
+    "test:host": "node test/host-check.mjs && node test/host-apply.mjs",
+    "test:service": "node test/service-start.mjs"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "free-model",
+    "workbuddy",
+    "codebuddy",
+    "opencode",
+    "tencent"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-credentials": "^0.1.2-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-llm": "^0.1.2-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.1"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DeZhou123/dsh-free-model.git"
+  },
+  "homepage": "https://github.com/DeZhou123/dsh-free-model#readme",
+  "bugs": {
+    "url": "https://github.com/DeZhou123/dsh-free-model/issues"
+  }
+}
