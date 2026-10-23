@@ -8,7 +8,7 @@
  * 1. **不能假设 PATH 里有 `opencode`**。本机的 CLI 是手工装到
  *    `E:\06AI\08OpenCode\bin\opencode.exe`（`E:\06AI` 安装规范），
  *    桌面版则在 `%LOCALAPPDATA%\Programs\@opencodedesktop\...`。故探测顺序：
- *    显式配置 → 环境变量 → 已知安装位置 → PATH。
+ *    显式配置 → 环境变量 → 已知安装位置 → 桌面版目录 → PATH。
  * 2. **不能重复起**。先探 `/global/health`；活着就直接用（可能是用户自己
  *    开的桌面版 sidecar）。
  * 3. **不能让它随父进程死掉**。DSH 宿主重启不该带走一个正在跑的服务；
@@ -23,8 +23,8 @@
  * @module src/opencode/service
  */
 
-import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { spawn, execFileSync } from 'node:child_process'
+import { existsSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { OpenCodeClient } from './client.js'
@@ -42,6 +42,10 @@ const KNOWN_PATHS = [
 /**
  * 探测 opencode 可执行文件。
  *
+ * 桌面版把二进制放在 `%LOCALAPPDATA%\Programs\@opencodedesktop\<version>\...`，
+ * 版本号会变 —— 所以**逐层扫**而不是拼死一个路径。早先的实现只把那个目录
+ * 本身当候选（不是 .exe），等于白写。
+ *
  * @param {string} [configured] 用户显式配置的路径
  * @returns {string | undefined}
  */
@@ -51,14 +55,35 @@ export function resolveBinary(configured) {
   const fromEnv = process.env.OPENCODE_BIN
   if (typeof fromEnv === 'string' && fromEnv.trim() !== '') candidates.push(fromEnv.trim())
   for (const known of KNOWN_PATHS) candidates.push(known)
-  // 桌面版：版本号会变，故用 glob 式遍历一级目录。
-  const desktopRoot = join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'Programs', '@opencodedesktop')
-  if (existsSync(desktopRoot)) candidates.push(desktopRoot)
+  candidates.push(...desktopBinaries())
   for (const candidate of candidates) {
-    if (candidate.endsWith('.exe') && existsSync(candidate)) return candidate
+    if (candidate.toLowerCase().endsWith('.exe') && existsSync(candidate)) return candidate
   }
   // PATH 兜底：交给 spawn 自己解析（不在这里做 which）。
   return 'opencode'
+}
+
+/** 桌面版目录下的一级 .exe（版本号会变，故逐层扫两层）。 */
+function desktopBinaries() {
+  const found = []
+  const root = join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'Programs', '@opencodedesktop')
+  if (!existsSync(root)) return found
+  const scan = (dir, depth) => {
+    if (depth > 2) return
+    let entries = []
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name)
+      if (entry.isFile() && entry.name.toLowerCase().endsWith('.exe')) found.push(full)
+      else if (entry.isDirectory()) scan(full, depth + 1)
+    }
+  }
+  scan(root, 0)
+  return found
 }
 
 /**
@@ -88,6 +113,8 @@ export class OpenCodeService {
     this.clientInstance = undefined
     /** 最近一次失败原因（给页面显示，而不是只写日志）。 */
     this.lastError = undefined
+    /** `opencode --version` 的结果（进程没起时也能告诉用户「装的是哪个版本」）。 */
+    this.binaryVersion = undefined
   }
 
   /** 当前端口对应的客户端（懒建，端口变了自动重建）。 */
@@ -103,7 +130,23 @@ export class OpenCodeService {
   }
 
   baseUrl() {
-    return `http://127.0.0.1:${this.port}`
+    return 'http://127.0.0.1:' + this.port
+  }
+
+  /**
+   * 二进制自身的版本（`opencode --version`）。
+   *
+   * 页面要在**服务没起**时也能说清「你装的是 1.19.3，它有没有 /event 接口」——
+   * 只报「进程未运行」会让用户以为装错了。
+   */
+  probeBinaryVersion() {
+    if (this.binaryVersion !== undefined) return this.binaryVersion
+    try {
+      const out = execFileSync(this.binary, ['--version'], { timeout: 8000, windowsHide: true, encoding: 'utf8' })
+      const version = String(out).trim().split(/\r?\n/)[0]
+      if (version !== '') this.binaryVersion = version
+    } catch { /* 二进制不在 PATH / 拒绝执行：保持 undefined */ }
+    return this.binaryVersion
   }
 
   /** 服务是否在跑（含版本号）。 */
@@ -119,6 +162,8 @@ export class OpenCodeService {
         url: this.baseUrl(),
         managed: this.child !== null,
         binary: this.binary,
+        sse: client.sseEnabled === true,
+        failures: client.failures(),
       }
     }
     // 端口没答话时，试一下别的端口是否已有实例（用户可能手动起在 4097）。
@@ -129,6 +174,7 @@ export class OpenCodeService {
       url: this.baseUrl(),
       managed: this.child !== null,
       binary: this.binary,
+      binaryVersion: this.probeBinaryVersion(),
       error: health.error,
     }
   }
@@ -154,15 +200,15 @@ export class OpenCodeService {
       }
       const spawned = this.spawnAt(port)
       if (spawned.error !== undefined) {
-        lastError.push(`${port}: ${spawned.error}`)
+        lastError.push(port + ': ' + spawned.error)
         continue
       }
-      // 等它开始监听：最多 15 秒（Bun 单文件启动约 1-2 秒，冷启动更久）。
-      const ready = await this.waitReady(client, 15_000)
+      // 等它开始监听：最多 20 秒（Bun 单文件启动约 1-2 秒，冷启动/杀软扫描更久）。
+      const ready = await this.waitReady(client, 20_000)
       if (ready) {
         return { running: true, port, started: true }
       }
-      lastError.push(`${port}: 启动后 15 秒内没有响应`)
+      lastError.push(port + ': 启动后 20 秒内没有响应')
       this.stop()
     }
     this.lastError = lastError.join('；')
@@ -179,7 +225,7 @@ export class OpenCodeService {
       })
       child?.unref?.()
       this.child = child
-      this.logger?.info?.(`[dsh-free-model] opencode serve 已启动（pid=${child?.pid ?? '?'} port=${port}）`)
+      this.logger?.info?.('[dsh-free-model] opencode serve 已启动（pid=' + (child?.pid ?? '?') + ' port=' + port + '）')
       return { child }
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) }

@@ -203,10 +203,19 @@ function makeOpenCodeService({ running = true, models = [] } = {}) {
   let isRunning = running
   const client = {
     baseUrl: 'http://127.0.0.1:4096',
+    // ⚠️ 目录来自 providers()（/config/providers），listModels 只做过滤。
+    // 替身必须同时给出两者，否则 index.js 的「先取 provider 列表再过滤」会空转。
+    async providers() {
+      return [{ id: 'opencode', name: 'OpenCode', source: 'custom', models: [] }]
+    },
     async listModels() { return models },
     async health() { return isRunning ? { healthy: true, version: '1.19.3' } : { healthy: false, error: 'ECONNREFUSED' } },
-    async sessionFor(key) { return 'ses_test_' + key.replace(/\W/g, '_') },
+    async sessionFor(key, modelKey) { return 'ses_test_' + String(key) + '_' + String(modelKey ?? '').replace(/\W/g, '_') },
     forgetSession() {},
+    sseEnabled: true,
+    failures() { return {} },
+    noteFailure() {},
+    clearFailure() {},
     async *run(_sid, options) {
       yield { kind: 'reasoning', text: '想一下' }
       yield { kind: 'text', text: '你好' }
@@ -228,8 +237,8 @@ function makeOpenCodeService({ running = true, models = [] } = {}) {
 }
 
 const opencodeModels = [
-  { id: 'opencode/big-pickle', providerID: 'opencode', modelID: 'big-pickle', name: 'Big Pickle', contextWindow: 200_000, maxOutputTokens: 32_000 },
-  { id: 'opencode/glm-5.3-flash-free', providerID: 'opencode', modelID: 'glm-5.3-flash-free', name: 'GLM 5.3 Flash (free)', contextWindow: 200_000, maxOutputTokens: 32_000 },
+  { id: 'opencode/big-pickle', providerID: 'opencode', modelID: 'big-pickle', name: 'Big Pickle', contextWindow: 200_000, maxOutputTokens: 32_000, vision: false },
+  { id: 'opencode/glm-5.3-flash-free', providerID: 'opencode', modelID: 'glm-5.3-flash-free', name: 'GLM 5.3 Flash (free)', contextWindow: 200_000, maxOutputTokens: 32_000, vision: true },
 ]
 
 /**
@@ -502,8 +511,11 @@ await checkAsync('opencode 目录来自本地服务', async () => {
   const rows = await opencode.listModels('opencode')
   assert.equal(rows.length, 2)
   assert.deepEqual(rows.map((row) => row.id).sort(), ['opencode/big-pickle', 'opencode/glm-5.3-flash-free'])
-  // ⚠️ 纯文本车道：**不能**声明 image 模态，否则宿主会把图片投给它。
-  for (const row of rows) assert.deepEqual(row.inputModalities, ['text'])
+  // ⚠️ 能力来自上游声明：能看图的模型必须声明 image 模态，纯文本的**不能**声明
+  // （否则宿主会把图片投给它，上游再回一句「我看不了图」）。
+  const byId = new Map(rows.map((row) => [row.id, row]))
+  assert.deepEqual(byId.get('opencode/big-pickle').inputModalities, ['text'])
+  assert.deepEqual(byId.get('opencode/glm-5.3-flash-free').inputModalities, ['text', 'image'])
 })
 
 await checkAsync('opencode resolveModel 带上下文与输出上限', async () => {
@@ -511,7 +523,7 @@ await checkAsync('opencode resolveModel 带上下文与输出上限', async () =
   assert.equal(resolved.context.contextWindow, 200_000)
   assert.equal(resolved.defaultMaxTokens, 32_000)
   assert.deepEqual(resolved.inputModalities, ['text'])
-  // 纯文本车道不该声明思考档位：opencode 的接口没有这个入参。
+  // 无工具车道不该声明思考档位：opencode 的接口没有这个入参。
   assert.equal(resolved.reasoning, undefined)
 })
 
@@ -550,6 +562,21 @@ await checkAsync('opencode 只发最后一条 user 消息（历史由 session �
   ])
   assert.equal(folded.prompt, '第二轮')
   assert.equal(folded.system, '你是助手')
+  // 历史里的图片不再重发：只在 opencode 的 session 里留一份，重复发等于重复计费。
+  assert.deepEqual(folded.images, [])
+})
+
+await checkAsync('foldMessages 只收本轮图片', async () => {
+  const { foldMessages } = await import(new URL('../src/opencode/adapter.js', import.meta.url).href)
+  const folded = foldMessages([
+    { role: 'user', content: [{ type: 'image', attachment: { attachmentId: 'old' } }] },
+    { role: 'assistant', content: [{ type: 'text', text: '看到了' }] },
+    { role: 'user', content: [
+      { type: 'text', text: '这张呢' },
+      { type: 'image', attachment: { attachmentId: 'new' } },
+    ] },
+  ])
+  assert.deepEqual(folded.images.map((item) => item.attachment.attachmentId), ['new'])
 })
 
 await checkAsync('opencode 服务未运行时给出可操作错误', async () => {
@@ -575,7 +602,8 @@ await checkAsync('/opencode/status 报进程与路由两件事', async () => {
   assert.equal(res.status, 200)
   assert.equal(res.payload.lane.id, 'opencode')
   assert.equal(res.payload.lane.kind, 'service')
-  assert.equal(res.payload.lane.capability, 'text-only')
+  // 能力标签从 text-only 改成 no-tools：这条车道能看图，缺的只有工具调用。
+  assert.equal(res.payload.lane.capability, 'no-tools')
   assert.equal(res.payload.lane.mounted, true)
   assert.equal(res.payload.lane.route, 'registered')
   assert.equal(res.payload.service.running, true)
@@ -601,7 +629,7 @@ await checkAsync('summary 把服务型车道单独列出、不混进账号型 pr
   assert.equal(res.payload.products.length, 2, '账号型车道应只有两条')
   assert.equal(res.payload.serviceLanes.length, 1)
   assert.equal(res.payload.serviceLanes[0].id, 'opencode')
-  assert.equal(res.payload.serviceLanes[0].capability, 'text-only')
+  assert.equal(res.payload.serviceLanes[0].capability, 'no-tools')
 })
 
 await checkAsync('服务型车道拒绝模型开关（不写进账号池）', async () => {

@@ -567,6 +567,16 @@ async function opencodeStatus(deps) {
       modelError = error instanceof Error ? error.message : String(error)
     }
   }
+  // 按 provider 分组：用户要能分辨「这 9 个是 opencode 免费层，那 706 个是我
+  // 自己挂在 opencode 里的 OFM 网关」。混成一个数字，排错时无从下手。
+  const providers = new Map()
+  for (const row of models) {
+    const id = String(row.providerID ?? '?')
+    const bucket = providers.get(id) ?? { id, count: 0, vision: 0 }
+    bucket.count += 1
+    if (row.vision === true) bucket.vision += 1
+    providers.set(id, bucket)
+  }
   return {
     lane: {
       id: lane.id,
@@ -580,7 +590,10 @@ async function opencodeStatus(deps) {
     service: status,
     models: {
       count: models.length,
-      sample: models.slice(0, 12).map((row) => ({ id: row.id, name: row.name })),
+      // 能看图的模型数：这条车道**不是**纯文本，只是没有工具调用能力。
+      vision: models.filter((row) => row.vision === true).length,
+      providers: [...providers.values()].sort((a, b) => b.count - a.count),
+      sample: models.slice(0, 12).map((row) => ({ id: row.id, name: row.name, vision: row.vision === true })),
       error: modelError ?? null,
     },
   }

@@ -159,7 +159,13 @@ export function apply(ctx, config = {}) {
       if (opencodeFailureAt !== 0 && now - opencodeFailureAt < OPENCODE_FAILURE_TTL_MS) return opencodeModels ?? []
     }
     try {
-      opencodeModels = await service.client().listModels({ providers: ['opencode', 'ofm'] })
+      // ⚠️ 不再写死 ['opencode','ofm']：目录来自 /config/providers，用户可能自己
+      // 往 opencode 里挂了别的 provider（例如另一个本地网关）。写死会让那些
+      // 明明能调的模型在 DSH 里看不见。
+      const groups = await service.client().providers()
+      opencodeModels = await service.client().listModels({
+        providers: groups.map((group) => group.id),
+      })
       opencodeModelsAt = now
       opencodeFailureAt = 0
     } catch (error) {
@@ -207,6 +213,9 @@ export function apply(ctx, config = {}) {
           const rows = await loadOpenCodeModels()
           return rows.find((row) => row.id === id)
         },
+        // 图片：只有声明了 image 输入的模型才会走到这里（见 adapter.stream）。
+        // 与 buddy 共用同一份附件桥，错误语义也一致（抛错 = 这次请求真的没法发）。
+        ...(makeReadImage(scoped) !== undefined ? { readImage: makeReadImage(scoped) } : {}),
         logger,
       })
       registerAdapterIdempotent(scoped.llm, [OPENCODE_ROUTE], adapter, (message) => logger?.warn?.(message))
@@ -253,11 +262,15 @@ export function apply(ctx, config = {}) {
  */
 const OPENCODE_LANE = Object.freeze({
   id: OPENCODE_ROUTE,
-  displayName: 'OpenCode 免费层',
+  displayName: 'OpenCode 本地车道',
   endpoint: 'http://127.0.0.1:4096',
   kind: 'service',
-  capability: 'text-only',
-  note: '只能纯文本对话，不能调用工具（opencode 的接口不接受外部工具定义）。适合标题、摘要、翻译。',
+  // ⚠️ 从 'text-only' 改成 'no-tools'：这条车道**能看图**（4 个免费模型声明了
+  // input.image，图片走 FilePartInput 的 data: URL，实测 204 且上游确实收到）。
+  // 真正缺的只有「调用方自定义工具」—— opencode 的接口只接受它自己那套
+  // tools 开关表，传不进 DSH 的工具 schema。
+  capability: 'no-tools',
+  note: '能对话、能看图，但不能调用工具（opencode 的接口不接受外部工具定义）。适合标题、摘要、翻译、识图；别在 agent 会话里当主模型。',
   // 服务型车道没有「账号」，自然也没有积分：字段仍给出，让页面不必到处判空。
   credits: Object.freeze({ balance: false, claim: false }),
 })

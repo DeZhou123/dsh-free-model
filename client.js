@@ -79,10 +79,10 @@ window.__ModuleLoader__.load({
       laneNeedsAction: '需动作',
       laneDown: '不可用',
       capFull: '完整能力',
-      capText: '仅文本',
+      capText: '无工具',
       capFullHint: '可调用工具、可看图，能当主模型用。',
-      capTextHint: '不能调用工具（OpenCode 的接口不接受外部工具定义）。适合会话标题、压缩摘要、翻译改写；别在 agent 会话里选它。',
-      opencodeTitle: 'OpenCode 免费层',
+      capTextHint: '不能调用工具（OpenCode 的接口不接受外部工具定义），但**能看图**。适合会话标题、压缩摘要、翻译改写、识图；别在 agent 会话里选它。',
+      opencodeTitle: 'OpenCode 本地车道',
       opencodeIntro: '本机 opencode serve 提供的免费模型。插件可代你启动服务，也可用你自己已开的实例。',
       opencodeStart: '启动服务',
       opencodeStop: '停止服务',
@@ -92,8 +92,14 @@ window.__ModuleLoader__.load({
       opencodeManaged: '本插件启动',
       opencodeExternal: '你已手动启动',
       opencodeModels: '个模型',
-      opencodeEmpty: '服务已启动但没读到模型。免费层限流时目录仍会返回，读不到通常意味着 serve 版本过旧。',
-      opencodeNote: '首次启动约 2–5 秒；端口被占用会自动顺延。',
+      opencodeEmpty: '服务已启动但没读到模型。目录读的是 /config/providers —— 只有在本机 opencode 里配置过的 provider 才会出现，空目录说明一个都没配。',
+      opencodeNote: '首次启动约 2–5 秒；端口被占用会自动顺延。目录只列**已配置可调用**的模型。',
+      opencodeVision: '{count} 个可看图',
+      opencodeProviders: '按 provider',
+      opencodeSse: '流式：SSE',
+      opencodeSseOff: '流式：轮询（降级）',
+      opencodeBlocked: '上游拒绝',
+      opencodeBlockedHint: '这台机器上 OpenCode 免费层被上游拒绝（403 FreeTierError：只接受 OpenCode 客户端自身的请求）。换 ofm/* 那些模型，或更新 opencode。',
       product: '渠道',
       accounts: '账号',
       addAccount: '新建账号',
@@ -187,10 +193,10 @@ window.__ModuleLoader__.load({
       laneNeedsAction: 'Needs action',
       laneDown: 'Down',
       capFull: 'Full',
-      capText: 'Text only',
+      capText: 'No tools',
       capFullHint: 'Tool calling and images work; safe as a primary model.',
-      capTextHint: 'No tool calling (the OpenCode API accepts no external tool definitions). Good for titles, compaction summaries, translation; do not pick it inside an agent session.',
-      opencodeTitle: 'OpenCode free tier',
+      capTextHint: 'No tool calling (the OpenCode API accepts no external tool definitions), but images work. Good for titles, compaction summaries, translation, image Q&A; do not pick it inside an agent session.',
+      opencodeTitle: 'OpenCode local lane',
       opencodeIntro: 'Free models served by a local opencode server. The plugin can start it for you, or reuse one you already run.',
       opencodeStart: 'Start server',
       opencodeStop: 'Stop server',
@@ -200,8 +206,14 @@ window.__ModuleLoader__.load({
       opencodeManaged: 'Started by this plugin',
       opencodeExternal: 'Started by you',
       opencodeModels: 'models',
-      opencodeEmpty: 'Server is up but returned no models. A throttled free tier still lists models, so an empty catalog usually means an old serve build.',
-      opencodeNote: 'First start takes ~2–5s; ports shift automatically when taken.',
+      opencodeEmpty: 'Server is up but returned no models. The catalog is read from /config/providers, so only providers configured in the local opencode appear here; an empty list means none are configured.',
+      opencodeNote: 'First start takes ~2–5s; ports shift automatically when taken. The catalog lists only configured, callable models.',
+      opencodeVision: '{count} can see images',
+      opencodeProviders: 'By provider',
+      opencodeSse: 'Streaming: SSE',
+      opencodeSseOff: 'Streaming: polling (fallback)',
+      opencodeBlocked: 'Upstream refused',
+      opencodeBlockedHint: 'On this machine the OpenCode free tier is refused upstream (403 FreeTierError: only OpenCode itself may call it). Switch to ofm/* models, or update opencode.',
       product: 'Lane',
       accounts: 'Accounts',
       addAccount: 'New account',
@@ -627,12 +639,16 @@ window.__ModuleLoader__.load({
       const tone = !running ? 'err' : mounted ? 'ok' : 'warn'
       const stateText = !running ? t('opencodeStopped')
         : mounted ? t('opencodeRunning') : t('laneNeedsAction')
+      // 上游结构性拒绝（免费层 403）：不是「暂时限流」，重试不会好 —— 单独标红。
+      const failures = status?.failures ?? {}
+      const blocked = Object.keys(failures).length > 0
 
       return h('div', { className: 'ow-card' }, [
         h('div', { key: 'head', className: 'ow-cardhead' }, [
           h('strong', { key: 'n' }, t('opencodeTitle')),
           h(Pill, { key: 'cap', tone: 'warn' }, t('capText')),
           h(Pill, { key: 's', tone, strong: true }, stateText),
+          blocked ? h(Pill, { key: 'b', tone: 'err' }, t('opencodeBlocked')) : null,
           running
             ? h('span', { key: 'c', className: 'ow-count' },
                 `${models?.count ?? 0} ${t('opencodeModels')}`)
@@ -643,14 +659,31 @@ window.__ModuleLoader__.load({
         h('p', { key: 'intro', className: 'ow-hint' }, t('opencodeIntro')),
         h('p', { key: 'caphint', className: 'ow-hint' }, t('capTextHint')),
 
-        // 运行信息：版本、端口、是插件起的还是用户自己起的
+        // 运行信息：版本、端口、是插件起的还是用户自己起的、流式走的哪条路
         running
           ? h('div', { key: 'meta', className: 'ow-row' }, h('div', { className: 'ow-meta' }, [
               status?.version !== undefined ? h(Pill, { key: 'v' }, `v${status.version}`) : null,
               h(Pill, { key: 'p' }, `:${status?.port ?? ''}`),
               h('span', { key: 'm', className: 'ow-dim' },
                 status?.managed === true ? t('opencodeManaged') : t('opencodeExternal')),
+              // 流式路径要露出来：SSE 是真 token 增量，轮询是降级（粒度粗）。
+              // 用户报「字一段一段蹦」时，这一枚就是第一现场。
+              h(Pill, { key: 'sse', tone: status?.sse === true ? 'ok' : 'warn' },
+                status?.sse === true ? t('opencodeSse') : t('opencodeSseOff')),
+              (models?.vision ?? 0) > 0
+                ? h(Pill, { key: 'vi' }, t('opencodeVision').replace('{count}', String(models.vision)))
+                : null,
             ]))
+          : null,
+
+        // 上游结构性拒绝：把真实原因（含 provider 名）摆出来，别让用户一直重试。
+        blocked
+          ? h('div', { key: 'blk', className: 'ow-note error' }, [
+              h('p', { key: 'h' }, t('opencodeBlockedHint')),
+              ...Object.entries(failures).slice(0, 3).map(([provider, message]) =>
+                h('p', { key: 'f-' + provider, className: 'ow-dim' },
+                  provider + ': ' + String(message).slice(0, 160))),
+            ])
           : null,
 
         // 服务没跑时的失败原因原样显示：这条链路能失败的地方太多，藏起来等于让用户猜。
@@ -666,7 +699,16 @@ window.__ModuleLoader__.load({
             }, [
               h('strong', { key: 'i', className: 'ow-mid' }, row.id),
               h('span', { key: 'n', className: 'ow-dim' }, row.name),
+              // 能看图的模型单独标出来：这条车道不是纯文本，用户该知道。
+              row.vision === true ? h(Pill, { key: 'v', tone: 'ok' }, t('vision')) : null,
             ])))
+          : null,
+
+        // 按 provider 分组计数：opencode 免费层 vs 自己挂进来的网关，一眼分清。
+        running && (models?.providers ?? []).length > 1
+          ? h('p', { key: 'pgroup', className: 'ow-hint' },
+              t('opencodeProviders') + '：'
+              + (models.providers ?? []).map((p) => p.id + ' ' + p.count).join(' · '))
           : null,
         running && (models?.count ?? 0) === 0
           ? h('p', { key: 'none', className: 'ow-empty' }, t('opencodeEmpty'))

@@ -6,7 +6,7 @@
 |---|---|---|---|---|
 | CodeBuddy（腾讯国内版） | `buddy/*` | 完整：工具调用、看图 | 一个账号（浏览器登录） | 账号渠道 |
 | WorkBuddy（腾讯国际版） | `workbuddy/*` | 完整：工具调用、看图 | 一个账号（浏览器登录） | 账号渠道 |
-| OpenCode 免费层 | `opencode/*` | **仅文本**：无工具 | 本机 `opencode serve`（插件可代起） | OpenCode 免费层 |
+| OpenCode 本地车道 | `opencode/*`、`ofm/*` 等 | **无工具**：能看图、不能调工具 | 本机 `opencode serve`（插件可代起） | OpenCode 本地车道 |
 
 > 账号型两条车道与「不需要登录的本地车道」在**同一个设置项内分页**：前者要管账号、
 > 积分、签到；后者只有一个本地进程要管。同一时刻屏幕上只有一个主题，页签上还带
@@ -24,7 +24,8 @@
   `dsh-ofm-workbuddy` 把它们接回来了）；
 - opencode 的免费层只在「OpenCode 自己的调用方」里合法可用（直连会被拒，实测），
   而它跑的 `serve` 正好就是合法调用方；
-- 这两批模型的能力**不一样**：前者能调工具、能看图，后者只能纯文本。
+- 这两批模型的能力**不一样**：前者能调工具、能看图；后者**能看图、不能调工具**
+  （工具协议的缺口在 opencode 侧，不在本插件）。
 
 本插件把三者放在一页里，并且**把能力差异写在卡片上**，而不是等用户踩坑。
 
@@ -39,7 +40,7 @@
 - 免费模型跳过积分分档（消耗 0 积分，没有「烧哪个包」的问题）；
 - 限流按**模型**记：`deepseek-v4.1-flash` 被限流不影响 `glm-5.3`。
 
-### 仅文本车道（opencode）
+### 无工具车道（opencode）
 
 **不要拿它当主模型。** opencode 的消息接口只接受
 `tools: { [name]: boolean }` —— 那是它**内置工具**的开关表，整份 API 里没有
@@ -47,9 +48,15 @@
 text / files / agents）。
 
 DSH 的 agent loop 靠 tool call 驱动，所以这条车道能做的事只有「一句话进、
-一句话出」：会话标题、压缩摘要、翻译改写、代码解释。
+一句话出」：会话标题、压缩摘要、翻译改写、代码解释、**识图**。
 
-页面上给这条卡常驻一枚 `仅文本` 徽章和一句说明 —— 这件事只写在 README 里
+> **能看图**（2026-10-23 修正）。早先这里写着「仅文本」，那是错的：
+> `/config/providers` 里 9 个 opencode 免费模型中有 4 个声明
+> `capabilities.input.image = true`，图片用 `FilePartInput` 的 `data:` URL
+> 发送（实测 `prompt_async` 返回 204，上游确实收到了图）。真正的缺口只有
+> 工具调用。
+
+页面上给这条卡常驻一枚 `无工具` 徽章和一句说明 —— 这件事只写在 README 里
 是不够的，用户一定会在 agent 会话里选它然后困惑。
 
 ### 它为什么仍然值得做
@@ -115,11 +122,11 @@ dsh plugin --profile web add link:E:\06AI\00DeeSeekHarness\dsh-free-model
 
 ```
 ┌─ OpenCode 免费层 ──────────────────────────────────────────────────────┐
-│ [服务运行中] [仅文本]   12 个模型                                       │
+│ [服务运行中] [无工具] [可看图]   12 个模型                               │
 │ 本机 opencode serve 提供的免费模型，不需要账号、不需要登录。              │
 └────────────────────────────────────────────────────────────────────────┘
 ┌─ OpenCode 免费层 ──────────────────────────────────────────────────────┐
-│ [仅文本] [服务运行中]   12 个模型                                       │
+│ [无工具] [服务运行中] [流式：SSE]   12 个模型                            │
 │ 不能调用工具…适合标题、摘要、翻译。                                       │
 │ [停止服务] [刷新目录]                                                   │
 └────────────────────────────────────────────────────────────────────────┘
@@ -181,17 +188,38 @@ src/opencode/service.js  进程生命周期（探测 / 拉起 / 端口顺延 / �
 client.js                浏览器半身（两个设置页：账号车道 / OpenCode 本地车道）
 ```
 
-### 流式是怎么做的
+### 流式是怎么做的（2026-10-23 改为 SSE）
 
 opencode 的 `POST /session/{id}/message` 是**阻塞到生成完成**的，拿不到增量。
-但 assistant 消息在生成过程中就能被读到，所以：
+早先走轮询 `GET /session/{id}/message`（按 part id 记已发长度），能work，但
+粒度是「上游写库的节奏」—— 实测同一 3 秒窗口里只有 **3 次** part 更新，
+用户看到的是整段整段跳。
+
+现在走 **SSE**（`GET /event`）：
 
 1. `POST /session/{id}/prompt_async` → 204 立即返回；
-2. 轮询 `GET /session/{id}/message`，按 part id 记已发长度，只发增量；
-3. `info.time.completed` 出现即收尾，取 `info.tokens` 作 usage。
+2. 订阅 `GET /event`，只收本 session 的事件；
+3. `message.part.delta`（`field: 'text' | 'reasoning'`）是**真 token 增量**
+   —— 实测 26 帧 / 3 秒，约 40ms 一帧；
+4. `message.updated` 带 `info.tokens` 取 usage；`session.idle` 收尾；
+5. `session.error` **立刻**给出真实失败原因，不必等 120 秒 idle 超时。
 
-实测（2026-10-21，`ofm/codearts/glm-5.3`）：首块 3.3s，reasoning 293 字符 +
-正文 57 字符，usage `{input:132, output:37, reasoning:60, cacheRead:1920}`。
+轮询保留为**降级路径**：老版本 serve 没有 `/event`，或 SSE 被中间层掐断时
+自动回退（只在「还没发出任何内容」时降级，避免重复文本）。
+
+实测（2026-10-23，`ofm/codearts/glm-5.3`）：首块 1.9s，26 个 delta 帧，
+usage `{input:131, output:54, reasoning:18, cacheRead:1920}`。
+
+### 模型目录从哪来（2026-10-23 修正）
+
+早先读 `/api/model`：一次 8887 条（4.9MB），其中 752 条属于本机配置的两个
+provider —— 但**只有 `/config/providers` 里出现过的才真能调用**。实测
+`opencode/space-bunny-free` 在 `/api/model` 里存在，prompt 却回
+`Model not found`；而 `/config/providers` 里那 9 条全部可用。
+
+现在读 `/config/providers`（471KB，1/10 体积）：一次拿全「已配置 + 能力 +
+限额」，不会再给用户列出一堆点了就报错的模型，能力（`input.image` /
+`toolcall`）也直接来自上游声明而不是猜。
 
 ### 三个必须挡住的坑
 
@@ -249,13 +277,18 @@ npm run test:e2e -- 'ofm/codearts/glm-5.3'
 - **余额是「查得到才算」**：合计数只累计读成功的账号；查不到的账号会单独显示原因，
   不会被当成 0（否则卡片上的合计数看起来像「额度凭空少了」）。
 
-- **OpenCode 免费层在本机 IP 上常年限流**。`opencode/*-free` 全系列返回
-  `Rate limit exceeded` 或 `free tier can only be used from within OpenCode`，
-  目录能拉到、调用不通。这是上游策略，不是插件缺陷；插件做的是把真实原因
-  原样显示出来。
+- **OpenCode 免费层在本机 IP 上是结构性拒绝，不是限流**。`opencode/*-free`
+  全系列返回 `403 FreeTierError: OpenCode's free tier can only be used from
+  within OpenCode`。2026-10-23 复验：连 `opencode serve` 自己发出的请求都被
+  同样拒绝（试过 Authorization / x-api-key / UA / x-opencode-session 五种组合，
+  全 403），所以这条 build 的免费层通道已关闭，**重试不会恢复**。
+  同一台机器上 `ofm/*`（本机 OFM 网关）是通的。
+  插件做的是：把 403 与「限流」分开报，并在卡片上标「上游拒绝」，别让人一直重试。
 - **OpenCode 车道不支持工具**（见上）。
-- **OpenCode 车道不支持图片**：`PromptInput` 有 `files` 附件字段，但 DSH 的
-  图片投影链路没有接过去，故 `inputModalities` 只声明 `text`。
+- **OpenCode 车道支持图片**（2026-10-23 修正）：`/config/providers` 里 4 个
+  免费模型声明 `input.image`，图片经 `FilePartInput` 的 `data:` URL 发送
+  （实测 204，上游确实收到）。`inputModalities` 按上游声明逐模型给出，
+  不再一律 text。
 - **不接 OFM 的 token 账本**：`token-ledger` 是 OFM 包内的内部模块，硬 import
   会在它下次重构时把整个插件打死。记账退化为 no-op，推理不受影响。
 

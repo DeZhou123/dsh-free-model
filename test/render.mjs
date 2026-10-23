@@ -249,7 +249,7 @@ const emptyProductTree = ProductCard({
 assert.ok(walk(emptyProductTree, 'ProductCard-empty') > 3, '空账号卡渲染节点过少')
 
 // ── 服务型卡片：三种状态各渲染一次 ────────────────────────────────────────
-const lane = { id: 'opencode', displayName: 'OpenCode 免费层', kind: 'service', capability: 'text-only', note: 'x', mounted: true, route: 'registered' }
+const lane = { id: 'opencode', displayName: 'OpenCode 本地车道', kind: 'service', capability: 'no-tools', note: 'x', mounted: true, route: 'registered' }
 
 const runningTree = ServiceCard({
   lane,
