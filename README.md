@@ -56,8 +56,13 @@ DSH 的 agent loop 靠 tool call 驱动，所以这条车道能做的事只有�
 
 ## 安装
 
+> 仓库：<https://github.com/DeZhou123/dsh-free-model>（MIT）
+
 ```powershell
-# 从本目录（link 安装，改代码即时生效）
+# 方式一：从 GitHub 装（跟版本走）
+dsh plugin --profile web add github:DeZhou123/dsh-free-model
+
+# 方式二：本地开发用 link 安装（改代码即时生效）
 dsh plugin --profile web add link:E:\06AI\00DeeSeekHarness\dsh-free-model
 ```
 
