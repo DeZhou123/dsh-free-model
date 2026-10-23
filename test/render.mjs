@@ -47,12 +47,12 @@ const module = factory((name) => {
 
 assert.equal(typeof module.apply, 'function', 'factory 必须返回带 apply 的对象')
 
-// 跑一遍 apply，抓住注册参数
-let section
+// 跑一遍 apply，抓住注册参数（两个设置页各注册一次，故收集成数组）。
+const sections = []
 let localeCalls = 0
 const slots = {
   inject(name, run) { return run() },
-  register(spec, render) { section = { spec, render }; return () => {} },
+  register(spec, render) { sections.push({ spec, render }); return () => {} },
 }
 const ctx = {
   effect(factory) { factory(); return () => {} },
@@ -61,11 +61,17 @@ const ctx = {
 }
 module.apply(ctx)
 
-assert.ok(section !== undefined, '没有注册 settings.section')
-assert.equal(section.spec.id, 'free-model')
-assert.equal(section.spec.name, 'settings.section')
-assert.equal(typeof section.render, 'function')
+assert.equal(sections.length, 2, '应当注册两个设置页（账号车道 / OpenCode 本地车道）')
+assert.deepEqual(sections.map((entry) => entry.spec.id), ['free-model', 'free-model-opencode'])
+for (const entry of sections) {
+  assert.equal(entry.spec.name, 'settings.section')
+  assert.equal(typeof entry.render, 'function')
+}
+// 顺序固定：账号车道在前（日常要管积分），本地车道在后。
+assert.deepEqual(sections.map((entry) => entry.spec.order), [37, 38])
 assert.ok(localeCalls >= 1, '没有注册语言包')
+
+const [accountSection, localSection] = sections
 
 /** 遍历 element 树，确认每个节点可渲染。 */
 function walk(node, path) {
@@ -87,14 +93,20 @@ function walk(node, path) {
   return 1 + walk(node.props.children, path + '>' + type)
 }
 
-// 加载态：summary 未就绪时应渲染一行「处理中」。
-const loadingTree = section.render({ t: (key) => key })
+// 加载态：summary / status 未就绪时应渲染一行「处理中」。
+const loadingTree = accountSection.render({ t: (key) => key })
 const loadingCount = walk(loadingTree, 'loading')
-assert.ok(loadingCount > 0, '加载态没有渲染出任何节点')
+assert.ok(loadingCount > 0, '账号页加载态没有渲染出任何节点')
 
-const { ProductCard, ServiceCard } = module.__test
+const localLoadingTree = localSection.render({ t: (key) => key })
+assert.ok(walk(localLoadingTree, 'local-loading') > 0, '本地车道页加载态没有渲染出任何节点')
+
+const { ProductCard, ServiceCard, AutoCheckinBar, AccountsPage, OpenCodePage } = module.__test
 assert.equal(typeof ProductCard, 'function', '__test.ProductCard 未导出')
 assert.equal(typeof ServiceCard, 'function', '__test.ServiceCard 未导出')
+assert.equal(typeof AutoCheckinBar, 'function', '__test.AutoCheckinBar 未导出')
+assert.equal(typeof AccountsPage, 'function', '__test.AccountsPage 未导出')
+assert.equal(typeof OpenCodePage, 'function', '__test.OpenCodePage 未导出')
 
 const t = (key) => key
 
@@ -107,23 +119,94 @@ const accountProduct = {
   route: 'registered',
   mounted: true,
 }
-const productTree = ProductCard({
-  product: accountProduct,
-  accounts: [{ id: 'buddy-aaaabbbb', provider: 'buddy', nickname: '国内号', enabled: true, expiresAt: Date.now() + 3600_000, refreshable: true, modelRateLimits: {} }],
-  models: [
-    { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', provider: 'buddy', disabled: false, contextWindow: 1_000_000, maxOutputTokens: 128_000, reasoningEfforts: ['low', 'high'], defaultReasoningEffort: 'high', inputModalities: ['text', 'image'] },
-    { id: 'glm-5.3', name: 'GLM-5.3', provider: 'buddy', disabled: true, contextWindow: 1_000_000, maxOutputTokens: 64_000, reasoningEfforts: [], inputModalities: ['text'] },
-  ],
-  tab: 'models',
-  onTab: () => {},
-  busy: false,
-  t,
-  onAction: () => {},
-  onModelAction: () => {},
-  onLogin: () => {},
-})
+/** 一张卡片的默认 props（新增的积分相关字段都给了值，避免只测到空分支）。 */
+function cardProps(overrides = {}) {
+  return {
+    product: accountProduct,
+    accounts: [{
+      id: 'buddy-aaaabbbb',
+      provider: 'buddy',
+      nickname: '国内号',
+      enabled: true,
+      expiresAt: Date.now() + 3600_000,
+      refreshable: true,
+      modelRateLimits: {},
+    }],
+    models: [
+      { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', provider: 'buddy', disabled: false, contextWindow: 1_000_000, maxOutputTokens: 128_000, reasoningEfforts: ['low', 'high'], defaultReasoningEffort: 'high', inputModalities: ['text', 'image'] },
+      { id: 'glm-5.3', name: 'GLM-5.3', provider: 'buddy', disabled: true, contextWindow: 1_000_000, maxOutputTokens: 64_000, reasoningEfforts: [], inputModalities: ['text'] },
+    ],
+    creditRow: {
+      provider: 'buddy',
+      total: 1234,
+      known: 1,
+      failures: 0,
+      accounts: [{
+        accountId: 'buddy-aaaabbbb',
+        nickname: '国内号',
+        balance: { total: 1234, expiredTotal: 0, packages: [{ name: '月度包', remaining: 1234, active: true }] },
+        checkin: { todayCheckedIn: true, todayCredit: 10, streakDays: 3 },
+      }],
+    },
+    balanceLoading: false,
+    tab: 'models',
+    onTab: () => {},
+    busy: false,
+    claimBusy: false,
+    t,
+    onAction: () => {},
+    onModelAction: () => {},
+    onLogin: () => {},
+    onClaimAll: () => {},
+    onRefreshBalances: () => {},
+    onRenewAll: () => {},
+    ...overrides,
+  }
+}
+
+const productTree = ProductCard(cardProps())
 const productCount = walk(productTree, 'ProductCard')
 assert.ok(productCount > 5, '账号卡渲染节点过少: ' + productCount)
+
+// 账号页签：余额徽章 / 今日已领 / 连签都要能渲染出来。
+const accountsTabTree = ProductCard(cardProps({ tab: 'accounts' }))
+assert.ok(walk(accountsTabTree, 'ProductCard-accounts') > 5, '账号页签渲染节点过少')
+
+// 查不到余额时走的是「原因」分支（不能显示 0）。
+const failedTree = ProductCard(cardProps({
+  tab: 'accounts',
+  creditRow: {
+    provider: 'buddy',
+    total: 0,
+    known: 0,
+    failures: 1,
+    accounts: [{ accountId: 'buddy-aaaabbbb', balance: null, checkin: null, error: '凭据不可用' }],
+  },
+}))
+assert.ok(walk(failedTree, 'ProductCard-failed') > 5, '余额失败分支渲染节点过少')
+
+// 余额查询中：显示「查询中」而不是 0。
+const loadingBalanceTree = ProductCard(cardProps({ balanceLoading: true, creditRow: undefined }))
+assert.ok(walk(loadingBalanceTree, 'ProductCard-balance-loading') > 5, '余额加载分支渲染节点过少')
+
+// WorkBuddy 没有签到接口：卡片上不该出现「一键领取」（claim 能力位为 false）。
+const noClaimTree = ProductCard(cardProps({
+  product: { ...accountProduct, id: 'workbuddy', displayName: 'WorkBuddy (国际版)', credits: { balance: true, claim: false } },
+  tab: 'accounts',
+}))
+assert.ok(walk(noClaimTree, 'ProductCard-no-claim') > 5, '无签到能力分支渲染节点过少')
+
+// ── 自动领积分条：三态各渲染一次 ──────────────────────────────────────────
+const autoCases = [
+  { label: 'running', state: { enabled: true, running: true, ranToday: false, lastResult: '' } },
+  { label: 'ran', state: { enabled: true, running: false, ranToday: true, lastResult: '1 个账号领取成功（+10 积分）' } },
+  { label: 'idle', state: { enabled: false, running: false, ranToday: false, lastResult: '' } },
+  { label: 'loading', state: undefined },
+]
+for (const item of autoCases) {
+  const tree = AutoCheckinBar({ state: item.state, busy: false, t, onToggle: () => {}, onRunNow: () => {} })
+  assert.ok(walk(tree, 'AutoCheckinBar-' + item.label) > 1, '自动领积分条渲染失败: ' + item.label)
+}
 
 // 账号页签也要能渲染（空列表走空状态分支）。
 const emptyProductTree = ProductCard({

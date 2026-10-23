@@ -38,7 +38,9 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { mountBuddyChannel, BUDDY_PRODUCTS } from './src/channels.js'
-import { poolView, ensureFallbackPool } from './src/pool.js'
+import { poolView, ensureFallbackPool, resolveDshHome } from './src/pool.js'
+import { createCreditsService } from './src/credits-service.js'
+import { createAutoCheckin, createAutoCheckinStore } from './src/auto-checkin.js'
 import { livePool } from './src/live-pool.js'
 import { createRoutes } from './src/routes.js'
 import { connectionAdmissionView } from './src/trust.js'
@@ -69,7 +71,14 @@ function readPackageVersion() {
  * 挂载。
  *
  * @param {import('@deepseek-ai/cordis').Context} ctx
- * @param {{ opencodeBinary?: string, opencodePort?: number, autoStartOpenCode?: boolean }} [config]
+ * @param {{
+ *   opencodeBinary?: string,
+ *   opencodePort?: number,
+ *   autoStartOpenCode?: boolean,
+ *   autoCheckin?: boolean,          // 传 false 强制关闭每日自动领积分
+ *   autoCheckinDelayMs?: number,    // 启动后延迟多久跑（默认 30 秒，0 = 立即）
+ *   creditsFetcher?: typeof fetch,  // 测试接缝：替换积分接口的 fetch
+ * }} [config]
  */
 export function apply(ctx, config = {}) {
   const logger = ctx.logger
@@ -79,6 +88,37 @@ export function apply(ctx, config = {}) {
   const pool = livePool(view)
   let fallbackDispose = () => {}
   ctx.effect(() => () => fallbackDispose(), 'dsh-free-model: fallback pool')
+
+  // ── 积分：余额查询与一键领取共用一套实现（页面与自动领取都调它） ─────────────
+  //
+  // `config.creditsFetcher` 与 `config.opencodeService` 一样是**测试接缝**：
+  // 单测要断言路由与「一键领取」的结果，但不该真的打腾讯的计费接口。
+  const credits = createCreditsService({
+    pool: () => pool,
+    products: ALL_LANES,
+    logger,
+    ...(config.creditsFetcher !== undefined ? { fetcher: config.creditsFetcher } : {}),
+  })
+
+  // ── 每日自动领积分：独立状态文件，不碰 OFM 那份 auto-checkin.json ──────────
+  //
+  // ⚠️ 领取动作走 credits.claim（与页面上的「一键领取」同一条路径）：
+  // 两处各写一遍领取循环，迟早会在「哪些账号要跳过」上分叉。
+  const autoCheckin = createAutoCheckin({
+    store: createAutoCheckinStore(resolveDshHome(ctx), logger),
+    providers: ALL_LANES,
+    claim: (provider) => credits.claim(provider),
+    logger,
+    ...(config.autoCheckinDelayMs !== undefined ? { delayMs: config.autoCheckinDelayMs } : {}),
+  })
+  ctx.effect(() => () => autoCheckin.stop(), 'dsh-free-model: auto checkin')
+  // 配置项可以强制关掉（`autoCheckin: false`）：默认开着是产品判断，
+  // 但用户明确不要这个动作时，不该靠「装完再进页面点一下」才能关。
+  if (config.autoCheckin === false) {
+    void autoCheckin.setEnabled(false)
+  } else {
+    autoCheckin.start()
+  }
 
   // ── OpenCode 服务：先探测，不主动起（页面上的按钮才起） ──────────────────────
   //
@@ -187,6 +227,8 @@ export function apply(ctx, config = {}) {
     connection: () => connection,
     logger,
     version,
+    credits,
+    autoCheckin,
     opencode: {
       service,
       models: loadOpenCodeModels,
@@ -216,10 +258,38 @@ const OPENCODE_LANE = Object.freeze({
   kind: 'service',
   capability: 'text-only',
   note: '只能纯文本对话，不能调用工具（opencode 的接口不接受外部工具定义）。适合标题、摘要、翻译。',
+  // 服务型车道没有「账号」，自然也没有积分：字段仍给出，让页面不必到处判空。
+  credits: Object.freeze({ balance: false, claim: false }),
 })
 
-/** 三条车道的完整清单（前两条是账号型，第三条是服务型）。 */
-const ALL_LANES = Object.freeze([...BUDDY_PRODUCTS, OPENCODE_LANE])
+/**
+ * 账号型车道的积分能力。
+ *
+ * ⚠️ `claim` 是**产品事实**，不是开关：CodeBuddy（国内版）有每日签到接口，
+ * WorkBuddy 国际版的后端压根没有这个端点 —— 点一次返回 404 不会让它长出来。
+ * 所以页面对 workbuddy 的「领取」必须**不渲染**，而不是渲染成灰色按钮让用户猜。
+ * `balance` 两边都支持（同一个 `get-user-resource` 计费接口）。
+ */
+const LANE_CREDITS = Object.freeze({
+  buddy: Object.freeze({ balance: true, claim: true }),
+  workbuddy: Object.freeze({ balance: true, claim: false, claimNote: 'WorkBuddy 国际版没有签到接口（其后端不提供）' }),
+})
+
+const NO_CREDITS = Object.freeze({ balance: false, claim: false })
+
+/**
+ * 三条车道的完整清单（前两条是账号型，第三条是服务型）。
+ *
+ * 账号型车道在这里**复制一份并补上 `credits`**：`BUDDY_PRODUCTS` 是适配器的
+ * 产品配置，往里塞展示字段会让「配置」和「展示」两件事逐渐混在一起。
+ */
+const ALL_LANES = Object.freeze([
+  ...BUDDY_PRODUCTS.map((product) => ({
+    ...product,
+    credits: LANE_CREDITS[product.id] ?? NO_CREDITS,
+  })),
+  OPENCODE_LANE,
+])
 
 /** 读宿主池（不建本地池）。 */
 function readLivePool(ctx) {

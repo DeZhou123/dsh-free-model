@@ -36,6 +36,8 @@ import { isLocalPool } from './pool.js'
  *   connection: () => any,
  *   logger: any,
  *   version: string,
+ *   credits: { collect: Function, claim: Function, invalidate: Function },
+ *   autoCheckin: { state: Function, setEnabled: Function, runNow: Function },
  * }} deps
  */
 export function createRoutes(deps) {
@@ -92,6 +94,19 @@ export function createRoutes(deps) {
       }
       if (method === 'POST' && routePath === '/probe') {
         return await probe(deps, await readJson(req), send)
+      }
+      // ── 积分：余额 / 一键领取 / 自动领取开关 ────────────────────────────────
+      if (method === 'GET' && routePath === '/credits') {
+        return await creditsOverview(deps, url.searchParams, send)
+      }
+      if (method === 'POST' && routePath === '/claim') {
+        return await claimAll(deps, await readJson(req), send)
+      }
+      if (method === 'GET' && routePath === '/auto-checkin') {
+        return send(200, { autoCheckin: deps.autoCheckin.state() })
+      }
+      if (method === 'POST' && routePath === '/auto-checkin') {
+        return await mutateAutoCheckin(deps, await readJson(req), send)
       }
       // ── OpenCode 车道：进程管理 + 目录刷新 ──────────────────────────────────
       if (method === 'GET' && routePath === '/opencode/status') {
@@ -175,6 +190,9 @@ function buildSummary(deps) {
       //   undefined    —— 本插件没挂载这条通道（apply 失败 / llm 服务缺席）
       route: lastRegistrationOutcome(deps.llm, product.id) ?? 'absent',
       mounted: deps.channels().has(product.id),
+      // 积分能力跟着产品走：页面据此决定渲染不渲染「领取」按钮，
+      // 而不是让前端自己拿 provider id 去猜（猜错就是 404）。
+      credits: product.credits ?? { balance: false, claim: false },
     }
   })
   return {
@@ -587,4 +605,73 @@ async function opencodeStart(deps, send) {
     count = rows.length
   } catch { /* 目录拉取失败不影响「服务已起」这件事 */ }
   return send(200, { ok: true, port: result.port, started: result.started === true, modelCount: count })
+}
+
+/**
+ * 余额：逐个账号查询（顺序执行，理由见 credits-service 的模块说明）。
+ *
+ * ## 为什么和 /accounts 分开
+ *
+ * 余额要为**每个账号**打一次上游请求，而 `/accounts` 是打开页面就会调的轻量
+ * 操作（只读池内存）。混在一起会让账号列表被网络耗时拖住，而且一次查询失败
+ * 会把整份列表一起打空 —— 于是「页面打不开」和「查不到余额」变成同一个现象。
+ *
+ * 与 OFM 的 `credits.balances` 同一条路由分工。
+ *
+ * @param {any} deps
+ * @param {URLSearchParams} search `?provider=buddy&force=1`
+ * @param {(status: number, payload: any) => void} send
+ */
+async function creditsOverview(deps, search, send) {
+  const provider = String(search.get('provider') ?? '')
+  if (provider === '') return send(400, { error: 'provider is required' })
+  const product = findProduct(deps, provider)
+  if (product === undefined) return send(400, { error: 'unknown provider' })
+  // 服务型车道没有账号，问它要积分是调用方搞错了：明确拒绝而不是回空数组
+  // （空数组会被页面渲染成「余额 ——」，看起来像「查不到」）。
+  if (product.kind === 'service') {
+    return send(409, { error: `${product.id} 是服务型车道，没有账号与积分` })
+  }
+  const force = search.get('force') === '1' || search.get('force') === 'true'
+  return send(200, await deps.credits.collect(provider, { force }))
+}
+
+/**
+ * 一键领取：顺序领取该车道全部账号的今日积分，单个账号失败不中断。
+ *
+ * ⚠️ 不支持签到的车道（WorkBuddy 国际版）**返回 400 而不是空结果**：
+ * 空结果会被页面显示成「今天没有可领取的积分」，那是另一件事
+ * （活动没开 / 今天已领），会把用户引向等待。
+ */
+async function claimAll(deps, body, send) {
+  const product = findProduct(deps, body.provider)
+  if (product === undefined) return send(400, { error: 'unknown provider' })
+  if (product.kind === 'service') return send(409, { error: `${product.id} 是服务型车道，没有积分` })
+  const capability = product.credits ?? { balance: false, claim: false }
+  if (capability.claim !== true) {
+    return send(400, { error: capability.claimNote ?? `${product.displayName} 不支持每日签到` })
+  }
+  const result = await deps.credits.claim(product.id)
+  return send(200, result)
+}
+
+/**
+ * 自动领积分：读状态 / 开关 / 立刻跑一轮。
+ *
+ * 三种入参的语义分开（与 OFM 的 `usage.autoCheckin` 一致）：
+ * - 无 `enabled`、无 `run` → 只读；
+ * - `run: true`            → 立刻跑一轮（忽略「今天已跑过」那道闸门）；
+ * - `enabled: boolean`      → 写开关（打开时立刻尝试跑一轮）。
+ */
+async function mutateAutoCheckin(deps, body, send) {
+  if (body.run === true) {
+    await deps.autoCheckin.runNow()
+    return send(200, { autoCheckin: deps.autoCheckin.state() })
+  }
+  if (body.enabled === undefined) return send(200, { autoCheckin: deps.autoCheckin.state() })
+  if (typeof body.enabled !== 'boolean') {
+    // 非法值拒绝而不是静默回落：回落会让「设置没生效」看起来像「保存成功」。
+    return send(400, { error: `enabled 必须是布尔值（收到：${JSON.stringify(body.enabled)}）` })
+  }
+  return send(200, { autoCheckin: await deps.autoCheckin.setEnabled(body.enabled) })
 }

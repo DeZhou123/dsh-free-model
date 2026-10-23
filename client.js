@@ -1,30 +1,45 @@
 /**
  * dsh-free-model — 浏览器半身。
  *
- * 一个设置页（`settings.section` id `free-model`）：三条免费模型车道的总台。
+ * ## 两个设置页（不再是一页三张卡）
  *
- * ## 信息架构（产品决策）
+ * | 页面 | id | 车道 |
+ * |---|---|---|
+ * | 免费模型 | free-model | CodeBuddy / WorkBuddy —— **账号型**车道 |
+ * | OpenCode 免费层 | free-model-opencode | OpenCode —— **服务型**车道，不登录、不要账号 |
  *
- * 用户打开这一页，要在一秒内回答三个问题：
- * 1. **哪条车道现在能用？** → 每张卡头部一个状态点（绿=就绪 / 黄=需动作 / 红=不可用）
- * 2. **它能干什么？** → 能力徽章（`完整能力` / `仅文本`），不写进折叠区
- * 3. **我要做什么才能用？** → 空状态直接给动作按钮，而不是一句「暂无数据」
+ * 早先三条车道挤在一页，于是「账号卡」与「本地进程卡」看起来像同一类东西，
+ * 而它们要回答的问题完全不同：
  *
- * 所以页面结构是：**总览条（三条车道一句话状态）→ 卡片网格 → 底部刷新**。
- * 不做页签切换 —— 三条车道的数量少到一屏放得下，藏进页签反而增加点击。
+ * - 账号车道：**有哪些号、还剩多少积分、今天领了没、哪个要重建**；
+ * - 服务车道：**本机进程在不在跑、端口多少、模型目录拉到没有**。
  *
- * ## 能力差异必须在 UI 上说清
+ * 拆开之后每页只有一个主题，页头状态药丸也不再互相干扰。
  *
- * `opencode/*` 是纯文本车道（opencode 的接口不接受外部工具定义），它**不能**
- * 当主模型用。这件事如果只写在 README 里，用户一定会在 agent 会话里选它，
- * 然后困惑于「为什么它不会读文件」。故卡片上常驻一行 `仅文本` 徽章 + 一句说明。
+ * ## 账号页的信息架构（对齐 OFM 的渠道卡）
+ *
+ * 每张卡从上到下：渠道名 + 能力徽章 + 路由归属 + 账号计数 → 端点 →
+ * **汇总行（账号 / 模型 / 剩余积分）** → 动作行（新建账号 / 全部续期 /
+ * 刷新余额 / 一键领取）→ 页签（账号 / 模型）→ 内容区。
+ *
+ * 账号行逐条显示**有效期、限流标记、今日已领、剩余积分**；动作按钮按**产品能力**
+ * 渲染 —— WorkBuddy 国际版没有签到接口，那条卡上就不会出现「领取」，
+ * 而不是给一个点了就报 404 的灰按钮。
+ *
+ * ## 页头的「每日自动领积分」开关
+ *
+ * 与 OFM 的 usage.autoCheckin 同形：一个总开关、一天只跑一次、状态里带上次结果。
+ * 但它写的是**本插件自己的状态文件**（见 src/auto-checkin.js 的说明）——
+ * 与 OFM 共用一份会把对方的「今天已跑」标记抹掉。
  *
  * ## 写法约束（照抄 OFM 与 model-orchestrator 的既有取舍）
  *
  * - 手写 ModuleLoader bundle：无构建步骤；
- * - 只依赖 shell 已提供的 `react`，不 import Harness Client 包
+ * - 只依赖 shell 已提供的 react，不 import Harness Client 包
  *   （它们的 API 会随版本移动，抛错的组件会让整个槽位变白）；
- * - 颜色全走主题变量（`--dsw-alias-*`），切换配色不会花。
+ * - 颜色全走主题变量（--dsw-alias-*），切换配色不会花；
+ * - 组件一律 \`function\` 声明（有提升）：Switch/Pill/Button 曾经被写成 const
+ *   箭头函数放在页面之后，渲染时直接白屏。
  *
  * @module client
  */
@@ -114,6 +129,40 @@ window.__ModuleLoader__.load({
       noModels: '读不到模型目录（远端未返回，且没有兜底表）。',
       tabAccounts: '账号',
       tabModels: '模型',
+      // ── 积分 ──
+      balance: '剩余积分',
+      balanceLoading: '余额查询中…',
+      balanceNone: '查不到余额',
+      balanceRefresh: '刷新余额',
+      balanceFailed: '余额查询失败',
+      balancePartial: '{count} 个账号没能查到余额，展开账号行看原因。',
+      balanceNoApi: '该车道没有积分接口',
+      claim: '一键领取',
+      claimRun: '领取中…',
+      claimNone: '今天没有可领取的积分',
+      claimDone: '已领取 {count} 个账号，共 +{credit} 积分',
+      claimAlready: '{count} 个账号今天已领过',
+      claimFailed: '{count} 个账号领取失败',
+      claimUnsupported: 'WorkBuddy 国际版没有签到接口（其后端不提供），这条车道不会出现「领取」。',
+      todayGot: '今日 +{credit}',
+      streak: '连签 {days} 天',
+      noCreditsApi: '这条车道没有积分接口',
+
+      // ── 自动领积分 ──
+      autoTitle: '每日自动领积分',
+      autoRunning: '领取中…',
+      autoRan: '今日已自动领取',
+      autoOff: '今日尚未领取',
+      autoLast: '上次结果：{result}',
+      autoRunNow: '立即领取',
+      autoEnabled: '已开启每日自动领积分',
+      autoDisabled: '已关闭每日自动领积分',
+      autoDisabledShort: '已关闭',
+      autoHint: '开关对账号车道生效：CodeBuddy 有签到接口，WorkBuddy 没有（自动领取时跳过它）。状态存在 channel-pack/free-model-auto-checkin.json，与 OFM 的开关互不影响。',
+
+      // ── 车道页 ──
+      localWhy: '这条车道单独一页：它的失败点与账号车道完全不同（二进制在不在、端口被占、serve 版本太旧），排错时不该和「账号要不要重新登录」混在一起看。',
+      renewalNote: '续期只换令牌，不动账号索引；凭据写入仍然是宿主那一份。',
     }
     const en = {
       nav: 'Free models',
@@ -187,6 +236,37 @@ window.__ModuleLoader__.load({
       noModels: 'No catalog available (upstream returned nothing and there is no fallback table).',
       tabAccounts: 'Accounts',
       tabModels: 'Models',
+      balance: 'Credits left',
+      balanceLoading: 'Querying balance…',
+      balanceNone: 'no reading',
+      balanceRefresh: 'Refresh balance',
+      balanceFailed: 'Balance query failed',
+      balancePartial: 'Could not query {count} account(s); expand the rows to see why.',
+      balanceNoApi: 'this lane has no credits API',
+      claim: 'Claim all',
+      claimRun: 'Claiming…',
+      claimNone: 'Nothing to claim today',
+      claimDone: 'Claimed for {count} account(s), +{credit} credits',
+      claimAlready: '{count} account(s) already claimed today',
+      claimFailed: '{count} account(s) failed to claim',
+      claimUnsupported: 'WorkBuddy (intl) has no check-in endpoint, so this lane never shows “Claim”.',
+      todayGot: 'today +{credit}',
+      streak: '{days}-day streak',
+      noCreditsApi: 'this lane has no credits API',
+
+      autoTitle: 'Daily auto check-in',
+      autoRunning: 'Check-in running…',
+      autoRan: 'Checked in today',
+      autoOff: 'Not checked in today',
+      autoLast: 'Last result: {result}',
+      autoRunNow: 'Check in now',
+      autoEnabled: 'Daily auto check-in enabled',
+      autoDisabled: 'Daily auto check-in disabled',
+      autoDisabledShort: 'off',
+      autoHint: 'Applies to the account lanes: CodeBuddy has a check-in API, WorkBuddy does not (it is skipped). State lives in channel-pack/free-model-auto-checkin.json, independent of the OFM switch.',
+
+      localWhy: 'This lane has its own page because its failure modes are completely different (missing binary, port taken, old serve build) — debugging it should not be mixed up with “does an account need to sign in again”.',
+      renewalNote: 'Renewal only swaps tokens; the account index and the credential store stay the same.',
     }
 
     async function call(path, body) {
@@ -304,47 +384,117 @@ window.__ModuleLoader__.load({
      * 计数），下面一条胶囊页签，再下面是内容区。所有控件都用本文件的
      * Switch / Pill / Button，不引入宿主其它组件（它们的 API 会随版本移动）。
      */
+    /**
+     * 余额徽章（与 OFM 的 \`ofm_creditbadge\` 同款）。
+     *
+     * 三种状态必须分辨得开：
+     * - 正在查 → 「余额查询中…」（显示 0 会让用户以为额度用完了）；
+     * - 查不到 → 显示**原因**（凭据失效 / 未返回数据），而不是 0 或 ——；
+     * - 查到了 → 数值，悬浮显示资源包明细。
+     */
+    function BalanceBadge(props) {
+      const { row, loading, t } = props
+      if (loading) return h('span', { className: 'ow-dim' }, t('balanceLoading'))
+      const total = row?.balance?.total
+      if (!Number.isFinite(total)) {
+        const reason = row?.error ?? t('balanceNone')
+        return h('span', { className: 'ow-balerr', title: reason }, t('balance') + ' · ' + reason)
+      }
+      const packages = (row.balance.packages ?? [])
+        .map((pkg) => pkg.name + ' ' + formatAmount(pkg.remaining))
+        .join(' · ')
+      return h('span', {
+        className: 'ow-bal',
+        title: packages.length > 0 ? packages : t('balance'),
+      }, t('balance') + ' ' + formatAmount(total))
+    }
+
+    /**
+     * 一张账号车道卡（布局与 OFM 的 ChannelCard 对齐）。
+     *
+     * 从上到下四段各有分工：
+     * - 头行：这是谁、能干什么（能力徽章）、路由归谁、几个号；
+     * - 汇总行：账号 / 模型 / **剩余积分** —— 「现在值不值得用它」一屏答完；
+     * - 动作行：新建账号 / 全部续期 / 刷新余额 / 一键领取；
+     * - 页签：账号（带余额与今日已领）与模型（黑名单开关）。
+     *
+     * 动作按钮**按产品能力渲染**：WorkBuddy 国际版没有签到接口，那张卡上不会
+     * 出现「一键领取」，而不是给一个点了必然 404 的灰按钮。
+     */
     function ProductCard(props) {
-      const { product, accounts, models, tab, onTab, busy, onAction, onModelAction, onLogin, t } = props
+      const {
+        product, accounts, models, creditRow, balanceLoading, tab, onTab, busy, claimBusy, t,
+        onAction, onModelAction, onLogin, onClaimAll, onRefreshBalances, onRenewAll,
+      } = props
       const [showOff, setShowOff] = useState(false)
+      const capability = product.credits ?? { balance: false, claim: false }
       const enabledAccounts = accounts.filter((account) => account.enabled).length
       const offCount = models.filter((model) => model.disabled).length
       const onCount = models.length - offCount
       const list = showOff ? models : models.filter((model) => !model.disabled)
 
-      // 路由归属决定这张卡的状态点：本插件接管 = ok，OFM 内置在跑 = warn。
+      // 路由归属决定状态点：本插件接管 = ok，OFM 内置在跑 = warn。
       const routeTone = product.route === 'registered' ? 'ok' : product.route === 'yielded' ? 'warn' : undefined
       const routeText = product.route === 'registered' ? t('routeOwned')
         : product.route === 'yielded' ? t('routeYielded') : t('routeAbsent')
 
+      const rows = creditRow?.accounts ?? []
+      const known = rows.filter((row) => Number.isFinite(row.balance?.total))
+      const failures = rows.length - known.length
+      const total = known.reduce((sum, row) => sum + row.balance.total, 0)
+
       return h('div', { className: 'ow-card' }, [
         h('div', { key: 'head', className: 'ow-cardhead' }, [
           h('strong', { key: 'n' }, product.displayName),
-          // 能力徽章常驻：这条车道能不能当主模型，是用户最先要判断的事。
-          h(Pill, { key: 'cap', tone: product.kind === 'service' ? 'warn' : 'ok' },
-            product.kind === 'service' ? t('capText') : t('capFull')),
+          h(Pill, { key: 'cap', tone: 'ok' }, t('capFull')),
           h(Pill, { key: 'r', tone: routeTone, strong: true }, routeText),
           h('span', { key: 'c', className: 'ow-count' },
-            `${enabledAccounts}/${accounts.length} ${t('accounts')}`),
+            enabledAccounts + '/' + accounts.length + ' ' + t('accounts')),
         ]),
         h('code', { key: 'ep', className: 'ow-ep' }, product.endpoint),
-        // 能力说明：服务型车道必须解释清楚，否则用户会拿它当主模型。
-        h('p', { key: 'caphint', className: 'ow-hint' },
-          product.kind === 'service' ? t('capTextHint') : t('capFullHint')),
+        h('p', { key: 'caphint', className: 'ow-hint' }, t('capFullHint')),
+
+        h('div', { key: 'sum', className: 'ow-chanmeta' }, [
+          h('span', { key: 'a' }, t('accounts') + ' ', h('b', null, enabledAccounts + '/' + accounts.length)),
+          h('span', { key: 'm' }, t('models') + ' ',
+            h('b', null, models.length === 0 ? '—' : onCount + '/' + models.length)),
+          capability.balance === true
+            ? h('span', { key: 'b', className: 'ow-sum' }, t('balance') + ' ',
+                h('b', null, balanceLoading || creditRow === undefined ? '…'
+                  : known.length === 0 ? '—' : formatAmount(total)))
+            : null,
+        ]),
+
+        h('div', { key: 'acts', className: 'ow-actions' }, [
+          h(Button, { key: 'add', kind: 'primary', disabled: busy, onClick: onLogin }, t('addAccount')),
+          accounts.length > 0
+            ? h(Button, { key: 'rn', disabled: busy, onClick: onRenewAll, title: t('renewalNote') }, t('renewAll'))
+            : null,
+          capability.balance === true
+            ? h(Button, { key: 'rb', disabled: busy || balanceLoading, onClick: onRefreshBalances },
+                balanceLoading ? t('balanceLoading') : t('balanceRefresh'))
+            : null,
+          capability.claim === true
+            ? h(Button, { key: 'cl', disabled: busy || claimBusy, onClick: onClaimAll },
+                claimBusy ? t('claimRun') : t('claim'))
+            : null,
+        ]),
+
+        // 部分账号查不到余额时**明说**：否则卡片上的合计数看起来像「余额掉了」。
+        creditRow !== undefined && failures > 0
+          ? h('p', { key: 'berr', className: 'ow-balerr-line', role: 'status' },
+              t('balancePartial').replace('{count}', String(failures)))
+          : null,
 
         h('div', { key: 'tabs', className: 'ow-tabs' }, [
           h('button', {
-            key: 'a',
-            type: 'button',
-            className: tab === 'accounts' ? 'ow-tab on' : 'ow-tab',
+            key: 'a', type: 'button', className: tab === 'accounts' ? 'ow-tab on' : 'ow-tab',
             onClick: () => onTab('accounts'),
           }, t('tabAccounts')),
           h('button', {
-            key: 'm',
-            type: 'button',
-            className: tab === 'models' ? 'ow-tab on' : 'ow-tab',
+            key: 'm', type: 'button', className: tab === 'models' ? 'ow-tab on' : 'ow-tab',
             onClick: () => onTab('models'),
-          }, models.length > 0 ? `${t('tabModels')} ${onCount}/${models.length}` : t('tabModels')),
+          }, models.length > 0 ? t('tabModels') + ' ' + onCount + '/' + models.length : t('tabModels')),
         ]),
 
         tab === 'models'
@@ -374,40 +524,73 @@ window.__ModuleLoader__.load({
             ])
           : accounts.length === 0
             ? h('p', { key: 'empty', className: 'ow-empty' }, t('empty'))
-            : h('ul', { key: 'list', className: 'ow-list' }, accounts.map((account) => h('li', {
-                key: account.id,
-                className: 'ow-row',
-              }, [
-                h('div', { key: 'meta', className: 'ow-meta' }, [
-                  h('strong', { key: 'n' }, account.nickname || account.id),
-                  h(Pill, { key: 'e', tone: account.enabled ? 'ok' : undefined },
-                    account.enabled ? t('enabled') : t('disabled')),
-                  Object.keys(account.modelRateLimits ?? {}).length > 0
-                    ? h(Pill, { key: 'l', tone: 'warn' }, t('rateLimited'))
-                    : null,
-                  h('span', { key: 'x', className: 'ow-dim' },
-                    `${t('expiresAt')}: ${formatTime(account.expiresAt, t)}`),
-                  account.refreshable ? null : h('span', { key: 'r', className: 'ow-dim' }, t('notRefreshable')),
-                ]),
-                h('div', { key: 'acts', className: 'ow-actions' }, [
-                  h(Button, {
-                    key: 't',
-                    disabled: busy,
-                    onClick: () => onAction({ action: account.enabled ? 'disable' : 'enable', id: account.id }),
-                  }, account.enabled ? t('disable') : t('enable')),
-                  h(Button, { key: 'r', disabled: busy, onClick: () => onAction({ action: 'refresh', id: account.id }) }, t('renew')),
-                  h(Button, { key: 'c', disabled: busy, onClick: () => onAction({ action: 'credits', id: account.id }) }, t('credits')),
-                  product.id === 'buddy'
-                    ? h(Button, { key: 'k', disabled: busy, onClick: () => onAction({ action: 'checkin', id: account.id }) }, t('checkin'))
-                    : null,
-                  h(Button, { key: 'p', disabled: busy, onClick: () => onAction({ action: 'probe', id: account.id }) }, t('probe')),
-                  h(Button, { key: 'd', kind: 'danger', disabled: busy, onClick: () => onAction({ action: 'remove', id: account.id }) }, t('remove')),
-                ]),
-              ]))),
-        // 登录入口放在卡片底部：与 OFM 的渠道卡一致（账号区最后一行是「新建账号」）。
-        h('div', { key: 'foot', className: 'ow-actions' }, [
-          h(Button, { key: 'add', kind: 'primary', disabled: busy, onClick: onLogin }, t('addAccount')),
-        ]),
+            : h('ul', { key: 'list', className: 'ow-list' }, accounts.map((account) => {
+                const row = rows.find((entry) => entry.accountId === account.id)
+                const checkin = row?.checkin
+                return h('li', { key: account.id, className: 'ow-row' }, [
+                  h('div', { key: 'meta', className: 'ow-meta' }, [
+                    h('strong', { key: 'n' }, account.nickname || account.id),
+                    h(Pill, { key: 'e', tone: account.enabled ? 'ok' : undefined },
+                      account.enabled ? t('enabled') : t('disabled')),
+                    Object.keys(account.modelRateLimits ?? {}).length > 0
+                      ? h(Pill, { key: 'l', tone: 'warn' }, t('rateLimited'))
+                      : null,
+                    h('span', { key: 'x', className: 'ow-dim' },
+                      t('expiresAt') + ': ' + formatTime(account.expiresAt, t)),
+                    account.refreshable ? null : h('span', { key: 'r', className: 'ow-dim' }, t('notRefreshable')),
+                    checkin !== null && checkin !== undefined && checkin.todayCheckedIn === true
+                      && Number.isFinite(checkin.todayCredit)
+                      ? h(Pill, { key: 'tg', tone: 'ok' },
+                          t('todayGot').replace('{credit}', formatAmount(checkin.todayCredit)))
+                      : null,
+                    checkin !== null && checkin !== undefined && Number.isFinite(checkin.streakDays) && checkin.streakDays > 0
+                      ? h('span', { key: 'st', className: 'ow-dim' },
+                          t('streak').replace('{days}', String(checkin.streakDays)))
+                      : null,
+                  ]),
+                  h('div', { key: 'bal', className: 'ow-balrow' },
+                    h(BalanceBadge, { row, loading: balanceLoading && row === undefined, t })),
+                  h('div', { key: 'acts', className: 'ow-actions' }, [
+                    h(Button, {
+                      key: 't',
+                      disabled: busy,
+                      onClick: () => onAction({ action: account.enabled ? 'disable' : 'enable', id: account.id }),
+                    }, account.enabled ? t('disable') : t('enable')),
+                    h(Button, { key: 'r', disabled: busy, onClick: () => onAction({ action: 'refresh', id: account.id }) }, t('renew')),
+                    h(Button, { key: 'c', disabled: busy, onClick: () => onAction({ action: 'credits', id: account.id }) }, t('credits')),
+                    capability.claim === true
+                      ? h(Button, { key: 'k', disabled: busy, onClick: () => onAction({ action: 'checkin', id: account.id }) }, t('checkin'))
+                      : null,
+                    h(Button, { key: 'p', disabled: busy, onClick: () => onAction({ action: 'probe', id: account.id }) }, t('probe')),
+                    h(Button, { key: 'd', kind: 'danger', disabled: busy, onClick: () => onAction({ action: 'remove', id: account.id }) }, t('remove')),
+                  ]),
+                ])
+              })),
+      ])
+    }
+
+    /**
+     * 「每日自动领积分」条。
+     *
+     * 与 OFM 的自动签到行同形：开关 + 状态药丸 + 上次结果 + 立即执行。
+     * 状态药丸三态必须分辨得开 —— 「进行中」和「今天没领」在用户眼里是
+     * 「等一下」与「去点一下」两种完全不同的动作。
+     */
+    function AutoCheckinBar(props) {
+      const { state, busy, t, onToggle, onRunNow } = props
+      const enabled = state?.enabled === true
+      const tone = state?.running === true ? 'warn' : state?.ranToday === true ? 'ok' : undefined
+      const text = state?.running === true ? t('autoRunning')
+        : state?.ranToday === true ? t('autoRan') : t('autoOff')
+      return h('div', { className: 'ow-auto' }, [
+        h(Switch, { key: 'sw', checked: enabled, disabled: busy || state === undefined, label: t('autoTitle'), onChange: onToggle }),
+        h(Pill, { key: 'p', tone, strong: true }, text),
+        typeof state?.lastResult === 'string' && state.lastResult !== ''
+          ? h('span', { key: 'l', className: 'ow-dim ow-auto-last', title: state.lastResult },
+              t('autoLast').replace('{result}', state.lastResult))
+          : null,
+        h('span', { key: 'sp', className: 'ow-auto-sp' },
+          h(Button, { disabled: busy || state === undefined, onClick: onRunNow }, t('autoRunNow'))),
       ])
     }
 
@@ -487,36 +670,84 @@ window.__ModuleLoader__.load({
       ])
     }
 
-    function SettingsPage(props) {
+    /**
+     * 账号车道页（CodeBuddy + WorkBuddy）。
+     *
+     * ## 数据分三跳，绝不合成一跳
+     *
+     * 1. \`/summary\` + \`/accounts\` + \`/models\` + \`/auto-checkin\` —— 都是读内存的
+     *    轻量调用，并排发；
+     * 2. \`/credits\`（**每个车道一次**）—— 每个账号一次上游请求，慢且可能失败，
+     *    所以它有独立的 loading 与错误位，不许把账号列表一起拖死；
+     * 3. 各个动作（领取 / 续期 / 探测）—— 做完只刷受影响的那部分。
+     *
+     * 第 2 步的道理与 OFM 的 \`credits.balances\` 完全一致：把余额塞进
+     * \`account.list\` 会让「打开页面」被网络耗时绑架，而一次查询失败就整页空白。
+     */
+    function AccountsPage(props) {
       const t = props.t ?? ((key) => key)
       const [summary, setSummary] = useState(undefined)
       const [accounts, setAccounts] = useState([])
       const [modelRows, setModelRows] = useState([])
+      const [credits, setCredits] = useState({})
+      const [balanceLoading, setBalanceLoading] = useState(false)
+      const [auto, setAuto] = useState(undefined)
       const [tabs, setTabs] = useState({})
       const [busy, setBusy] = useState(false)
+      const [claimBusy, setClaimBusy] = useState('')
       const [note, setNote] = useState(undefined)
-      // OpenCode 车道单独一份状态：它的形状与账号卡不同（没有账号，只有进程）。
-      const [opencode, setOpencode] = useState(undefined)
 
       const reload = useCallback(async () => {
         try {
-          // opencode 的状态单独拉：服务没跑时它也要能答（返回 running:false + 原因），
-          // 不能因为一条车道不可用就把整页打成错误页。
-          const [nextSummary, nextAccounts, nextModels, nextOpencode] = await Promise.all([
-            call('/summary'), call('/accounts'), call('/models'),
-            call('/opencode/status').catch((error) => ({ error: error.message })),
+          const [nextSummary, nextAccounts, nextModels, nextAuto] = await Promise.all([
+            call('/summary'),
+            call('/accounts'),
+            call('/models'),
+            // 自动领取状态单独吞掉错误：它读的是本插件的状态文件，
+            // 读不到不该让整页变成错误页（账号列表本身是好的）。
+            call('/auto-checkin').catch((error) => ({ error: error.message })),
           ])
           setSummary(nextSummary)
           setAccounts(nextAccounts.accounts ?? [])
           // 每个产品的模型清单拍平成一张表，卡片按 provider 过滤即可。
           setModelRows((nextModels.products ?? []).flatMap((product) => product.models ?? []))
-          setOpencode(nextOpencode)
+          setAuto(nextAuto.autoCheckin ?? undefined)
         } catch (error) {
-          setNote({ kind: 'error', text: `${t('error')}: ${error.message}` })
+          setNote({ kind: 'error', text: t('error') + ': ' + error.message })
         }
       }, [t])
 
       useEffect(() => { void reload() }, [reload])
+
+      /** 查余额：\`products\` 是要查的车道，\`force\` 绕过服务端 60 秒缓存。 */
+      const loadBalances = useCallback(async (products, force) => {
+        if (products.length === 0) return
+        setBalanceLoading(true)
+        try {
+          const pairs = await Promise.all(products.map(async (product) => {
+            try {
+              const payload = await call('/credits?provider=' + product.id + (force ? '&force=1' : ''))
+              return [product.id, payload]
+            } catch (error) {
+              // 单条车道查询失败只影响它自己那张卡：别把另一条的余额也清掉。
+              return [product.id, { provider: product.id, error: error.message, accounts: [], failures: 0 }]
+            }
+          }))
+          setCredits((current) => ({ ...current, ...Object.fromEntries(pairs) }))
+        } finally {
+          setBalanceLoading(false)
+        }
+      }, [])
+
+      // 汇总到手后再查余额：车道清单来自 /summary（能力位也在那里）。
+      useEffect(() => {
+        const products = (summary?.products ?? []).filter((product) => (product.credits ?? {}).balance === true)
+        if (products.length === 0) return
+        void loadBalances(products, false)
+      }, [summary, loadBalances])
+
+      /** 余额能力可用的车道（刷新余额按钮与领完后的刷新都用它）。 */
+      const balanceProducts = (summary?.products ?? []).filter((product) => (product.credits ?? {}).balance === true)
 
       const runAction = useCallback(async (request) => {
         setBusy(true)
@@ -524,26 +755,29 @@ window.__ModuleLoader__.load({
         try {
           if (request.action === 'credits') {
             const payload = await call('/credits', { provider: request.provider, id: request.id })
-            setNote({ kind: 'ok', text: describeBalance(payload.balance) })
+            setNote({ kind: 'ok', text: describeBalance(payload.balance, t) })
+            void loadBalances(balanceProducts, true)
           } else if (request.action === 'checkin') {
             const payload = await call('/checkin', { provider: request.provider, id: request.id })
-            setNote({ kind: 'ok', text: describeCheckin(payload.outcome) })
+            setNote({ kind: 'ok', text: describeOutcome(payload.outcome, t) })
+            void loadBalances(balanceProducts, true)
           } else if (request.action === 'probe') {
             const payload = await call('/probe', { provider: request.provider, model: request.model })
             setNote({
               kind: payload.ok ? 'ok' : 'error',
-              text: `${payload.ok ? t('probeOk') : t('probeFail')} · ${payload.model} · ${payload.ms} ms${payload.error !== undefined ? ` · ${payload.error}` : ''}`,
+              text: (payload.ok ? t('probeOk') : t('probeFail')) + ' · ' + payload.model + ' · ' + payload.ms + ' ms'
+                + (payload.error !== undefined ? ' · ' + payload.error : ''),
             })
           } else {
             await call('/account', { action: request.action, id: request.id })
             await reload()
           }
         } catch (error) {
-          setNote({ kind: 'error', text: `${t('error')}: ${error.message}` })
+          setNote({ kind: 'error', text: t('error') + ': ' + error.message })
         } finally {
           setBusy(false)
         }
-      }, [reload, t])
+      }, [balanceProducts, loadBalances, reload, t])
 
       const runModelAction = useCallback(async (provider, request) => {
         setBusy(true)
@@ -552,45 +786,84 @@ window.__ModuleLoader__.load({
           await call('/models', { provider, ...request })
           await reload()
         } catch (error) {
-          setNote({ kind: 'error', text: `${t('error')}: ${error.message}` })
+          setNote({ kind: 'error', text: t('error') + ': ' + error.message })
         } finally {
           setBusy(false)
         }
       }, [reload, t])
 
       /**
-       * OpenCode 服务动作。
+       * 一键领取（该车道全部账号）。
        *
-       * 三个动作的失败语义各不相同，故分开处理：
-       * - start 失败 → 把「哪个端口、为什么」原样显示（用户可能要去关掉占端口的进程）；
-       * - stop 只对「插件起的」开放（按钮在卡片里已按 managed 禁用）；
-       * - refresh 失败不致命，只是目录没更新。
+       * 结果里 \`failed > 0\` 时把提示条染成错误色，但**照常把明细念出来** ——
+       * 部分成功是常态（某个号的活动没开），全红会让人以为一个都没领到。
        */
-      const runOpencodeAction = useCallback(async (action) => {
-        setBusy(true)
+      const runClaimAll = useCallback(async (provider) => {
+        setClaimBusy(provider)
         setNote(undefined)
         try {
-          if (action === 'start') {
-            const started = await call('/opencode/start')
-            setNote({
-              kind: started.ok ? 'ok' : 'error',
-              text: started.ok
-                ? `${t('opencodeRunning')} · :${started.port} · ${started.modelCount} ${t('opencodeModels')}`
-                : String(started.error ?? ''),
-            })
-          } else if (action === 'stop') {
-            await call('/opencode/stop')
-          } else {
-            const refreshed = await call('/opencode/refresh')
-            setNote({ kind: 'ok', text: `${refreshed.count} ${t('opencodeModels')}` })
-          }
-          await reload()
+          const payload = await call('/claim', { provider })
+          setNote({ kind: payload.summary?.failed > 0 ? 'error' : 'ok', text: describeClaim(payload, t) })
         } catch (error) {
-          setNote({ kind: 'error', text: `${t('error')}: ${error.message}` })
+          setNote({ kind: 'error', text: t('error') + ': ' + error.message })
+        } finally {
+          setClaimBusy('')
+          void loadBalances(balanceProducts, true)
+        }
+      }, [balanceProducts, loadBalances, t])
+
+      /** 全部续期：逐账号续，单个失败不中断（与 OFM 的 refreshAll 同语义）。 */
+      const runRenewAll = useCallback(async (provider) => {
+        setBusy(true)
+        setNote(undefined)
+        let failed = 0
+        try {
+          const mine = (summary?.products ?? []).find((product) => product.id === provider)
+          const rows = accounts.filter((account) => account.provider === provider)
+          for (const account of rows) {
+            try {
+              await call('/account', { action: 'refresh', id: account.id })
+            } catch {
+              failed += 1
+            }
+          }
+          setNote({ kind: failed > 0 ? 'error' : 'ok',
+            text: (mine?.displayName ?? provider) + ': ' + (rows.length - failed) + '/' + rows.length })
+          await reload()
         } finally {
           setBusy(false)
         }
-      }, [reload, t])
+      }, [accounts, reload, summary, t])
+
+      const toggleAuto = useCallback(async () => {
+        setBusy(true)
+        setNote(undefined)
+        try {
+          const next = auto?.enabled !== true
+          const payload = await call('/auto-checkin', { enabled: next })
+          setAuto(payload.autoCheckin ?? undefined)
+          setNote({ kind: 'ok', text: next ? t('autoEnabled') : t('autoDisabled') })
+        } catch (error) {
+          setNote({ kind: 'error', text: t('error') + ': ' + error.message })
+        } finally {
+          setBusy(false)
+        }
+      }, [auto, t])
+
+      const runAutoNow = useCallback(async () => {
+        setBusy(true)
+        setNote(undefined)
+        try {
+          const payload = await call('/auto-checkin', { run: true })
+          setAuto(payload.autoCheckin ?? undefined)
+          setNote({ kind: 'ok', text: payload.autoCheckin?.lastResult ?? t('claimNone') })
+          void loadBalances(balanceProducts, true)
+        } catch (error) {
+          setNote({ kind: 'error', text: t('error') + ': ' + error.message })
+        } finally {
+          setBusy(false)
+        }
+      }, [balanceProducts, loadBalances, t])
 
       const startLogin = useCallback(async (provider) => {
         setBusy(true)
@@ -598,12 +871,12 @@ window.__ModuleLoader__.load({
         try {
           const started = await call('/login', { provider })
           // 打开浏览器：与 OFM 的登录按钮同一手法（宿主不代理这一步）。
-          try { window.open(started.loginUrl, '_blank', 'noopener') } catch { /* 弹窗被拦：URL 就在下面 */ }
+          try { window.open(started.loginUrl, '_blank', 'noopener') } catch { /* 弹窗被拦：URL 在上游返回里 */ }
           const done = await call('/login/poll', { provider, state: started.state })
-          setNote({ kind: 'ok', text: `${t('loginDone')} · ${done.accountId}` })
+          setNote({ kind: 'ok', text: t('loginDone') + ' · ' + done.accountId })
           await reload()
         } catch (error) {
-          setNote({ kind: 'error', text: `${t('loginFailed')}: ${error.message}` })
+          setNote({ kind: 'error', text: t('loginFailed') + ': ' + error.message })
         } finally {
           setBusy(false)
         }
@@ -618,6 +891,14 @@ window.__ModuleLoader__.load({
       const allModels = modelRows.length
       const offModels = modelRows.filter((model) => model.disabled).length
       const yielded = summary.products.some((product) => product.route === 'yielded')
+      const knownRows = Object.values(credits).filter((row) => Number.isFinite(row?.total))
+      const creditsKnown = knownRows.length > 0
+      const creditsTotal = knownRows.reduce((sum, row) => sum + row.total, 0)
+      const autoText = auto === undefined ? t('busy')
+        : auto.enabled !== true ? t('autoDisabledShort')
+          : auto.running === true ? t('autoRunning')
+            : auto.ranToday === true ? t('autoRan') : t('autoOff')
+      const autoTone = auto?.running === true ? 'warn' : auto?.enabled !== true ? 'warn' : auto?.ranToday === true ? 'ok' : undefined
 
       return h('div', { className: 'ow-root' }, [
         // ── 顶部玻璃面板：与 OFM 的 hero 同款（标题 + 副标题 + 右侧药丸） ──
@@ -629,82 +910,213 @@ window.__ModuleLoader__.load({
             ]),
             h('div', { key: 'pills', className: 'ow-pills' }, [
               h(Pill, {
-                key: 'a',
-                strong: true,
+                key: 'a', strong: true,
                 tone: summary.pool === 'absent' ? 'err' : enabledAccounts > 0 ? 'ok' : 'warn',
-              }, `${enabledAccounts}/${totalAccounts} ${t('accounts')}`),
+              }, enabledAccounts + '/' + totalAccounts + ' ' + t('accounts')),
               h(Pill, { key: 'm', strong: true },
-                allModels > 0 ? `${allModels - offModels}/${allModels} ${t('models')}` : t('models')),
+                allModels > 0 ? (allModels - offModels) + '/' + allModels + ' ' + t('models') : t('models')),
+              creditsKnown
+                ? h(Pill, { key: 'b', strong: true }, t('balance') + ' ' + formatAmount(creditsTotal))
+                : null,
               h(Pill, {
                 key: 'p',
                 tone: summary.pool === 'absent' ? 'err' : undefined,
               }, summary.pool === 'host' ? t('poolHost') : summary.pool === 'local' ? t('poolLocal') : t('poolAbsent')),
-              // 第三条车道的一句话状态：就绪 / 需动作 / 不可用。
-              h(Pill, {
-                key: 'o',
-                strong: true,
-                tone: opencode?.service?.running !== true ? 'err'
-                  : opencode?.lane?.mounted === true ? 'ok' : 'warn',
-              }, `OpenCode · ${opencode?.service?.running !== true ? t('laneDown')
-                : opencode?.lane?.mounted === true ? t('laneReady') : t('laneNeedsAction')}`),
+              h(Pill, { key: 'q', strong: true, tone: autoTone }, t('autoTitle') + ' · ' + autoText),
             ]),
           ]),
           yielded ? h('p', { key: 'y', className: 'ow-hint' }, t('yieldNote')) : null,
         ]),
 
-        note !== undefined ? h('p', { key: 'n', className: `ow-note ${note.kind}` }, note.text) : null,
+        note !== undefined ? h('p', { key: 'n', className: 'ow-note ' + note.kind }, note.text) : null,
 
-        // ── 卡片网格：账号车道在前，服务车道在后（用户先配账号，再开免费层） ──
-        h('div', { key: 'cards', className: 'ow-cards' }, [
-          ...summary.products.map((product) => h(ProductCard, {
-            key: product.id,
-            product,
-            accounts: accounts.filter((account) => account.provider === product.id),
-            models: modelRows.filter((model) => model.provider === product.id),
-            tab: tabs[product.id] ?? 'accounts',
-            onTab: (next) => setTabs((current) => ({ ...current, [product.id]: next })),
-            busy,
-            t,
-            onAction: (request) => void runAction({ ...request, provider: product.id }),
-            onModelAction: (request) => void runModelAction(product.id, request),
-            onLogin: () => void startLogin(product.id),
-          })),
-          ...(opencode?.lane !== undefined ? [h(ServiceCard, {
-            key: 'opencode',
-            lane: opencode.lane,
-            status: opencode.service,
-            models: opencode.models,
-            busy,
-            t,
-            onStart: () => void runOpencodeAction('start'),
-            onStop: () => void runOpencodeAction('stop'),
-            onRefresh: () => void runOpencodeAction('refresh'),
-          })] : []),
-        ]),
+        h(AutoCheckinBar, {
+          key: 'auto',
+          state: auto,
+          busy,
+          t,
+          onToggle: () => void toggleAuto(),
+          onRunNow: () => void runAutoNow(),
+        }),
+        h('p', { key: 'ah', className: 'ow-hint' }, t('autoHint')),
+
+        // ── 卡片网格：两条账号车道并排 ────────────────────────────────────────
+        h('div', { key: 'cards', className: 'ow-cards' }, summary.products.map((product) => h(ProductCard, {
+          key: product.id,
+          product,
+          accounts: accounts.filter((account) => account.provider === product.id),
+          models: modelRows.filter((model) => model.provider === product.id),
+          creditRow: credits[product.id],
+          balanceLoading,
+          tab: tabs[product.id] ?? 'accounts',
+          onTab: (next) => setTabs((current) => ({ ...current, [product.id]: next })),
+          busy,
+          claimBusy: claimBusy === product.id,
+          t,
+          onAction: (request) => void runAction({ ...request, provider: product.id }),
+          onModelAction: (request) => void runModelAction(product.id, request),
+          onLogin: () => void startLogin(product.id),
+          onClaimAll: () => void runClaimAll(product.id),
+          onRefreshBalances: () => void loadBalances([product], true),
+          onRenewAll: () => void runRenewAll(product.id),
+        }))),
 
         h('div', { key: 'foot', className: 'ow-foot' }, [
-          h(Button, { key: 'r', disabled: busy, onClick: () => void reload() }, t('refresh')),
-          h('span', { key: 'v', className: 'ow-dim' }, `v${summary.version ?? ''}`),
+          h(Button, {
+            key: 'r',
+            disabled: busy,
+            onClick: () => { void reload(); void loadBalances(balanceProducts, true) },
+          }, t('refresh')),
+          h('span', { key: 'v', className: 'ow-dim' }, 'v' + (summary.version ?? '')),
         ]),
       ])
     }
 
-    function describeBalance(balance) {
-      if (balance === null || balance === undefined) return '（查不到余额）'
-      try {
-        return JSON.stringify(balance).slice(0, 400)
-      } catch {
-        return '（余额格式无法展示）'
+    /**
+     * OpenCode 免费层页（服务型车道）。
+     *
+     * 只回答三个问题：**进程在不在跑、端口多少、目录拉到没有**。
+     * 这里没有「账号」这个概念，页面也不提供任何登录入口 ——
+     * 这条车道本来就是「不用登录」的那一条。
+     */
+    function OpenCodePage(props) {
+      const t = props.t ?? ((key) => key)
+      const [status, setStatus] = useState(undefined)
+      const [version, setVersion] = useState('')
+      const [busy, setBusy] = useState(false)
+      const [note, setNote] = useState(undefined)
+
+      const reload = useCallback(async () => {
+        try {
+          setStatus(await call('/opencode/status'))
+        } catch (error) {
+          setNote({ kind: 'error', text: t('error') + ': ' + error.message })
+        }
+      }, [t])
+
+      useEffect(() => { void reload() }, [reload])
+      // 版本号只是一行脚注：单独拉、失败就算了，不能影响服务卡。
+      useEffect(() => {
+        void call('/summary').then((payload) => setVersion(payload.version ?? '')).catch(() => {})
+      }, [])
+
+      const runAction = useCallback(async (action) => {
+        setBusy(true)
+        setNote(undefined)
+        try {
+          if (action === 'start') {
+            const started = await call('/opencode/start')
+            setNote({
+              kind: started.ok ? 'ok' : 'error',
+              text: started.ok
+                ? t('opencodeRunning') + ' · :' + started.port + ' · ' + started.modelCount + ' ' + t('opencodeModels')
+                : String(started.error ?? ''),
+            })
+          } else if (action === 'stop') {
+            await call('/opencode/stop')
+          } else {
+            const refreshed = await call('/opencode/refresh')
+            setNote({ kind: 'ok', text: refreshed.count + ' ' + t('opencodeModels') })
+          }
+          await reload()
+        } catch (error) {
+          setNote({ kind: 'error', text: t('error') + ': ' + error.message })
+        } finally {
+          setBusy(false)
+        }
+      }, [reload, t])
+
+      if (status === undefined) {
+        return h('div', { className: 'ow-root' }, h('p', { className: 'ow-dim' }, t('busy')))
       }
+      const running = status.service?.running === true
+      const mounted = status.lane?.mounted === true
+
+      return h('div', { className: 'ow-root' }, [
+        h('header', { key: 'hero', className: 'ow-hero' }, [
+          h('div', { key: 'head', className: 'ow-pagehead' }, [
+            h('div', { key: 't', className: 'ow-pagetitle' }, [
+              h('h2', { key: 'h' }, t('localTitle')),
+              h('p', { key: 's', className: 'ow-pagesub' }, t('localIntro')),
+            ]),
+            h('div', { key: 'pills', className: 'ow-pills' }, [
+              h(Pill, {
+                key: 's', strong: true, tone: !running ? 'err' : mounted ? 'ok' : 'warn',
+              }, !running ? t('opencodeStopped') : mounted ? t('opencodeRunning') : t('laneNeedsAction')),
+              h(Pill, { key: 'c', tone: 'warn' }, t('capText')),
+              running ? h(Pill, { key: 'm', strong: true }, (status.models?.count ?? 0) + ' ' + t('opencodeModels')) : null,
+            ]),
+          ]),
+          h('p', { key: 'why', className: 'ow-hint' }, t('localWhy')),
+        ]),
+
+        note !== undefined ? h('p', { key: 'n', className: 'ow-note ' + note.kind }, note.text) : null,
+
+        h('div', { key: 'cards', className: 'ow-cards' }, [h(ServiceCard, {
+          key: 'opencode',
+          lane: status.lane,
+          status: status.service,
+          models: status.models,
+          busy,
+          t,
+          onStart: () => void runAction('start'),
+          onStop: () => void runAction('stop'),
+          onRefresh: () => void runAction('refresh'),
+        })]),
+
+        h('div', { key: 'foot', className: 'ow-foot' }, [
+          h(Button, { key: 'r', disabled: busy, onClick: () => void reload() }, t('refresh')),
+          h('span', { key: 'v', className: 'ow-dim' }, 'v' + version),
+        ]),
+      ])
     }
 
-    function describeCheckin(outcome) {
-      if (outcome === null || outcome === undefined) return '（无返回）'
-      try {
-        return JSON.stringify(outcome).slice(0, 400)
-      } catch {
-        return '（返回无法展示）'
+    /**
+     * 积分的紧凑写法（与 OFM 的 kilo 同口径）。
+     *
+     * 积分动辄上万，逐位显示会把卡片撑歪；但**小数值不能被抹成 0** ——
+     * 「还剩 3 积分」和「还剩 0 积分」对用户是两件事。
+     */
+    function formatAmount(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return '—'
+      const abs = Math.abs(value)
+      if (abs >= 1000000) return (value / 1000000).toFixed(abs >= 10000000 ? 0 : 1) + 'M'
+      if (abs >= 1000) return (value / 1000).toFixed(abs >= 10000 ? 0 : 1) + 'K'
+      return Number.isInteger(value) ? String(value) : value.toFixed(2)
+    }
+
+    /** 把一次「一键领取」的返回翻成人话（部分成功要全念出来）。 */
+    function describeClaim(payload, t) {
+      const summary = payload?.summary ?? {}
+      const parts = []
+      if (summary.claimed > 0) {
+        parts.push(t('claimDone').replace('{count}', String(summary.claimed)).replace('{credit}', formatAmount(summary.totalCredit)))
       }
+      if (summary.alreadyClaimed > 0) parts.push(t('claimAlready').replace('{count}', String(summary.alreadyClaimed)))
+      if (summary.inactive > 0) parts.push(t('claimNone'))
+      if (summary.failed > 0) parts.push(t('claimFailed').replace('{count}', String(summary.failed)))
+      return parts.length === 0 ? t('claimNone') : parts.join('，')
+    }
+
+    /** 单个账号的领取结果（per-account「领积分」按钮）。 */
+    function describeOutcome(outcome, t) {
+      if (outcome === null || outcome === undefined) return t('claimNone')
+      if (outcome.kind === 'claimed') {
+        return t('claimDone').replace('{count}', '1').replace('{credit}', formatAmount(outcome.credit))
+      }
+      if (outcome.kind === 'already-claimed') return typeof outcome.message === 'string' && outcome.message !== '' ? outcome.message : t('claimAlready').replace('{count}', '1')
+      if (outcome.kind === 'inactive') return typeof outcome.message === 'string' && outcome.message !== '' ? outcome.message : t('claimNone')
+      return typeof outcome.message === 'string' && outcome.message !== '' ? outcome.message : t('claimFailed').replace('{count}', '1')
+    }
+
+    /** 把一次「查积分」的返回翻成人话（单个账号）。 */
+    function describeBalance(balance, t) {
+      if (balance === null || balance === undefined) return t('balanceNone')
+      const total = Number.isFinite(balance.total) ? formatAmount(balance.total) : '?'
+      const packages = (balance.packages ?? [])
+        .filter((pkg) => pkg.active !== false)
+        .map((pkg) => pkg.name + ' ' + formatAmount(pkg.remaining))
+      return t('balance') + ' ' + total + (packages.length > 0 ? '（' + packages.join(' · ') + '）' : '')
     }
 
     const STYLE_ID = 'free-model-css'
@@ -981,6 +1393,57 @@ window.__ModuleLoader__.load({
 
 .ow-foot { display: flex; gap: 10px; align-items: center; padding-top: 2px; }
 
+/* ── 自动领积分条 ──────────────────────────────────────────────────────── */
+.ow-auto {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: var(--dsw-radius-lg, 13px);
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-3) 80%, transparent);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 5%);
+}
+.ow-auto-last {
+  font-size: 11px;
+  max-width: 46ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ow-auto-sp { margin-left: auto; }
+
+/* ── 卡片汇总行与余额徽章 ──────────────────────────────────────────────── */
+.ow-chanmeta { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: var(--dsw-alias-label-tertiary); }
+.ow-chanmeta b { color: var(--dsw-alias-label-primary); font-weight: 620; }
+.ow-sum b { color: var(--dsw-alias-state-success-primary); }
+.ow-balrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ow-bal {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-success-primary) 40%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+}
+.ow-balerr { font-size: 11px; color: var(--dsw-alias-state-error-primary); overflow-wrap: anywhere; }
+.ow-balerr-line {
+  margin: 0;
+  padding: 6px 9px;
+  border-radius: var(--dsw-radius-md, 9px);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 8%, transparent);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+}
+
 /* 尊重系统的减少动效偏好：与 OFM 同一条约定。 */
 @media (prefers-reduced-motion: reduce) {
   .ow-btn, .ow-row, .ow-mrow, .ow-tab, .ow-pill { transition: none !important; }
@@ -1007,21 +1470,37 @@ window.__ModuleLoader__.load({
        * 只为**离线渲染测试**：`test/render.mjs` 需要单独渲染卡片，而它们
        * 定义在 factory 闭包里。生产路径完全不读这个字段。
        */
-      __test: { ProductCard, ServiceCard, SettingsPage },
+      __test: { ProductCard, ServiceCard, AccountsPage, OpenCodePage, AutoCheckinBar },
       inject: ['slots', 'locale'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-free-model: dictionaries')
         ctx.effect(() => ensureStyles(), 'dsh-free-model: styles')
+        /**
+         * 两个设置页，各自独立注册。
+         *
+         * ⚠️ 页面顺序是固定的：**账号车道在前**（用户日常要管的是积分与账号），
+         * 「不需要登录的本地车道」在后（配一次就不用再管）。
+         * OFM 是 order 35，故这两页排在它之后：先看官方总览，再看补位车道。
+         */
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',
           id: 'free-model',
-          // 排在 OFM 之后（OFM 是 35）：用户先看官方总览，再看这里的补位车道。
           order: 37,
-          label: () => '免费模型',
+          label: () => zh.nav,
           locale: NS,
         }, (slotProps) => {
           const translate = slotProps.t ?? ((key) => (zh[key] ?? key))
-          return h(SettingsPage, { ...slotProps, t: translate })
+          return h(AccountsPage, { ...slotProps, t: translate })
+        }))
+        ctx.slots.inject('settings.section', () => ctx.slots.register({
+          name: 'settings.section',
+          id: 'free-model-opencode',
+          order: 38,
+          label: () => zh.navLocal,
+          locale: NS,
+        }, (slotProps) => {
+          const translate = slotProps.t ?? ((key) => (zh[key] ?? key))
+          return h(OpenCodePage, { ...slotProps, t: translate })
         }))
       },
     }

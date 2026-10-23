@@ -8,11 +8,14 @@
  * 3. 模型目录与 `resolveModel` 的元数据（含思考档位与图片能力）；
  * 4. 与 OFM ≤2.5.7 共存（路由已占用）时**让位而不抛错**；
  * 5. 自己重跑（inject 重入）时仍算 `registered`，不会被误判成让位；
- * 6. HTTP 面的每一条路由 + 信任围栏。
+ * 6. HTTP 面的每一条路由 + 信任围栏；
+ * 7. 积分（余额 / 一键领取）与每日自动领积分开关 —— 用假的 fetch 打，
+ *    不碰腾讯的计费接口，也不写用户真实的 `~/.dsh`。
  */
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -58,9 +61,23 @@ function makeCredentials() {
   }
 }
 
-function makePool(accounts) {
+function makePool(accounts, credentials) {
   return {
     listAccountsByProvider(provider) { return [...accounts.values()].filter((a) => a.provider === provider) },
+    /**
+     * 与 LocalPool 同语义：池条目只存 ref，凭据值在 credentials 服务里。
+     *
+     * ⚠️ 这个方法**必须有**：积分（余额 / 签到）全都要先解析出凭据。
+     * 原先的替身漏了它，于是「查不到余额」被当成上游的问题 ——
+     * 真正的原因是解析器拿不到 credential 对象。
+     */
+    async resolveCredentialForAccount(id) {
+      const entry = accounts.get(id)
+      if (entry === undefined) return undefined
+      const resolved = await credentials.resolve(entry.credentialRef)
+      if (resolved === undefined) return undefined
+      try { return JSON.parse(resolved.value) } catch { return undefined }
+    },
     async listAccounts(provider) { return this.listAccountsByProvider(provider) },
     listAllAccounts() { return [...accounts.values()] },
     findAccount(id) { return accounts.get(id) },
@@ -165,7 +182,7 @@ const accounts = new Map([
   ['buddy-aaaabbbb', { id: 'buddy-aaaabbbb', provider: 'buddy', nickname: '国内号', enabled: true, credentialRef: 'BUDDY_ACCOUNT_AAAABBBB', createdAt: 1, expiresAt: Date.now() + 3600_000, refreshable: true }],
   ['workbuddy-ccccdddd', { id: 'workbuddy-ccccdddd', provider: 'workbuddy', nickname: '国际号', enabled: true, credentialRef: 'WORKBUDDY_ACCOUNT_CCCCDDDD', createdAt: 1, refreshable: true }],
 ])
-const pool = makePool(accounts)
+const pool = makePool(accounts, credentials)
 
 const entry = await import(new URL('../index.js', import.meta.url).href)
 check('name', () => assert.equal(entry.name, 'dsh-free-model'))
@@ -215,8 +232,80 @@ const opencodeModels = [
   { id: 'opencode/glm-5.3-flash-free', providerID: 'opencode', modelID: 'glm-5.3-flash-free', name: 'GLM 5.3 Flash (free)', contextWindow: 200_000, maxOutputTokens: 32_000 },
 ]
 
+/**
+ * 腾讯计费接口的替身。
+ *
+ * 积分那三个端点的**响应形状**（`code` / `data.Response.Data.Accounts` /
+ * `today_checked_in`）必须与真实上游一致 —— 形状写错会让 core/credits.js 的
+ * 解析器静默返回 null，测试于是「通过」而线上是空的。
+ */
+const billingCalls = { balance: 0, status: 0, claim: 0 }
+function makeBillingFetcher() {
+  return async (url) => {
+    const path = new URL(String(url)).pathname
+    const respond = (body) => ({ status: 200, async text() { return JSON.stringify(body) } })
+    if (path.endsWith('/get-user-resource')) {
+      billingCalls.balance += 1
+      return respond({
+        code: 0,
+        data: {
+          Response: {
+            Data: {
+              Accounts: [{
+                PackageName: '月度包',
+                CapacityUnit: 'credit',
+                CycleCapacityRemain: 1234,
+                CycleCapacitySize: 2000,
+                CycleCapacityUsed: 766,
+                Status: 1,
+                CycleStartTime: '',
+                CycleEndTime: '',
+                ExpiredTime: '',
+              }],
+            },
+          },
+        },
+      })
+    }
+    if (path.endsWith('/checkin-activity-status')) {
+      billingCalls.status += 1
+      return respond({
+        code: 0,
+        data: {
+          active: true,
+          today_checked_in: false,
+          streak_days: 3,
+          daily_credit: 10,
+          today_credit: 0,
+          is_streak_day: false,
+          total_credits: 30,
+          checkin_dates: [],
+          activity_name: '活动',
+          theme_name: '主题',
+          end_time: '',
+        },
+      })
+    }
+    if (path.endsWith('/daily-checkin')) {
+      billingCalls.claim += 1
+      return respond({ code: 0, msg: '', data: { credit: 10, streak_days: 3, is_streak_day: false } })
+    }
+    return { status: 404, async text() { return 'not found' } }
+  }
+}
+
+// 自动领积分的状态文件写到临时目录：单测不该碰用户真实的 ~/.dsh
+// （`resolveDshHome` 优先读这个环境变量）。
+process.env.DSH_CHANNEL_PACK_STATE_DIR = mkdtempSync(join(tmpdir(), 'free-model-test-'))
+
+const billing = makeBillingFetcher()
 const harness = makeCtx({ services: { credentials, accountPool: pool } })
-entry.apply(harness.ctx, { opencodeService: makeOpenCodeService({ models: opencodeModels }) })
+entry.apply(harness.ctx, {
+  opencodeService: makeOpenCodeService({ models: opencodeModels }),
+  // 测试接缝：积分走假 fetch。后台定时器用默认的 30 秒延迟（unref，不会挂住进程），
+  // 故这里的断言不会被一次后台跑批打乱。
+  creditsFetcher: billing,
+})
 harness.runInjections()
 
 check('三条车道都已注册', () => {
@@ -529,6 +618,93 @@ await checkAsync('/models 不返回服务型车道（形状不同）', async () 
   assert.ok(res.payload.products.every((product) => product.id !== 'opencode'))
 })
 
+// ── 积分：余额 / 一键领取 / 自动领取开关 ─────────────────────────────────
+await checkAsync('summary 带上每条车道的积分能力', async () => {
+  const res = await callRoute(handler, 'GET', '/api/free-model/summary')
+  const buddy = res.payload.products.find((product) => product.id === 'buddy')
+  const workbuddy = res.payload.products.find((product) => product.id === 'workbuddy')
+  // CodeBuddy 有签到接口，WorkBuddy 国际版没有 —— 这是产品事实，页面据此渲染。
+  assert.deepEqual(buddy.credits, { balance: true, claim: true })
+  assert.equal(workbuddy.credits.balance, true)
+  assert.equal(workbuddy.credits.claim, false)
+})
+
+await checkAsync('余额：逐账号查询并汇总', async () => {
+  const res = await callRoute(handler, 'GET', '/api/free-model/credits?provider=buddy')
+  assert.equal(res.status, 200)
+  assert.equal(res.payload.accounts.length, 1)
+  const row = res.payload.accounts[0]
+  assert.equal(row.accountId, 'buddy-aaaabbbb')
+  assert.equal(row.balance.total, 1234)
+  assert.equal(row.checkin.todayCheckedIn, false)
+  assert.equal(row.checkin.streakDays, 3)
+  assert.equal(res.payload.total, 1234)
+  assert.equal(res.payload.known, 1)
+  assert.equal(res.payload.failures, 0)
+})
+
+await checkAsync('余额有 60 秒缓存，force 才重新打上游', async () => {
+  const before = billingCalls.balance
+  const cached = await callRoute(handler, 'GET', '/api/free-model/credits?provider=buddy')
+  assert.equal(cached.payload.cached, true)
+  assert.equal(billingCalls.balance, before, '缓存命中时不该再打上游')
+  await callRoute(handler, 'GET', '/api/free-model/credits?provider=buddy&force=1')
+  assert.equal(billingCalls.balance, before + 1)
+})
+
+await checkAsync('余额：缺 provider / 未知 provider / 服务型车道都被拒', async () => {
+  assert.equal((await callRoute(handler, 'GET', '/api/free-model/credits')).status, 400)
+  assert.equal((await callRoute(handler, 'GET', '/api/free-model/credits?provider=nope')).status, 400)
+  const lane = await callRoute(handler, 'GET', '/api/free-model/credits?provider=opencode')
+  assert.equal(lane.status, 409)
+  assert.match(lane.payload.error, /服务型车道/)
+})
+
+await checkAsync('一键领取：逐账号领取并汇总', async () => {
+  const res = await callRoute(handler, 'POST', '/api/free-model/claim', { provider: 'buddy' })
+  assert.equal(res.status, 200)
+  assert.equal(res.payload.summary.claimed, 1)
+  assert.equal(res.payload.summary.totalCredit, 10)
+  assert.equal(res.payload.results[0].outcome.kind, 'claimed')
+})
+
+await checkAsync('WorkBuddy 拒绝一键领取（产品事实，不是暂时失败）', async () => {
+  const res = await callRoute(handler, 'POST', '/api/free-model/claim', { provider: 'workbuddy' })
+  assert.equal(res.status, 400)
+  assert.match(res.payload.error, /没有签到接口/)
+})
+
+await checkAsync('自动领积分：默认开启、今日未跑', async () => {
+  const res = await callRoute(handler, 'GET', '/api/free-model/auto-checkin')
+  assert.equal(res.status, 200)
+  assert.equal(res.payload.autoCheckin.enabled, true)
+  assert.equal(res.payload.autoCheckin.ranToday, false)
+  assert.deepEqual(res.payload.autoCheckin.channels, [])
+})
+
+await checkAsync('自动领积分：立刻跑一轮 → 记下今日与结果', async () => {
+  const res = await callRoute(handler, 'POST', '/api/free-model/auto-checkin', { run: true })
+  const state = res.payload.autoCheckin
+  assert.equal(state.ranToday, true)
+  assert.match(state.lastResult, /1 个账号领取成功/)
+  // WorkBuddy 没有签到接口，自动跑批必须把它标成「无签到接口」而不是失败。
+  const workbuddy = state.channels.find((entry) => entry.provider === 'workbuddy')
+  assert.equal(workbuddy.text, '无签到接口')
+})
+
+await checkAsync('自动领积分：开关写 false 后 state 变 false', async () => {
+  const res = await callRoute(handler, 'POST', '/api/free-model/auto-checkin', { enabled: false })
+  assert.equal(res.payload.autoCheckin.enabled, false)
+  const back = await callRoute(handler, 'POST', '/api/free-model/auto-checkin', { enabled: true })
+  assert.equal(back.payload.autoCheckin.enabled, true)
+})
+
+await checkAsync('自动领积分：非布尔 enabled 被拒（不静默回落）', async () => {
+  const res = await callRoute(handler, 'POST', '/api/free-model/auto-checkin', { enabled: 'yes' })
+  assert.equal(res.status, 400)
+  assert.match(res.payload.error, /布尔值/)
+})
+
 // ── 场景 4：浏览器半身的注册名 ─────────────────────────────────────────────
 // Client Loader 用包名当 graph row 的 id：`__ModuleLoader__.load({id})` 写的名字
 // 对不上包名时，它会判定「加载了却没注册」，回退到单包 URL 再执行一次，
@@ -555,13 +731,17 @@ check('样式表不使用不存在的 --dsh-* 变量', () => {
 
 check('UI 原语在页面之前定义（避免 TDZ）', () => {
   const client = readFileSync(join(ROOT, 'client.js'), 'utf8')
-  // Switch / Pill / Button 是 const 箭头函数，没有提升；若定义在 SettingsPage
-  // 之后，渲染时会抛 ReferenceError（真实踩过：整页白屏）。
-  const page = client.indexOf('function SettingsPage')
+  // Switch / Pill / Button 曾经被写成 const 箭头函数放在页面之后，渲染时直接
+  // ReferenceError（真实踩过：整页白屏）。现在它们是 function 声明（有提升），
+  // 这条断言保证「定义在页面之前」这条约定不被下一次重构丢掉。
   for (const name of ['Switch', 'Pill', 'Button']) {
     const at = client.indexOf(`function ${name}`)
     assert.ok(at > 0, `${name} 未定义`)
-    assert.ok(at < page, `${name} 定义在 SettingsPage 之后，渲染会抛 ReferenceError`)
+    for (const page of ['function AccountsPage', 'function OpenCodePage', 'function ProductCard']) {
+      const pageAt = client.indexOf(page)
+      assert.ok(pageAt > 0, `${page} 未定义`)
+      assert.ok(at < pageAt, `${name} 定义在 ${page.replace('function ', '')} 之后，渲染会抛 ReferenceError`)
+    }
   }
 })
 
