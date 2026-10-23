@@ -127,6 +127,8 @@ export class OpenCodeClient {
     this.sessions = new Map()
     /** 本实例创建过的全部会话（dispose 时清理）。 */
     this.created = new Set()
+    /** 运行时读到的工具开关表（读一次就缓存；读不到时保持 undefined）。 */
+    this.toolTableCache = undefined
     /**
      * 按 provider 记录「上游为什么调不通」。
      *
@@ -320,6 +322,39 @@ export class OpenCodeClient {
     } catch { /* 中断是尽力而为：会话可能已经结束 */ }
   }
 
+  /**
+   * 工具开关表：**运行时**取自上游，读不到才退回硬编码快照。
+   *
+   * ## 为什么不能写死（2026-10-24 修正）
+   *
+   * `toolsDisabled()` 只关 `OPENCODE_TOOLS` 里那 14 个名字 —— 那是 1.19.3 的
+   * 快照。opencode 升级新增内置工具时，新名字不在表里就是**默认启用**，而这条
+   * 车道的定位是「不许它动用户的文件」。于是硬编码清单不只是维护负担，它是个
+   * 安全洞：上游漏掉一个名字，就等于在这台机器上开了 bash / write / edit。
+   *
+   * `/experimental/tool/ids` 给出该 build 的真实清单；取到就把每一个都置 false，
+   * 并把硬编码快照里的名字**也一起关**（上游列表有遗漏时兜住）。取不到（老版本
+   * 没有这个接口）退回快照并记一次日志 —— 两条路的语义都是「全关」，绝不会
+   * 因为读不到就放开。
+   */
+  async toolTable() {
+    if (this.toolTableCache !== undefined) return this.toolTableCache
+    try {
+      const response = await this.request('/experimental/tool/ids', { method: 'GET' })
+      const ids = Array.isArray(response) ? response : []
+      const names = ids.filter((name) => typeof name === 'string' && name !== '')
+      if (names.length === 0) throw new Error('empty tool id list')
+      const table = {}
+      for (const name of names) table[name] = false
+      for (const name of OPENCODE_TOOLS) table[name] = false
+      this.toolTableCache = table
+      return table
+    } catch (error) {
+      this.logger?.warn?.('opencode tool ids 读取失败，退回硬编码清单：' + (error instanceof Error ? error.message : String(error)))
+      return toolsDisabled()
+    }
+  }
+
   /** 记一次 provider 级失败（供状态页显示）。 */
   noteFailure(providerID, message) {
     if (typeof providerID !== 'string' || providerID === '') return
@@ -377,7 +412,7 @@ export class OpenCodeClient {
       // ⚠️ 工具全关：本通道是纯文本模型。opencode 的 build agent 默认带
       // bash / write / edit，一旦放开，模型会真的在用户机器上执行命令 ——
       // 而 DSH 侧的 tool call 又拿不到它的结果（两套工具协议不互通）。
-      tools: toolsDisabled(),
+      tools: await this.toolTable(),
     })
 
     // SSE 优先：真 token 增量 + 立刻拿到 session.error。
@@ -659,6 +694,22 @@ function upstreamError(error) {
 /** 免费层被拒的判定（供状态页与适配器共用）。 */
 export function isFreeTierRejection(message) {
   return FREE_TIER_MARK.test(String(message ?? ''))
+}
+
+/**
+ * 当日免费额度耗尽的固定特征。
+ *
+ * 实测原文：`Free usage limit reached. Subscribe to OpenCode Go to keep going`。
+ *
+ * ⚠️ 这与「调用方身份被拒」（上面那条）是**两件不同的事**，处置完全相反：
+ * 身份拒绝重试永远不会好；额度耗尽是**按天重置**的（UTC 0:00 = 北京 08:00）。
+ * 2026-10-24 之前这里没有这条分支，于是额度耗尽会漏到 `describeUpstreamFailure`
+ * 的兜底分支，用户看到的是上游英文原文 —— 分不清该等到早上还是该换通道。
+ */
+const FREE_QUOTA_MARK = /free usage limit|freeusagelimiterror|usage limit reached|subscribe to opencode go/i
+
+export function isQuotaExhausted(message) {
+  return FREE_QUOTA_MARK.test(String(message ?? ''))
 }
 
 /**

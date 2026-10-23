@@ -37,7 +37,7 @@
  */
 
 import { LlmAdapter, LlmError } from '@deepseek-ai/dsh-llm'
-import { OpenCodeClient, splitModelId, isFreeTierRejection } from './client.js'
+import { OpenCodeClient, splitModelId, isFreeTierRejection, isQuotaExhausted } from './client.js'
 
 /** 路由名：模型选择器里显示为 `opencode/*`。 */
 export const OPENCODE_ROUTE = 'opencode'
@@ -154,6 +154,15 @@ export function describeUpstreamFailure(message, modelKey) {
   if (/14018|额度已用尽|no available quota|quota exhausted/i.test(text)) {
     return '这条通道的账号额度已用尽（上游 code 14018，不是限流）：等待不会恢复，'
       + '需要换账号、换模型或换通道。上游原话：' + text.slice(0, 200)
+  }
+  // ⚠️ 「当日额度耗尽」必须排在「限流」**之前**，而且要和「身份拒绝」分开报：
+  // 身份拒绝重试永不恢复；额度耗尽按天重置（UTC 0:00 = 北京 08:00）；限流等一两分钟。
+  // 三种处置完全不同，混成一句「免费层可能限流了」会让用户一直重试错的那件事。
+  if (isQuotaExhausted(text)) {
+    return 'OpenCode 免费层的**当日额度**用完了（上游原文：' + text.slice(0, 140) + '）。'
+      + '这不是身份问题，也不是限流：额度按天重置，**北京时间 08:00**（UTC 00:00）恢复。'
+      + '在此之前重试不会成功，换同池的其它 *-free 模型通常也无效。'
+      + '今天要继续就用 opencode 里已配置的其它 provider（例如本机 OFM 网关的 ofm/* 模型），或订阅 Go。'
   }
   if (/rate limit|429|too many requests/i.test(text)) {
     return 'OpenCode 上游限流（' + text.slice(0, 160) + '）。等一两分钟再试，或换一个模型。'
