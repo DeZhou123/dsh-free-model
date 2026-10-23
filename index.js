@@ -128,6 +128,9 @@ export function apply(ctx, config = {}) {
     binary: config.opencodeBinary,
     port: config.opencodePort,
     logger,
+    // 失败状态落盘：宿主重启后页面仍能说清「上次为什么不通」。
+    // 内容只是失败原因文本，不放凭据，故与 channel-pack 同放在 dsh home 根下。
+    stateFile: join(resolveDshHome(ctx), 'opencode-free-tier-state.json'),
   })
   ctx.effect(() => () => { void service.dispose() }, 'dsh-free-model: opencode service')
 

@@ -41,8 +41,28 @@
  * @module src/opencode/client
  */
 
+import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
+
 /** 单次 HTTP 的默认超时：上游会内部重试，没有 deadline 会挂死。 */
 const DEFAULT_TIMEOUT_MS = 180_000
+
+/** 失败状态落盘的 schema 标识（改结构时记得一起改）。 */
+const FAILURE_SCHEMA = 'dsh-free-model/opencode-failures/v1'
+
+/** 「other」类失败的保留时长：一天，够用户第二天回来还能看见，又不会变成陈年旧账。 */
+const FAILURE_OTHER_TTL_MS = 24 * 60 * 60 * 1000
+
+/**
+ * 下一个 UTC 零点（= 北京时间 08:00）。
+ *
+ * opencode 免费层的**当日额度**按这个时刻重置（实测 retry-after 正好指向 UTC 午夜），
+ * 所以落盘时把 resetAt 记下来，页面才能说「今天没戏了，早上 8 点后自动恢复」。
+ */
+export function nextUtcMidnight(nowMs = Date.now()) {
+  const d = new Date(nowMs)
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 0, 0)).toISOString()
+}
 
 /** 轮询降级路径的间隔：200ms 足够顺滑且不烧 CPU。 */
 const POLL_INTERVAL_MS = 200
@@ -136,6 +156,72 @@ export class OpenCodeClient {
      * 否则用户会一直点重试。key 是 providerID，value 是最近一次原因。
      */
     this.providerFailures = new Map()
+    /**
+     * 失败状态落盘位置（可选）。
+     *
+     * 不传就是纯内存 —— 与旧行为完全一致，测试里的替身因此不需要动。
+     */
+    this.stateFile = typeof options.stateFile === 'string' && options.stateFile !== '' ? options.stateFile : undefined
+    this.loadFailures()
+  }
+
+  /**
+   * 失败状态读回（2026-10-24 新增）。
+   *
+   * ## 为什么必须落盘
+   *
+   * 上游的两种拒绝里，**「调用方身份被拒」是结构性的**：重试永远不会好，只能换通道
+   * 或升级 build。可这份结论原先只活在内存 Map 里 —— 宿主一重启，页面又重新显示
+   * 「可点」，用户就会再试一遍永远不会成功的事。额度耗尽同理：它按天重置，页面该说
+   * 的是「今天没戏了」，而不是「刚刚失败了一下」。
+   *
+   * ## 过期规则
+   *
+   * - `quota`（当日额度用尽）：到 `resetAt` 自动作废（UTC 0:00 = 北京 08:00）；
+   * - `identity`（身份被拒）：**不作废** —— 它是 build 级事实；
+   * - `other`：24 小时后作废。
+   */
+  loadFailures() {
+    if (this.stateFile === undefined) return
+    let raw
+    try {
+      raw = JSON.parse(readFileSync(this.stateFile, 'utf8'))
+    } catch {
+      return
+    }
+    const entries = raw?.entries
+    if (entries === null || typeof entries !== 'object') return
+    const now = Date.now()
+    for (const [providerID, entry] of Object.entries(entries)) {
+      if (entry === null || typeof entry !== 'object') continue
+      if (isPersistedFailureExpired(entry, now)) continue
+      if (typeof entry.message === 'string' && entry.message !== '') {
+        this.providerFailures.set(providerID, entry.message)
+      }
+    }
+  }
+
+  /** 把当前失败表写盘：原子（先写 .tmp 再 rename），任何 IO 失败都不影响推理。 */
+  persistFailures() {
+    if (this.stateFile === undefined) return
+    const now = Date.now()
+    const entries = {}
+    for (const [providerID, message] of this.providerFailures) {
+      const text = String(message ?? '')
+      const kind = isQuotaExhausted(text) ? 'quota' : isFreeTierRejection(text) ? 'identity' : 'other'
+      const entry = { message: text, kind, at: new Date(now).toISOString() }
+      if (kind === 'quota') entry.resetAt = nextUtcMidnight(now)
+      entries[providerID] = entry
+    }
+    const payload = { schema: FAILURE_SCHEMA, savedAt: new Date(now).toISOString(), entries }
+    const tmp = this.stateFile + '.tmp'
+    try {
+      mkdirSync(dirname(this.stateFile), { recursive: true })
+      writeFileSync(tmp, JSON.stringify(payload, null, 2))
+      renameSync(tmp, this.stateFile)
+    } catch (error) {
+      this.logger?.warn?.('opencode 失败状态写盘失败：' + (error instanceof Error ? error.message : String(error)))
+    }
   }
 
   /** 低层请求：统一超时 + 统一错误文案（错误里带路径，方便用户自查）。 */
@@ -359,11 +445,13 @@ export class OpenCodeClient {
   noteFailure(providerID, message) {
     if (typeof providerID !== 'string' || providerID === '') return
     this.providerFailures.set(providerID, String(message).slice(0, 300))
+    this.persistFailures()
   }
 
   /** 清掉某 provider 的失败记录（成功一次就够）。 */
   clearFailure(providerID) {
     this.providerFailures.delete(providerID)
+    this.persistFailures()
   }
 
   /** 当前已知的 provider 失败表。 */
@@ -710,6 +798,17 @@ const FREE_QUOTA_MARK = /free usage limit|freeusagelimiterror|usage limit reache
 
 export function isQuotaExhausted(message) {
   return FREE_QUOTA_MARK.test(String(message ?? ''))
+}
+
+/** 落盘条目是否已过期（规则见 OpenCodeClient#loadFailures 的注释）。 */
+export function isPersistedFailureExpired(entry, nowMs = Date.now()) {
+  if (entry.kind === 'identity') return false
+  if (entry.kind === 'quota') {
+    const resetAt = typeof entry.resetAt === 'string' ? Date.parse(entry.resetAt) : Number.NaN
+    return !Number.isFinite(resetAt) || nowMs >= resetAt
+  }
+  const at = typeof entry.at === 'string' ? Date.parse(entry.at) : Number.NaN
+  return !Number.isFinite(at) || nowMs - at >= FAILURE_OTHER_TTL_MS
 }
 
 /**

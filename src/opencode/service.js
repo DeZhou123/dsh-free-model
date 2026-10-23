@@ -99,6 +99,7 @@ export class OpenCodeService {
    *   logger?: any,
    *   spawnImpl?: Function,
    *   fetchImpl?: Function,
+   *   stateFile?: string,
    * }} [options]
    */
   constructor(options = {}) {
@@ -108,6 +109,8 @@ export class OpenCodeService {
     this.logger = options.logger
     this.spawnImpl = options.spawnImpl ?? spawn
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch
+    /** 失败状态落盘位置（透传给客户端；不传则客户端退回纯内存）。 */
+    this.stateFile = typeof options.stateFile === 'string' && options.stateFile !== '' ? options.stateFile : undefined
     /** 本实例起过的子进程；null 表示没起过（服务可能是用户自己开的）。 */
     this.child = null
     this.clientInstance = undefined
@@ -124,6 +127,7 @@ export class OpenCodeService {
         baseUrl: this.baseUrl(),
         fetchImpl: this.fetchImpl,
         logger: this.logger,
+        stateFile: this.stateFile,
       })
     }
     return this.clientInstance
