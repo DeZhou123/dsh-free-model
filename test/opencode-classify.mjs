@@ -51,6 +51,15 @@ has(notFoundOut, '没有这个模型', '模型不存在要给换模型的指引'
 const rateOut = describeUpstreamFailure(RATE, 'opencode/big-pickle')
 has(rateOut, '等一两分钟', '纯限流才给「等一两分钟」')
 
+const timeoutOut = describeUpstreamFailure('OpenCode /session/abc/message 超时（180000ms）：上游限流时会长时间重试，可稍后再试或换模型', 'opencode/x')
+has(timeoutOut, '超时了', '超时要单独说，不能混进限流')
+has(timeoutOut, '停止服务', '超时要给出可执行动作')
+
+const unreachableOut = describeUpstreamFailure('OpenCode 不可达（http://127.0.0.1:4096）：fetch failed', 'opencode/x')
+has(unreachableOut, '没在监听', 'serve 没起要说成「没在监听」')
+has(unreachableOut, '启动服务', 'serve 没起要给出可执行动作')
+lacks(unreachableOut, '等一两分钟', 'serve 没起不是限流，别让用户干等')
+
 const rawOut = describeUpstreamFailure('something nobody has seen before', 'opencode/x')
 ok(rawOut === 'something nobody has seen before', '未知错误原样透传，不臆造处置')
 
@@ -90,6 +99,27 @@ const emptyClient = new OpenCodeClient({
 })
 const emptyTable = await emptyClient.toolTable()
 ok(Object.values(emptyTable).every((v) => v === false), '上游返回空清单时同样全关')
+
+// ── 缓存的 TTL：build 升级后必须能重新发现新工具 ──────────────
+let ttlCalls = 0
+const ttlClient = new OpenCodeClient({
+  baseUrl: 'http://127.0.0.1:1',
+  toolTableTtlMs: 0,
+  fetchImpl: async () => { ttlCalls++; return makeResponse(JSON.stringify(['bash'])) },
+})
+await ttlClient.toolTable()
+await ttlClient.toolTable()
+ok(ttlCalls === 2, 'TTL 到期后必须重新拉清单（否则升级 build 新增的工具会一直是启用状态）')
+
+let failCalls = 0
+const flakyClient = new OpenCodeClient({
+  baseUrl: 'http://127.0.0.1:1',
+  fetchImpl: async () => { failCalls++; throw new Error('serve 没起') },
+})
+const firstFallback = await flakyClient.toolTable()
+await flakyClient.toolTable()
+ok(failCalls === 1, '读不到清单时也要短暂缓存，别在 serve 挂着时每次调用都撞超时')
+ok(Object.values(firstFallback).every((v) => v === false), '缓存的降级结果同样是全关，不能变成空表')
 
 console.log('通过 ' + passed + ' 项')
 if (failures.length > 0) {

@@ -54,6 +54,20 @@ const FAILURE_SCHEMA = 'dsh-free-model/opencode-failures/v1'
 const FAILURE_OTHER_TTL_MS = 24 * 60 * 60 * 1000
 
 /**
+ * 工具开关表的缓存时长。
+ *
+ * **不能永久缓存**：这份表是用来关 opencode 内置工具的，而它的来源是「当前这个 build 的
+ * 真实清单」。用户中途升级 opencode（或 serve 被换成新 build）之后，新出现的工具名不在
+ * 旧表里 —— 而表里没有的名字是**默认启用**的。于是「缓存越久越安全」在这里是反的：
+ * 陈旧缓存的每一个新增工具都是一个静默的 fail-open。10 分钟够挡住同一轮里的并发调用，
+ * 又不至于让 build 升级后的风险窗口无限延长。
+ */
+const TOOL_TABLE_TTL_MS = 10 * 60 * 1000
+
+/** 读不到清单时，退回的硬编码快照也能缓存一小会儿：免得 serve 挂着时被反复捶。 */
+const TOOL_TABLE_FALLBACK_TTL_MS = 60 * 1000
+
+/**
  * 下一个 UTC 零点（= 北京时间 08:00）。
  *
  * opencode 免费层的**当日额度**按这个时刻重置（实测 retry-after 正好指向 UTC 午夜），
@@ -147,8 +161,12 @@ export class OpenCodeClient {
     this.sessions = new Map()
     /** 本实例创建过的全部会话（dispose 时清理）。 */
     this.created = new Set()
-    /** 运行时读到的工具开关表（读一次就缓存；读不到时保持 undefined）。 */
+    /** 运行时读到的工具开关表（带 TTL 缓存；读不到时退回硬编码快照）。 */
     this.toolTableCache = undefined
+    this.toolTableAt = 0
+    this.toolTableTtlMs = Number.isFinite(options.toolTableTtlMs) && options.toolTableTtlMs >= 0
+      ? options.toolTableTtlMs
+      : TOOL_TABLE_TTL_MS
     /**
      * 按 provider 记录「上游为什么调不通」。
      *
@@ -424,7 +442,10 @@ export class OpenCodeClient {
    * 因为读不到就放开。
    */
   async toolTable() {
-    if (this.toolTableCache !== undefined) return this.toolTableCache
+    // 缓存按 TTL 失效：build 升级后新增的工具名必须能被重新发现（见 TOOL_TABLE_TTL_MS 注释）。
+    if (this.toolTableCache !== undefined && Date.now() - this.toolTableAt < this.toolTableTtlMs) {
+      return this.toolTableCache
+    }
     try {
       const response = await this.request('/experimental/tool/ids', { method: 'GET' })
       const ids = Array.isArray(response) ? response : []
@@ -434,10 +455,16 @@ export class OpenCodeClient {
       for (const name of names) table[name] = false
       for (const name of OPENCODE_TOOLS) table[name] = false
       this.toolTableCache = table
+      this.toolTableAt = Date.now()
       return table
     } catch (error) {
       this.logger?.warn?.('opencode tool ids 读取失败，退回硬编码清单：' + (error instanceof Error ? error.message : String(error)))
-      return toolsDisabled()
+      // 退回快照也要缓存一小会儿，否则 serve 挂着时每次调用都去撞一次超时。
+      // 注意这里缓存的是**全关**的快照，不是空表 —— fail-closed 的语义不能因为读不到就变。
+      const fallback = toolsDisabled()
+      this.toolTableCache = fallback
+      this.toolTableAt = Date.now() - this.toolTableTtlMs + TOOL_TABLE_FALLBACK_TTL_MS
+      return fallback
     }
   }
 

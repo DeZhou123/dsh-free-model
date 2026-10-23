@@ -164,6 +164,17 @@ export function describeUpstreamFailure(message, modelKey) {
       + '在此之前重试不会成功，换同池的其它 *-free 模型通常也无效。'
       + '今天要继续就用 opencode 里已配置的其它 provider（例如本机 OFM 网关的 ofm/* 模型），或订阅 Go。'
   }
+  // serve 自身的问题（超时 / 根本没在监听）：这两条是**本机**故障，不是上游拒绝，
+  // 混进「限流」会让用户去等一个不会自己好的东西。
+  if (/超时（\d+ms）|timed out/i.test(text)) {
+    return '这次请求等超时了（原文：' + text.slice(0, 140) + '）。'
+      + 'opencode 在上游限流时会长时间内部重试，所以超时既可能是上游慢，也可能是 serve 卡住。'
+      + '先等一两分钟重试一次；如果每次都在同一时长上超时，去页面点「停止服务」再「启动服务」。'
+  }
+  if (/不可达|ECONNREFUSED|fetch failed/i.test(text)) {
+    return '本机 opencode serve 没在监听（原文：' + text.slice(0, 140) + '）。'
+      + '去设置页的 OpenCode 免费层面板点「启动服务」；若提示端口被占，插件会自动顺延端口，刷新目录即可。'
+  }
   if (/rate limit|429|too many requests/i.test(text)) {
     return 'OpenCode 上游限流（' + text.slice(0, 160) + '）。等一两分钟再试，或换一个模型。'
   }
