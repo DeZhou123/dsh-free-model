@@ -56,7 +56,12 @@ const slots = {
 }
 const ctx = {
   effect(factory) { factory(); return () => {} },
-  locale: { register() { localeCalls += 1; return () => {} } },
+  // bind 模拟宿主的翻译绑定：导航标签必须**跟语言走**（写死中文会让英文界面
+  // 下出现两个中文导航项），故这里用带前缀的假翻译器把它验出来。
+  locale: {
+    register() { localeCalls += 1; return () => {} },
+    bind(namespace) { return (key) => namespace + ':' + key },
+  },
   slots,
 }
 module.apply(ctx)
@@ -69,6 +74,8 @@ for (const entry of sections) {
 }
 // 顺序固定：账号车道在前（日常要管积分），本地车道在后。
 assert.deepEqual(sections.map((entry) => entry.spec.order), [37, 38])
+// 导航标签是 thunk，且绑定到本插件的语言包（跟着当前语言走）。
+assert.deepEqual(sections.map((entry) => entry.spec.label()), ['settings.freeModel:nav', 'settings.freeModel:navLocal'])
 assert.ok(localeCalls >= 1, '没有注册语言包')
 
 const [accountSection, localSection] = sections

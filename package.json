@@ -1,6 +1,6 @@
 {
   "name": "dsh-free-model",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "private": true,
   "description": "Free-model console for DSH: CodeBuddy + WorkBuddy account lanes (accounts, credits, daily auto check-in) and the local OpenCode free tier, on two separate settings pages. Runs standalone; shares the account pool with dsh-our-free-model when present.",

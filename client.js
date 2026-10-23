@@ -1476,6 +1476,19 @@ window.__ModuleLoader__.load({
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-free-model: dictionaries')
         ctx.effect(() => ensureStyles(), 'dsh-free-model: styles')
         /**
+         * 导航标签用的翻译器。
+         *
+         * ⚠️ 标签是**在宿主读取时**（`resolveSlotLabel`）求值的，所以它可以跟随
+         * 当前语言 —— 写死中文字符串会让英文界面下出现两个中文导航项。
+         * `ctx.locale.bind` 在部分宿主版本里没有（只有 register），故带兜底。
+         */
+        const labelOf = (key) => {
+          try {
+            if (typeof ctx.locale?.bind === 'function') return ctx.locale.bind(NS)(key)
+          } catch { /* 绑定失败就退回内置字典 */ }
+          return zh[key] ?? key
+        }
+        /**
          * 两个设置页，各自独立注册。
          *
          * ⚠️ 页面顺序是固定的：**账号车道在前**（用户日常要管的是积分与账号），
@@ -1486,7 +1499,7 @@ window.__ModuleLoader__.load({
           name: 'settings.section',
           id: 'free-model',
           order: 37,
-          label: () => zh.nav,
+          label: () => labelOf('nav'),
           locale: NS,
         }, (slotProps) => {
           const translate = slotProps.t ?? ((key) => (zh[key] ?? key))
@@ -1496,7 +1509,7 @@ window.__ModuleLoader__.load({
           name: 'settings.section',
           id: 'free-model-opencode',
           order: 38,
-          label: () => zh.navLocal,
+          label: () => labelOf('navLocal'),
           locale: NS,
         }, (slotProps) => {
           const translate = slotProps.t ?? ((key) => (zh[key] ?? key))
