@@ -66,19 +66,17 @@ const ctx = {
 }
 module.apply(ctx)
 
-assert.equal(sections.length, 2, '应当注册两个设置页（账号车道 / OpenCode 本地车道）')
-assert.deepEqual(sections.map((entry) => entry.spec.id), ['free-model', 'free-model-opencode'])
-for (const entry of sections) {
-  assert.equal(entry.spec.name, 'settings.section')
-  assert.equal(typeof entry.render, 'function')
-}
-// 顺序固定：账号车道在前（日常要管积分），本地车道在后。
-assert.deepEqual(sections.map((entry) => entry.spec.order), [37, 38])
+// 侧边栏只有**一个**设置项：免费模型是一个功能，账号车道与本地车道在页内分页。
+assert.equal(sections.length, 1, '应当只注册一个设置项（页内自己分页）')
+assert.equal(sections[0].spec.id, 'free-model')
+assert.equal(sections[0].spec.name, 'settings.section')
+assert.equal(typeof sections[0].render, 'function')
+assert.equal(sections[0].spec.order, 37)
 // 导航标签是 thunk，且绑定到本插件的语言包（跟着当前语言走）。
-assert.deepEqual(sections.map((entry) => entry.spec.label()), ['settings.freeModel:nav', 'settings.freeModel:navLocal'])
+assert.deepEqual(sections[0].spec.label(), 'settings.freeModel:nav')
 assert.ok(localeCalls >= 1, '没有注册语言包')
 
-const [accountSection, localSection] = sections
+const section = sections[0]
 
 /** 遍历 element 树，确认每个节点可渲染。 */
 function walk(node, path) {
@@ -100,20 +98,40 @@ function walk(node, path) {
   return 1 + walk(node.props.children, path + '>' + type)
 }
 
-// 加载态：summary / status 未就绪时应渲染一行「处理中」。
-const loadingTree = accountSection.render({ t: (key) => key })
+/** 收集 element 树里的所有字符串（用来断言「页签标签真的渲染出来了」）。 */
+function collectStrings(node, out = []) {
+  if (node === null || node === undefined || typeof node === 'boolean') return out
+  if (typeof node === 'string' || typeof node === 'number') { out.push(String(node)); return out }
+  if (Array.isArray(node)) { for (const child of node) collectStrings(child, out); return out }
+  if (typeof node === 'object') {
+    if (typeof node.type === 'function') return collectStrings(node.type({ ...node.props, t: (key) => key }), out)
+    return collectStrings(node.props?.children, out)
+  }
+  return out
+}
+
+// 加载态：外壳默认停在账号页，summary / status 未就绪时应渲染一行「处理中」。
+const loadingTree = section.render({ t: (key) => key })
 const loadingCount = walk(loadingTree, 'loading')
-assert.ok(loadingCount > 0, '账号页加载态没有渲染出任何节点')
+assert.ok(loadingCount > 0, '设置页加载态没有渲染出任何节点')
 
-const localLoadingTree = localSection.render({ t: (key) => key })
-assert.ok(walk(localLoadingTree, 'local-loading') > 0, '本地车道页加载态没有渲染出任何节点')
+// 页内分页的两枚页签必须都在树上（id 变了名字也不能少一个）。
+const tabStrings = collectStrings(loadingTree)
+assert.ok(tabStrings.includes('navAccounts'), '缺少「账号渠道」页签')
+assert.ok(tabStrings.includes('navLocal'), '缺少「OpenCode 免费层」页签')
 
-const { ProductCard, ServiceCard, AutoCheckinBar, AccountsPage, OpenCodePage } = module.__test
+const { ProductCard, ServiceCard, ConsolePage, AutoCheckinBar, AccountsPage, OpenCodePage } = module.__test
 assert.equal(typeof ProductCard, 'function', '__test.ProductCard 未导出')
 assert.equal(typeof ServiceCard, 'function', '__test.ServiceCard 未导出')
+assert.equal(typeof ConsolePage, 'function', '__test.ConsolePage 未导出')
 assert.equal(typeof AutoCheckinBar, 'function', '__test.AutoCheckinBar 未导出')
 assert.equal(typeof AccountsPage, 'function', '__test.AccountsPage 未导出')
 assert.equal(typeof OpenCodePage, 'function', '__test.OpenCodePage 未导出')
+
+// 本地车道页（服务型）单独渲染一次：未就绪时应是加载态，不能抛。
+assert.ok(walk(OpenCodePage({ t: (key) => key }), 'OpenCodePage-loading') > 0, '本地车道页加载态渲染失败')
+// 外壳整体可渲染（页签 + 默认页）。
+assert.ok(walk(ConsolePage({ t: (key) => key }), 'ConsolePage') > 0, '外壳渲染失败')
 
 const t = (key) => key
 

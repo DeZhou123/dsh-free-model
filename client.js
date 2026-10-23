@@ -1,20 +1,31 @@
 /**
  * dsh-free-model — 浏览器半身。
  *
- * ## 两个设置页（不再是一页三张卡）
+ * ## 一个设置项，页内两个页签
  *
- * | 页面 | id | 车道 |
- * |---|---|---|
- * | 免费模型 | free-model | CodeBuddy / WorkBuddy —— **账号型**车道 |
- * | OpenCode 免费层 | free-model-opencode | OpenCode —— **服务型**车道，不登录、不要账号 |
+ * 侧边栏只有一行「免费模型」（`settings.section` id `free-model`，order 37）；
+ * 进去之后是**页内页签**（与 OFM 的页内 `ofm_tabs` 同构）：
  *
- * 早先三条车道挤在一页，于是「账号卡」与「本地进程卡」看起来像同一类东西，
- * 而它们要回答的问题完全不同：
+ * | 页签 | 内容 |
+ * |---|---|
+ * | 账号渠道 | CodeBuddy / WorkBuddy —— **账号型**车道 |
+ * | OpenCode 免费层 | 本地**服务型**车道：不登录、不要账号 |
+ *
+ * ### 为什么不拆成两个导航项
+ *
+ * 侧边栏是「系统功能」的层级，而免费模型**是一个功能**；两条车道之间的切换又是
+ * 高频动作（看一眼余额 → 顺手把本地服务开起来），页内切换比「退出设置 → 找另一个
+ * 导航项 → 再进来」少三次点击。页签上的数字（账号数 / 模型数）由各页**自己上报**，
+ * 外壳不重复请求一遍接口。
+ *
+ * ### 为什么不能挤在一屏里（更早的版本）
+ *
+ * 「账号卡」与「本地进程卡」看起来像同一类东西，而它们要回答的问题完全不同：
  *
  * - 账号车道：**有哪些号、还剩多少积分、今天领了没、哪个要重建**；
  * - 服务车道：**本机进程在不在跑、端口多少、模型目录拉到没有**。
  *
- * 拆开之后每页只有一个主题，页头状态药丸也不再互相干扰。
+ * 分成两个页签之后，同一时刻屏幕上只有一个主题。
  *
  * ## 账号页的信息架构（对齐 OFM 的渠道卡）
  *
@@ -55,10 +66,13 @@ window.__ModuleLoader__.load({
     const { useState, useEffect, useCallback } = React
 
     const NS = 'settings.freeModel'
+    /** 页内页签的记忆键（与 OFM 的 `ofm:tab` 同一手法，各插件各存一份）。 */
+    const TAB_KEY = 'free-model:tab'
     const API = '/api/free-model'
 
     const zh = {
       nav: '免费模型',
+      navAccounts: '账号渠道',
       title: '免费模型总台',
       intro: '三条不花钱的车道：CodeBuddy、WorkBuddy 账号通道，加本机 OpenCode 免费层。不需要 dsh-our-free-model，装了则自动共享账号池。',
       laneReady: '就绪',
@@ -166,6 +180,7 @@ window.__ModuleLoader__.load({
     }
     const en = {
       nav: 'Free models',
+      navAccounts: 'Account lanes',
       title: 'Free model console',
       intro: 'Three lanes that cost nothing: CodeBuddy and WorkBuddy account lanes, plus the local OpenCode free tier. dsh-our-free-model is optional — when present, the account pool is shared.',
       laneReady: 'Ready',
@@ -671,6 +686,69 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 页内分页外壳（与 OFM 的页内 `ofm_tabs` 同一套做法）。
+     *
+     * 设置侧边栏里**只有一项**「免费模型」；账号车道与「不需要登录的本地车道」
+     * 在这里用一排页签切换。理由：
+     *
+     * - 侧边栏是「系统功能」的层级，免费模型是一个功能，不该占两行；
+     * - 两条车道的**切换是高频动作**（看一眼余额 → 顺手开本地服务），页内切换
+     *   比「退出设置页 → 找另一个导航项 → 再进来」少三次点击；
+     * - 页签上的数字（账号数 / 模型数）让用户在切换前就知道对面有没有东西。
+     *
+     * ⚠️ 选中项写进 localStorage，刷新后停在原页签；写失败（隐私模式）不影响功能。
+     */
+    function ConsolePage(props) {
+      const t = props.t ?? ((key) => key)
+      const [tab, setTab] = useState(readStoredTab)
+      // 页签上的数字来自各页自己拉到的数据：外壳不重复请求一遍接口。
+      const [meta, setMeta] = useState({})
+
+      useEffect(() => {
+        try { window.localStorage?.setItem(TAB_KEY, tab) } catch { /* 隐私模式下不可用 */ }
+      }, [tab])
+
+      const report = useCallback((id, patch) => {
+        setMeta((current) => ({ ...current, [id]: patch }))
+      }, [])
+      // ⚠️ 每个页签的回调必须是**稳定引用**：子组件把它放进 useEffect 依赖里，
+      // 每次渲染都新建一个箭头函数会让「上报 → 重渲染 → 再上报」转成死循环。
+      const reportAccounts = useCallback((patch) => report('accounts', patch), [report])
+      const reportLocal = useCallback((patch) => report('opencode', patch), [report])
+
+      const tabs = [
+        ['accounts', t('navAccounts'), meta.accounts?.text],
+        ['opencode', t('navLocal'), meta.opencode?.text],
+      ]
+
+      return h('div', { className: 'ow-root' }, [
+        h('div', { key: 'tabs', className: 'ow-tabs page', role: 'tablist', 'aria-label': t('nav') },
+          tabs.map(([id, label, num]) => h('button', {
+            key: id,
+            type: 'button',
+            role: 'tab',
+            'aria-selected': tab === id ? 'true' : 'false',
+            className: tab === id ? 'ow-tab on' : 'ow-tab',
+            onClick: () => setTab(id),
+          }, label, num === undefined || num === null
+            ? null
+            : h('span', { key: 'n', className: 'ow-tabnum' }, String(num))))),
+        tab === 'opencode'
+          ? h(OpenCodePage, { key: 'opencode', t, ...props, onMeta: reportLocal })
+          : h(AccountsPage, { key: 'accounts', t, ...props, onMeta: reportAccounts }),
+      ])
+    }
+
+    /** 读回上次选中的页签；任何异常都回落到账号页（有账号才是常见起点）。 */
+    function readStoredTab() {
+      try {
+        return window.localStorage?.getItem(TAB_KEY) === 'opencode' ? 'opencode' : 'accounts'
+      } catch {
+        return 'accounts'
+      }
+    }
+
+    /**
      * 账号车道页（CodeBuddy + WorkBuddy）。
      *
      * ## 数据分三跳，绝不合成一跳
@@ -745,6 +823,15 @@ window.__ModuleLoader__.load({
         if (products.length === 0) return
         void loadBalances(products, false)
       }, [summary, loadBalances])
+
+      // 把「几个号在用」报给外壳的页签：数字必须跟数据走，不能写死。
+      const reportMeta = props.onMeta
+      useEffect(() => {
+        if (summary === undefined || reportMeta === undefined) return
+        const total = accounts.length
+        const enabled = accounts.filter((account) => account.enabled).length
+        reportMeta({ text: enabled + '/' + total })
+      }, [summary, accounts, reportMeta])
 
       /** 余额能力可用的车道（刷新余额按钮与领完后的刷新都用它）。 */
       const balanceProducts = (summary?.products ?? []).filter((product) => (product.credits ?? {}).balance === true)
@@ -999,6 +1086,14 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         void call('/summary').then((payload) => setVersion(payload.version ?? '')).catch(() => {})
       }, [])
+
+      // 页签数字：服务在跑时显示模型数，没跑就不显示（显示 0 会被读成「没有模型」）。
+      const reportMeta = props.onMeta
+      useEffect(() => {
+        if (status === undefined || reportMeta === undefined) return
+        const count = status.models?.count
+        reportMeta({ text: status.service?.running === true && Number.isFinite(count) ? String(count) : null })
+      }, [status, reportMeta])
 
       const runAction = useCallback(async (action) => {
         setBusy(true)
@@ -1393,6 +1488,23 @@ window.__ModuleLoader__.load({
 
 .ow-foot { display: flex; gap: 10px; align-items: center; padding-top: 2px; }
 
+/* ── 页级页签（页内分页的外壳） ─────────────────────────────────────────── */
+.ow-tabs.page {
+  padding: 4px;
+  border-radius: 13px;
+  border-color: color-mix(in srgb, var(--dsw-alias-border-l1) 80%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 82%, transparent);
+}
+.ow-tabs.page .ow-tab { font-size: 12px; padding: 5px 14px; border-radius: 10px; }
+.ow-tabnum {
+  margin-left: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary);
+}
+.ow-tab.on .ow-tabnum { color: var(--dsw-alias-label-secondary); }
+
 /* ── 自动领积分条 ──────────────────────────────────────────────────────── */
 .ow-auto {
   display: flex;
@@ -1470,7 +1582,7 @@ window.__ModuleLoader__.load({
        * 只为**离线渲染测试**：`test/render.mjs` 需要单独渲染卡片，而它们
        * 定义在 factory 闭包里。生产路径完全不读这个字段。
        */
-      __test: { ProductCard, ServiceCard, AccountsPage, OpenCodePage, AutoCheckinBar },
+      __test: { ProductCard, ServiceCard, ConsolePage, AccountsPage, OpenCodePage, AutoCheckinBar },
       inject: ['slots', 'locale'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-free-model: dictionaries')
@@ -1489,11 +1601,12 @@ window.__ModuleLoader__.load({
           return zh[key] ?? key
         }
         /**
-         * 两个设置页，各自独立注册。
+         * **一个**设置项，页内自己分页（与 OFM 同构）。
          *
-         * ⚠️ 页面顺序是固定的：**账号车道在前**（用户日常要管的是积分与账号），
-         * 「不需要登录的本地车道」在后（配一次就不用再管）。
-         * OFM 是 order 35，故这两页排在它之后：先看官方总览，再看补位车道。
+         * 侧边栏只占一行「免费模型」；账号车道与本地车道在页内用页签切换 ——
+         * 两者都是「免费模型」这个功能的组成部分，不该在系统导航里各占一行。
+         *
+         * 顺序仍排在 OFM（order 35）之后：先看官方总览，再看这里的补位车道。
          */
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',
@@ -1503,17 +1616,7 @@ window.__ModuleLoader__.load({
           locale: NS,
         }, (slotProps) => {
           const translate = slotProps.t ?? ((key) => (zh[key] ?? key))
-          return h(AccountsPage, { ...slotProps, t: translate })
-        }))
-        ctx.slots.inject('settings.section', () => ctx.slots.register({
-          name: 'settings.section',
-          id: 'free-model-opencode',
-          order: 38,
-          label: () => labelOf('navLocal'),
-          locale: NS,
-        }, (slotProps) => {
-          const translate = slotProps.t ?? ((key) => (zh[key] ?? key))
-          return h(OpenCodePage, { ...slotProps, t: translate })
+          return h(ConsolePage, { ...slotProps, t: translate })
         }))
       },
     }

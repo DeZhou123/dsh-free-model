@@ -737,7 +737,7 @@ check('UI 原语在页面之前定义（避免 TDZ）', () => {
   for (const name of ['Switch', 'Pill', 'Button']) {
     const at = client.indexOf(`function ${name}`)
     assert.ok(at > 0, `${name} 未定义`)
-    for (const page of ['function AccountsPage', 'function OpenCodePage', 'function ProductCard']) {
+    for (const page of ['function ConsolePage', 'function AccountsPage', 'function OpenCodePage', 'function ProductCard']) {
       const pageAt = client.indexOf(page)
       assert.ok(pageAt > 0, `${page} 未定义`)
       assert.ok(at < pageAt, `${name} 定义在 ${page.replace('function ', '')} 之后，渲染会抛 ReferenceError`)
