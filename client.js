@@ -98,8 +98,17 @@ window.__ModuleLoader__.load({
       opencodeProviders: '按 provider',
       opencodeSse: '流式：SSE',
       opencodeSseOff: '流式：轮询（降级）',
+      // ⚠️ 三种失败处置完全不同，徽章必须分开（2026-10-24 补）：
+      //   身份拒绝 = build 级事实，重试永不恢复；额度耗尽 = 按天重置（北京 08:00）；
+      //   限流 = 等一两分钟。原先只有一个「上游拒绝」徽章，于是额度用完会被说成
+      //   「结构性拒绝、换通道或升级 build」—— 方向完全错了。
       opencodeBlocked: '上游拒绝',
       opencodeBlockedHint: '这台机器上 OpenCode 免费层被上游拒绝（403 FreeTierError：只接受 OpenCode 客户端自身的请求）。换 ofm/* 那些模型，或更新 opencode。',
+      opencodeQuota: '额度用尽·08:00 恢复',
+      opencodeQuotaHint: 'Opencode 免费层的**当日额度**已用完（按天重置，北京时间 08:00 / UTC 00:00 恢复）。在此之前重试与换同池其它 *-free 模型通常都无效；要立刻干活请换通道。',
+      opencodeRateLimited: '限流',
+      opencodeRateLimitedHint: 'OpenCode 上游限流：等一两分钟再试，或换一个模型。这条与「额度用尽」不同 —— 它是短时的。',
+      opencodeStale: '（上次运行）',
       product: '渠道',
       accounts: '账号',
       addAccount: '新建账号',
@@ -214,6 +223,11 @@ window.__ModuleLoader__.load({
       opencodeSseOff: 'Streaming: polling (fallback)',
       opencodeBlocked: 'Upstream refused',
       opencodeBlockedHint: 'On this machine the OpenCode free tier is refused upstream (403 FreeTierError: only OpenCode itself may call it). Switch to ofm/* models, or update opencode.',
+      opencodeQuota: 'Daily quota used · resets 08:00',
+      opencodeQuotaHint: 'The daily free quota is used up. It resets by day at 08:00 Beijing time (UTC 00:00). Retrying, or switching to another *-free model in the same pool, usually will not help until then — switch lanes instead.',
+      opencodeRateLimited: 'Rate limited',
+      opencodeRateLimitedHint: 'Upstream is rate limiting: wait a minute or two, or switch models. This is short-lived, unlike the daily quota.',
+      opencodeStale: '(from last run)',
       product: 'Lane',
       accounts: 'Accounts',
       addAccount: 'New account',
@@ -639,9 +653,22 @@ window.__ModuleLoader__.load({
       const tone = !running ? 'err' : mounted ? 'ok' : 'warn'
       const stateText = !running ? t('opencodeStopped')
         : mounted ? t('opencodeRunning') : t('laneNeedsAction')
-      // 上游结构性拒绝（免费层 403）：不是「暂时限流」，重试不会好 —— 单独标红。
+      // 失败按**类别**分：三种处置完全相反，混成一个「上游拒绝」会让用户走错方向。
+      // 分类依据与 src/opencode/adapter.js 的判错链保持一致（见那边的注释）。
       const failures = status?.failures ?? {}
-      const blocked = Object.keys(failures).length > 0
+      const classifyFailure = (message) => {
+        const text = String(message ?? '')
+        if (/free usage limit|freeusagelimiterror|usage limit reached|subscribe to opencode go/i.test(text)) return 'quota'
+        if (/free tier can only be used from within opencode/i.test(text)) return 'identity'
+        if (/rate limit|429|too many requests/i.test(text)) return 'rateLimit'
+        return 'other'
+      }
+      const failureKinds = new Set(Object.values(failures).map(classifyFailure))
+      const blocked = failureKinds.has('identity')
+      const quotaHit = failureKinds.has('quota')
+      const rateLimited = failureKinds.has('rateLimit')
+      // 三种都不属于时（other）仍旧把原因摆出来，只是不加判定的徽章。
+      const anyFailure = Object.keys(failures).length > 0
 
       return h('div', { className: 'ow-card' }, [
         h('div', { key: 'head', className: 'ow-cardhead' }, [
@@ -649,6 +676,8 @@ window.__ModuleLoader__.load({
           h(Pill, { key: 'cap', tone: 'warn' }, t('capText')),
           h(Pill, { key: 's', tone, strong: true }, stateText),
           blocked ? h(Pill, { key: 'b', tone: 'err' }, t('opencodeBlocked')) : null,
+          quotaHit ? h(Pill, { key: 'q', tone: 'err' }, t('opencodeQuota')) : null,
+          rateLimited ? h(Pill, { key: 'r', tone: 'warn' }, t('opencodeRateLimited')) : null,
           running
             ? h('span', { key: 'c', className: 'ow-count' },
                 `${models?.count ?? 0} ${t('opencodeModels')}`)
@@ -676,13 +705,16 @@ window.__ModuleLoader__.load({
             ]))
           : null,
 
-        // 上游结构性拒绝：把真实原因（含 provider 名）摆出来，别让用户一直重试。
-        blocked
+        // 失败原因按类别摆出来：每类都给「该怎么办」，原文只作为证据附在下面。
+        // 这套文案与 README 的「已知边界」三分表、adapter 的判错链是同一套口径。
+        anyFailure
           ? h('div', { key: 'blk', className: 'ow-note error' }, [
-              h('p', { key: 'h' }, t('opencodeBlockedHint')),
+              blocked ? h('p', { key: 'h-id' }, t('opencodeBlockedHint')) : null,
+              quotaHit ? h('p', { key: 'h-q' }, t('opencodeQuotaHint')) : null,
+              rateLimited ? h('p', { key: 'h-r' }, t('opencodeRateLimitedHint')) : null,
               ...Object.entries(failures).slice(0, 3).map(([provider, message]) =>
                 h('p', { key: 'f-' + provider, className: 'ow-dim' },
-                  provider + ': ' + String(message).slice(0, 160))),
+                  provider + ' [' + classifyFailure(message) + ']: ' + String(message).slice(0, 160))),
             ])
           : null,
 
