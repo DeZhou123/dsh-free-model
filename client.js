@@ -181,6 +181,27 @@ window.__ModuleLoader__.load({
       autoHint: '开关对账号车道生效：CodeBuddy 有签到接口，WorkBuddy 没有（自动领取时跳过它）。状态存在 channel-pack/free-model-auto-checkin.json，与 OFM 的开关互不影响。',
 
       // ── 车道页 ──
+      // ── OFM 侧车道（11 条）与后端 ──
+      backendNative: '后端：本插件',
+      routeOfm: 'OFM 提供',
+      backendOfm: '后端：OFM',
+      backendMissing: '后端未就绪',
+      backendOfmNote: '这条车道的登录、续期、积分与模型开关由宿主的 dsh-our-free-model（channel-pack）提供；本页直接调它的 RPC，账号与凭据仍是同一份。',
+      backendMissingNote: '没检测到 dsh-our-free-model（channel-pack）后端：车道能看，但登录 / 续期 / 积分要先装它（本页的操作按钮此时不渲染）。',
+      capUnknownHint: '这条车道由 OFM 侧提供；能力的权威说明在它的产品定义里，本页不重复断言。',
+      ofmLoginOpening: '已打开登录页，请完成授权…',
+      ofmLoginWaiting: '等待授权（最长 4 分钟）…',
+      ofmLoginTimeout: '等待超时：授权似乎没有完成。可再点一次「新建账号」。',
+      ofmLoginTitle: '登录',
+      smsPhone: '手机号',
+      smsCode: '验证码',
+      smsOpen: '用手机号登录',
+      smsSend: '发送验证码',
+      smsSent: '验证码已发送',
+      smsSubmit: '提交并登录',
+      smsHint: '备用路径：默认是弹窗里的微信扫码；手机号验证码仅在扫码不可用时使用。',
+      ofmCallFailed: 'OFM 后端调用失败',
+      noteLabel: '说明',
       localWhy: '这条车道单独一页：它的失败点与账号车道完全不同（二进制在不在、端口被占、serve 版本太旧），排错时不该和「账号要不要重新登录」混在一起看。',
       renewalNote: '续期只换令牌，不动账号索引；凭据写入仍然是宿主那一份。',
     }
@@ -292,6 +313,26 @@ window.__ModuleLoader__.load({
       autoDisabledShort: 'off',
       autoHint: 'Applies to the account lanes: CodeBuddy has a check-in API, WorkBuddy does not (it is skipped). State lives in channel-pack/free-model-auto-checkin.json, independent of the OFM switch.',
 
+      backendNative: 'backend: this plugin',
+      routeOfm: 'provided by OFM',
+      backendOfm: 'backend: OFM',
+      backendMissing: 'backend not ready',
+      backendOfmNote: 'Sign-in, renewal, credits and model switches for this lane come from the host dsh-our-free-model (channel-pack). This page calls its RPC directly; the accounts and credentials are still the same copy.',
+      backendMissingNote: 'No dsh-our-free-model (channel-pack) backend detected: the lane is listed, but sign-in / renewal / credits need it installed (action buttons are hidden meanwhile).',
+      capUnknownHint: 'This lane is provided by OFM; its product definition is the authority on capabilities, and this page does not restate them.',
+      ofmLoginOpening: 'Sign-in page opened — finish the authorization…',
+      ofmLoginWaiting: 'Waiting for authorization (up to 4 minutes)…',
+      ofmLoginTimeout: 'Timed out: the authorization does not look finished. Press “New account” again.',
+      ofmLoginTitle: 'Sign in',
+      smsPhone: 'Phone',
+      smsCode: 'Code',
+      smsOpen: 'Sign in with phone',
+      smsSend: 'Send code',
+      smsSent: 'Code sent',
+      smsSubmit: 'Submit and sign in',
+      smsHint: 'Fallback path: the default is the WeChat QR inside the popup; the phone code is only for when scanning is unavailable.',
+      ofmCallFailed: 'OFM backend call failed',
+      noteLabel: 'Note',
       localWhy: 'This lane has its own page because its failure modes are completely different (missing binary, port taken, old serve build) — debugging it should not be mixed up with “does an account need to sign in again”.',
       renewalNote: 'Renewal only swaps tokens; the account index and the credential store stay the same.',
     }
@@ -307,6 +348,57 @@ window.__ModuleLoader__.load({
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`)
       return payload
+    }
+
+    /**
+     * 宿主 channel-pack 的 RPC：路径、信封、拆包。
+     *
+     * ## 为什么页面直接调它，而不是经本插件的 Host 面转发
+     *
+     * 11 条 OFM 侧车道的登录 / 续期 / 积分 / 模型开关**全部**在宿主 channel-pack
+     * 里（那里是它们的唯一实现）。在本插件的 Host 面再包一层转发，等于把 12 个方法
+     * × 13 条车道各写一遍胶水，且每条车道的产品怪癖（device_mid、captcha、
+     * 设备签名 generation…）都会在转发层再漂移一次。
+     *
+     * 页面本来就在同一个应用页里、拿着同一份会话：直接调它的 RPC 既短又准
+     * （OFM 自己的 Channel Pack 面板就是这么调的）。
+     *
+     * ⚠️ 路径与通道名必须与 OFM 的 `channel-pack-rpc.ts:CHANNEL_PACK_API_PATH` /
+     * `CHANNEL_PACK_ENDPOINT` 一致；本插件 Host 侧把同一对常量放在
+     * `src/lanes.js`（那里的注释与这里互相指向）。不一致的表现是「点了没反应」。
+     */
+    const OFM_RPC = '/api/channel-pack'
+    const OFM_ENDPOINT = 'channel-pack'
+    let ofmRpcSeq = 0
+
+    /**
+     * 调一次宿主 RPC，返回 value；失败**抛错**（文案直接展示给用户）。
+     *
+     * 信封形状（OFM 侧 `connection.fetch.register` 的 handler 定义）：
+     * 请求 `{type:'client-request', rpcId, method:'channel-pack', payload:{method, payload}}`，
+     * 响应 `{type:'server-response', rpcId, result:{ok, value|error}}`。
+     */
+    async function ofmCall(method, payload) {
+      ofmRpcSeq += 1
+      const response = await fetch(OFM_RPC, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({
+          type: 'client-request',
+          rpcId: 'free-model-' + ofmRpcSeq,
+          method: OFM_ENDPOINT,
+          payload: { method: method, payload: payload === undefined ? {} : payload },
+        }),
+      })
+      const envelope = await response.json().catch(() => undefined)
+      if (!response.ok) throw new Error('HTTP ' + response.status + ' ' + OFM_RPC)
+      const result = envelope === undefined || envelope === null ? undefined : envelope.result
+      if (result === undefined || result === null) throw new Error('channel-pack RPC 无 result: ' + method)
+      if (result.ok === false) {
+        const error = result.error === undefined || result.error === null ? {} : result.error
+        throw new Error(typeof error.message === 'string' ? error.message : 'channel-pack RPC 失败: ' + method)
+      }
+      return result.value
     }
 
     function formatTime(ms, t) {
@@ -452,7 +544,14 @@ window.__ModuleLoader__.load({
       const {
         product, accounts, models, creditRow, balanceLoading, tab, onTab, busy, claimBusy, t,
         onAction, onModelAction, onLogin, onClaimAll, onRefreshBalances, onRenewAll,
+        // OFM 侧车道多带四个字段：
+        //   ready       —— 后端是否就绪（未就绪则一个动作按钮都不渲染）
+        //   backendNote —— 后端说明（页面上要能解释「为什么按钮不见 / 为什么能在这里管」）
+        //   sms*        —— 只有 Loomy 有的手机号备用路径
+        ready = true, backendNote, balanceNote, rowClaim = true,
+        sms, onSmsOpen, onSmsChange, onSmsSend, onSmsSubmit,
       } = props
+      const isOfm = product.backend === 'ofm'
       const [showOff, setShowOff] = useState(false)
       const capability = product.credits ?? { balance: false, claim: false }
       const enabledAccounts = accounts.filter((account) => account.enabled).length
@@ -461,9 +560,15 @@ window.__ModuleLoader__.load({
       const list = showOff ? models : models.filter((model) => !model.disabled)
 
       // 路由归属决定状态点：本插件接管 = ok，OFM 内置在跑 = warn。
-      const routeTone = product.route === 'registered' ? 'ok' : product.route === 'yielded' ? 'warn' : undefined
-      const routeText = product.route === 'registered' ? t('routeOwned')
-        : product.route === 'yielded' ? t('routeYielded') : t('routeAbsent')
+      // OFM 侧车道单列一档：它们**本来**就由宿主提供，说「未挂载」会误导；
+      // 后端没跑时才是真的不可用（err）。
+      const routeTone = isOfm
+        ? (ready ? 'ok' : 'err')
+        : product.route === 'registered' ? 'ok' : product.route === 'yielded' ? 'warn' : undefined
+      const routeText = isOfm
+        ? (ready ? t('routeOfm') : t('backendMissing'))
+        : product.route === 'registered' ? t('routeOwned')
+          : product.route === 'yielded' ? t('routeYielded') : t('routeAbsent')
 
       const rows = creditRow?.accounts ?? []
       const known = rows.filter((row) => Number.isFinite(row.balance?.total))
@@ -475,11 +580,24 @@ window.__ModuleLoader__.load({
           h('strong', { key: 'n' }, product.displayName),
           h(Pill, { key: 'cap', tone: 'ok' }, t('capFull')),
           h(Pill, { key: 'r', tone: routeTone, strong: true }, routeText),
+          // 后端药丸只给 OFM 侧车道：native 两条说「后端：本插件」是废话。
+          isOfm
+            ? h(Pill, { key: 'bk', tone: ready ? undefined : 'err', strong: true },
+                ready ? t('backendOfm') : t('backendMissing'))
+            : null,
           h('span', { key: 'c', className: 'ow-count' },
             enabledAccounts + '/' + accounts.length + ' ' + t('accounts')),
         ]),
         h('code', { key: 'ep', className: 'ow-ep' }, product.endpoint),
-        h('p', { key: 'caphint', className: 'ow-hint' }, t('capFullHint')),
+        h('p', { key: 'caphint', className: 'ow-hint' }, isOfm ? t('capUnknownHint') : t('capFullHint')),
+        // 车道的产品说明（来源见 src/lanes.js 的注册表：每条都写明该渠道的坑）。
+        typeof product.note === 'string' && product.note.length > 0
+          ? h('p', { key: 'lnote', className: 'ow-hint' }, t('noteLabel') + '：' + product.note)
+          : null,
+        // 后端说明：能在这里管这条车道（ready）与为什么按钮全不见（!ready）都要说清。
+        typeof backendNote === 'string' && backendNote.length > 0
+          ? h('p', { key: 'bnote', className: 'ow-hint' }, backendNote)
+          : null,
 
         h('div', { key: 'sum', className: 'ow-chanmeta' }, [
           h('span', { key: 'a' }, t('accounts') + ' ', h('b', null, enabledAccounts + '/' + accounts.length)),
@@ -492,7 +610,9 @@ window.__ModuleLoader__.load({
             : null,
         ]),
 
-        h('div', { key: 'acts', className: 'ow-actions' }, [
+        // ⚠️ 后端未就绪时**不渲染**动作行：给一个点了必然失败的按钮，
+        // 用户的下一步动作是「反复点它」而不是「去装后端」。
+        ready ? h('div', { key: 'acts', className: 'ow-actions' }, [
           h(Button, { key: 'add', kind: 'primary', disabled: busy, onClick: onLogin }, t('addAccount')),
           accounts.length > 0
             ? h(Button, { key: 'rn', disabled: busy, onClick: onRenewAll, title: t('renewalNote') }, t('renewAll'))
@@ -505,12 +625,45 @@ window.__ModuleLoader__.load({
             ? h(Button, { key: 'cl', disabled: busy || claimBusy, onClick: onClaimAll },
                 claimBusy ? t('claimRun') : t('claim'))
             : null,
-        ]),
+        ]) : null,
+
+        // 手机号登录（只有 Loomy 有这条备用路径）：未展开时是一个按钮，
+        // 展开后是「手机号 + 发码 + 验证码 + 提交」四件套。
+        ready && product.smsFallback === true
+          ? h('div', { key: 'sms', className: 'ow-sms' }, sms === undefined
+            ? h(Button, { key: 'o', disabled: busy, onClick: onSmsOpen }, t('smsOpen'))
+            : [
+                h('span', { key: 'h', className: 'ow-hint' }, t('smsHint')),
+                h('input', {
+                  key: 'p', className: 'ow-input', type: 'tel', placeholder: t('smsPhone'),
+                  value: sms.phone ?? '', onChange: (event) => onSmsChange({ phone: event.target.value }),
+                }),
+                h(Button, {
+                  key: 's', disabled: busy || sms.busy === true || (sms.phone ?? '').length === 0,
+                  onClick: onSmsSend,
+                }, t('smsSend')),
+                h('input', {
+                  key: 'c', className: 'ow-input', inputMode: 'numeric', placeholder: t('smsCode'),
+                  value: sms.code ?? '', onChange: (event) => onSmsChange({ code: event.target.value }),
+                }),
+                h(Button, {
+                  key: 'b', kind: 'primary', disabled: busy || sms.busy === true || (sms.code ?? '').length === 0,
+                  onClick: onSmsSubmit,
+                }, t('smsSubmit')),
+                typeof sms.error === 'string' && sms.error.length > 0
+                  ? h('span', { key: 'e', className: 'ow-note error' }, sms.error)
+                  : null,
+              ])
+          : null,
 
         // 部分账号查不到余额时**明说**：否则卡片上的合计数看起来像「余额掉了」。
         creditRow !== undefined && failures > 0
           ? h('p', { key: 'berr', className: 'ow-balerr-line', role: 'status' },
               t('balancePartial').replace('{count}', String(failures)))
+          : null,
+        // 车道级余额失败（OFM 侧）：把后端给的原因原样显示 —— 藏进日志等于让用户猜。
+        typeof balanceNote === 'string' && balanceNote.length > 0
+          ? h('p', { key: 'bnerr', className: 'ow-balerr-line', role: 'status' }, balanceNote)
           : null,
 
         h('div', { key: 'tabs', className: 'ow-tabs' }, [
@@ -585,7 +738,7 @@ window.__ModuleLoader__.load({
                     }, account.enabled ? t('disable') : t('enable')),
                     h(Button, { key: 'r', disabled: busy, onClick: () => onAction({ action: 'refresh', id: account.id }) }, t('renew')),
                     h(Button, { key: 'c', disabled: busy, onClick: () => onAction({ action: 'credits', id: account.id }) }, t('credits')),
-                    capability.claim === true
+                    capability.claim === true && rowClaim
                       ? h(Button, { key: 'k', disabled: busy, onClick: () => onAction({ action: 'checkin', id: account.id }) }, t('checkin'))
                       : null,
                     h(Button, { key: 'p', disabled: busy, onClick: () => onAction({ action: 'probe', id: account.id }) }, t('probe')),
@@ -816,6 +969,14 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState(false)
       const [claimBusy, setClaimBusy] = useState('')
       const [note, setNote] = useState(undefined)
+      // ── OFM 侧 11 条车道的读写状态（与 native 的两条分开存 —— 数据源、刷新节奏
+      //    与失败语义都不同；混在一个 state 里会分不清「哪条坏了」）──
+      const [ofmAccounts, setOfmAccounts] = useState({})
+      const [ofmModels, setOfmModels] = useState({})
+      const [ofmCredits, setOfmCredits] = useState({})
+      const [ofmBusy, setOfmBusy] = useState('')
+      /** 手机号登录（只有 Loomy 有这条备用路径）：{provider, accountId, phone, code, msgid, busy, error} */
+      const [sms, setSms] = useState(undefined)
 
       const reload = useCallback(async () => {
         try {
@@ -1011,6 +1172,313 @@ window.__ModuleLoader__.load({
         }
       }, [reload, t])
 
+      // ── OFM 侧 11 条车道（product.backend === 'ofm'）────────────────────────
+      //
+      // 数据全部来自宿主 channel-pack 的 RPC（ofmCall）。三条纪律：
+      //
+      // 1. **账号与模型目录一次拿全**：OFM 侧两者都读内存副本
+      //    （pool.list* 与 modelAdapters[x].listAllModels() 都不发网络请求），
+      //    11 条并发也不贵；
+      // 2. **余额慢、单独走**：每车道要逐账号打上游，故并发 2、渐进填充，
+      //    绝不阻塞账号列表渲染（与 native 那条第 2 跳同一理由）；
+      // 3. **后端没就绪时一个请求都不发**（summary.ofm.available !== true）。
+      const ofmReady = summary?.ofm?.available === true
+
+      /** 刷新单条 OFM 车道的账号 + 模型目录（动作之后调它，不整页重载）。 */
+      const refreshOfm = useCallback(async (provider) => {
+        try {
+          const value = await ofmCall('account.list', { provider: provider })
+          const rows = Array.isArray(value?.accounts) ? value.accounts : []
+          setOfmAccounts((current) => ({ ...current, [provider]: rows }))
+        } catch { /* 保持旧数据：一次读失败不该把列表清空 */ }
+        try {
+          const value = await ofmCall('model.list', { provider: provider })
+          const rows = Array.isArray(value?.models)
+            ? value.models.map((model) => ({ ...model, provider: provider }))
+            : []
+          setOfmModels((current) => ({ ...current, [provider]: rows }))
+        } catch { /* 同上 */ }
+      }, [])
+
+      const loadOfm = useCallback(async () => {
+        if (!ofmReady) return undefined
+        const lanes = (summary?.products ?? []).filter((product) => product.backend === 'ofm')
+        if (lanes.length === 0) return undefined
+        const accountsNext = {}
+        const modelsNext = {}
+        await Promise.all(lanes.map(async (lane) => {
+          try {
+            const value = await ofmCall('account.list', { provider: lane.id })
+            accountsNext[lane.id] = Array.isArray(value?.accounts) ? value.accounts : []
+          } catch {
+            // 单条车道读失败只影响它自己：别把另外十条的列表一起打空。
+            accountsNext[lane.id] = []
+          }
+          try {
+            const value = await ofmCall('model.list', { provider: lane.id })
+            modelsNext[lane.id] = Array.isArray(value?.models)
+              ? value.models.map((model) => ({ ...model, provider: lane.id }))
+              : []
+          } catch {
+            modelsNext[lane.id] = []
+          }
+        }))
+        setOfmAccounts(accountsNext)
+        setOfmModels(modelsNext)
+        return accountsNext
+      }, [ofmReady, summary])
+
+      const loadOfmBalance = useCallback(async (provider) => {
+        try {
+          const value = await ofmCall('credits.balances', { provider: provider })
+          const rows = Array.isArray(value?.accounts) ? value.accounts : []
+          setOfmCredits((current) => ({ ...current, [provider]: { accounts: rows } }))
+        } catch (error) {
+          // 「查不到」也要落进 state：页面才有东西显示原因，而不是永远转圈。
+          setOfmCredits((current) => ({ ...current, [provider]: { accounts: [], error: error.message } }))
+        }
+      }, [])
+
+      /** 后台把多条车道的余额查完（并发 2：上游对同账号有频率限制）。 */
+      const loadOfmBalances = useCallback(async (laneProducts) => {
+        const queue = [...laneProducts]
+        const worker = async () => {
+          for (;;) {
+            const lane = queue.shift()
+            if (lane === undefined) return
+            await loadOfmBalance(lane.id)
+          }
+        }
+        await Promise.all([worker(), worker()])
+      }, [loadOfmBalance])
+
+      // 首屏：拉账号与目录 → 有账号的车道再后台查余额（渐进填充）。
+      useEffect(() => {
+        if (!ofmReady) return
+        let cancelled = false
+        void loadOfm().then((accountsNext) => {
+          if (cancelled || accountsNext === undefined) return
+          const withAccounts = (summary?.products ?? []).filter((product) => product.backend === 'ofm'
+            && (product.credits ?? {}).balance === true
+            && (accountsNext[product.id] ?? []).length > 0)
+          void loadOfmBalances(withAccounts)
+        })
+        return () => { cancelled = true }
+      }, [ofmReady, loadOfm, loadOfmBalances, summary])
+
+      /** OFM 侧的一次账号动作（enable / disable / remove / refresh / credits / checkin / probe）。 */
+      const runOfmAction = useCallback(async (product, request) => {
+        setOfmBusy(product.id)
+        setNote(undefined)
+        try {
+          if (request.action === 'enable' || request.action === 'disable') {
+            await ofmCall('account.update', {
+              accountId: request.id,
+              patch: { enabled: request.action === 'enable' },
+            })
+            await refreshOfm(product.id)
+          } else if (request.action === 'remove') {
+            await ofmCall('account.delete', { accountId: request.id })
+            await refreshOfm(product.id)
+          } else if (request.action === 'refresh') {
+            await ofmCall('account.refresh', { accountId: request.id })
+            await refreshOfm(product.id)
+            setNote({ kind: 'ok', text: t('renew') + ' · ' + request.id })
+          } else if (request.action === 'credits') {
+            await loadOfmBalance(product.id)
+          } else if (request.action === 'checkin') {
+            // ⚠️ 宿主只提供**按车道**的领取端点（credits.claimAll）——
+            // 逐账号的 outcome 在返回值里，故这里领整条车道再念汇总。
+            const payload = await ofmCall('credits.claimAll', { provider: product.id })
+            setNote({
+              kind: payload?.summary?.failed > 0 ? 'error' : 'ok',
+              text: product.displayName + ' · ' + describeClaim(payload, t),
+            })
+            await loadOfmBalance(product.id)
+          } else if (request.action === 'probe') {
+            const value = await ofmCall('account.test', { accountId: request.id })
+            const ok = value?.ok === true
+            setNote({
+              kind: ok ? 'ok' : 'error',
+              text: (ok ? t('probeOk') : t('probeFail')) + ' · ' + (value?.modelId ?? '')
+                + (value?.message === undefined ? '' : ' · ' + value.message),
+            })
+          }
+        } catch (error) {
+          setNote({ kind: 'error', text: t('ofmCallFailed') + ': ' + error.message })
+        } finally {
+          setOfmBusy('')
+        }
+      }, [loadOfmBalance, refreshOfm, t])
+
+      /** OFM 侧的一次模型动作（toggle / all / reset）。 */
+      const runOfmModelAction = useCallback(async (product, request) => {
+        setOfmBusy(product.id)
+        setNote(undefined)
+        try {
+          if (request.action === 'toggle') {
+            await ofmCall('model.setDisabled', {
+              provider: product.id,
+              modelId: request.model,
+              disabled: request.disabled === true,
+            })
+          } else if (request.action === 'all') {
+            await ofmCall('model.setAllDisabled', { provider: product.id, disabled: request.disabled === true })
+          } else if (request.action === 'reset') {
+            // 「全部恢复」= 清空黑名单（与 native 的 reset 同语义）。
+            await ofmCall('model.setAllDisabled', { provider: product.id, disabled: false })
+          }
+          await refreshOfm(product.id)
+        } catch (error) {
+          setNote({ kind: 'error', text: t('ofmCallFailed') + ': ' + error.message })
+        } finally {
+          setOfmBusy('')
+        }
+      }, [refreshOfm, t])
+
+      const runOfmClaimAll = useCallback(async (product) => {
+        setClaimBusy(product.id)
+        setNote(undefined)
+        try {
+          const payload = await ofmCall('credits.claimAll', { provider: product.id })
+          setNote({ kind: payload?.summary?.failed > 0 ? 'error' : 'ok', text: describeClaim(payload, t) })
+        } catch (error) {
+          setNote({ kind: 'error', text: t('ofmCallFailed') + ': ' + error.message })
+        } finally {
+          setClaimBusy('')
+          await loadOfmBalance(product.id)
+        }
+      }, [loadOfmBalance, t])
+
+      const runOfmRenewAll = useCallback(async (product) => {
+        setOfmBusy(product.id)
+        setNote(undefined)
+        let failed = 0
+        const rows = ofmAccounts[product.id] ?? []
+        try {
+          for (const account of rows) {
+            try {
+              await ofmCall('account.refresh', { accountId: account.id })
+            } catch {
+              failed += 1
+            }
+          }
+          setNote({
+            kind: failed > 0 ? 'error' : 'ok',
+            text: product.displayName + ': ' + (rows.length - failed) + '/' + rows.length,
+          })
+          await refreshOfm(product.id)
+        } finally {
+          setOfmBusy('')
+        }
+      }, [ofmAccounts, refreshOfm, t])
+
+      const ofmSleep = (ms) => new Promise((resolve) => { window.setTimeout(resolve, ms) })
+
+      /**
+       * OFM 侧新建账号：两步式（先拿 loginUrl 立刻开窗，再轮询完成）。
+       *
+       * ⚠️ 与 OFM 自己的面板同一套时序 —— 登录页必须**在用户手势的窗口内**打开，
+       * 等授权完成再开必被弹窗拦截（本仓库在 codearts 上踩过「主页面被跳转」）。
+       */
+      const startOfmLogin = useCallback(async (product) => {
+        setOfmBusy(product.id)
+        setNote({ kind: 'info', text: t('ofmLoginOpening') })
+        try {
+          const started = await ofmCall('account.create', { provider: product.id })
+          const accountId = started?.accountId
+          if (started?.loginMode === 'sms') {
+            // 后端明说这条车道要短信：渲染表单而不是开窗（loginUrl 此时是空串）。
+            setSms({ provider: product.id, accountId: accountId, phone: '', code: '', msgid: '', busy: false, error: '' })
+            setNote(undefined)
+            return
+          }
+          const loginUrl = started?.loginUrl
+          if (typeof loginUrl === 'string' && loginUrl.length > 0) {
+            try { window.open(loginUrl, '_blank', 'noopener') } catch { /* 被拦：地址在宿主侧日志 */ }
+          }
+          setNote({ kind: 'info', text: t('ofmLoginWaiting') })
+          const deadline = Date.now() + 240000
+          let finished = false
+          while (Date.now() < deadline) {
+            await ofmSleep(1500)
+            const poll = await ofmCall('login.poll', { provider: product.id, accountId: accountId })
+            if (poll?.done !== true) continue
+            finished = true
+            if (poll.success === false) {
+              setNote({ kind: 'error', text: t('loginFailed') + ': ' + (poll.error ?? '') })
+            } else {
+              setNote({ kind: 'ok', text: t('loginDone') + ' · ' + accountId })
+            }
+            break
+          }
+          if (!finished) setNote({ kind: 'error', text: t('ofmLoginTimeout') })
+          await refreshOfm(product.id)
+        } catch (error) {
+          setNote({ kind: 'error', text: t('loginFailed') + ': ' + error.message })
+        } finally {
+          setOfmBusy('')
+        }
+      }, [refreshOfm, t])
+
+      /**
+       * 打开手机号登录表单（只有 Loomy 有这条备用路径）。
+       *
+       * ⚠️ 必须先 account.create 拿到 accountId：宿主的 login.sendSms /
+       * login.submitSms 都要求「池里已存在该条目」。account.create 同时会起一轮
+       * 微信扫码流程，那条流程若无人扫码自然超时（无害）；短信提交成功则把凭据写进
+       * **同一个** ref，不会产生两个账号。
+       */
+      const openSmsForm = useCallback(async (product) => {
+        setOfmBusy(product.id)
+        setNote(undefined)
+        try {
+          const started = await ofmCall('account.create', { provider: product.id })
+          setSms({ provider: product.id, accountId: started?.accountId, phone: '', code: '', msgid: '', busy: false, error: '' })
+        } catch (error) {
+          setNote({ kind: 'error', text: t('ofmCallFailed') + ': ' + error.message })
+        } finally {
+          setOfmBusy('')
+        }
+      }, [t])
+
+      const sendSmsCode = useCallback(async () => {
+        if (sms === undefined) return
+        setSms({ ...sms, busy: true, error: '' })
+        try {
+          const value = await ofmCall('login.sendSms', {
+            provider: sms.provider,
+            accountId: sms.accountId,
+            phone: sms.phone,
+          })
+          setSms((current) => current === undefined ? current : { ...current, busy: false, msgid: value?.msgid ?? '', error: '' })
+          setNote({ kind: 'ok', text: t('smsSent') })
+        } catch (error) {
+          setSms((current) => current === undefined ? current : { ...current, busy: false, error: error.message })
+        }
+      }, [sms, t])
+
+      const submitSmsCode = useCallback(async () => {
+        if (sms === undefined) return
+        setSms({ ...sms, busy: true, error: '' })
+        try {
+          const value = await ofmCall('login.submitSms', {
+            provider: sms.provider,
+            accountId: sms.accountId,
+            code: sms.code,
+          })
+          if (value?.done === true) {
+            setSms(undefined)
+            setNote({ kind: 'ok', text: t('loginDone') })
+            await refreshOfm(sms.provider)
+          } else {
+            setSms((current) => current === undefined ? current : { ...current, busy: false, error: value?.error ?? '' })
+          }
+        } catch (error) {
+          setSms((current) => current === undefined ? current : { ...current, busy: false, error: error.message })
+        }
+      }, [refreshOfm, sms, t])
+
       if (summary === undefined) {
         return h('div', { className: 'ow-root' }, h('p', { className: 'ow-dim' }, t('busy')))
       }
@@ -1069,26 +1537,59 @@ window.__ModuleLoader__.load({
         }),
         h('p', { key: 'ah', className: 'ow-hint' }, t('autoHint')),
 
-        // ── 卡片网格：两条账号车道并排 ────────────────────────────────────────
-        h('div', { key: 'cards', className: 'ow-cards' }, summary.products.map((product) => h(ProductCard, {
-          key: product.id,
-          product,
-          accounts: accounts.filter((account) => account.provider === product.id),
-          models: modelRows.filter((model) => model.provider === product.id),
-          creditRow: credits[product.id],
-          balanceLoading,
-          tab: tabs[product.id] ?? 'accounts',
-          onTab: (next) => setTabs((current) => ({ ...current, [product.id]: next })),
-          busy,
-          claimBusy: claimBusy === product.id,
-          t,
-          onAction: (request) => void runAction({ ...request, provider: product.id }),
-          onModelAction: (request) => void runModelAction(product.id, request),
-          onLogin: () => void startLogin(product.id),
-          onClaimAll: () => void runClaimAll(product.id),
-          onRefreshBalances: () => void loadBalances([product], true),
-          onRenewAll: () => void runRenewAll(product.id),
-        }))),
+        // ── 卡片网格：13 条账号车道（2 条 native + 11 条 OFM 侧）──────────────
+        //
+        // ⚠️ 卡片本身不关心后端：数据与回调都**在这里**按 product.backend 分派好，
+        // 于是 ProductCard 只有一处「后端未就绪」的判断，不需要知道 RPC 的存在。
+        h('div', { key: 'cards', className: 'ow-cards' }, summary.products.map((product) => {
+          const isOfm = product.backend === 'ofm'
+          const ready = !isOfm || ofmReady
+          const laneAccounts = isOfm
+            ? (ofmAccounts[product.id] ?? [])
+            : accounts.filter((account) => account.provider === product.id)
+          const laneModels = isOfm
+            ? (ofmModels[product.id] ?? [])
+            : modelRows.filter((model) => model.provider === product.id)
+          const creditRow = isOfm ? ofmCredits[product.id] : credits[product.id]
+          return h(ProductCard, {
+            key: product.id,
+            product,
+            ready,
+            backendNote: isOfm ? (ofmReady ? t('backendOfmNote') : t('backendMissingNote')) : undefined,
+            accounts: laneAccounts,
+            models: laneModels,
+            creditRow,
+            // 车道级余额失败的原因（OFM 侧：整条车道的查询错误；native 侧走 failures）。
+            balanceNote: isOfm && typeof creditRow?.error === 'string' ? creditRow.error : undefined,
+            // ⚠️ OFM 侧**没有**逐账号的领取端点（宿主只有 credits.claimAll，按车道），
+            // 故那一侧不渲染账号行上的「领积分」—— 否则点了会领掉整条车道，
+            // 与按钮所在的「这一行」不符。车道级的「一键领取」照旧。
+            rowClaim: !isOfm,
+            // OFM 侧余额是**按车道**整批取的（宿主端点就是车道维度），
+            // 没有「单个车道正在加载」这个状态，故恒 false。
+            balanceLoading: isOfm ? false : balanceLoading,
+            tab: tabs[product.id] ?? 'accounts',
+            onTab: (next) => setTabs((current) => ({ ...current, [product.id]: next })),
+            busy: busy || ofmBusy === product.id,
+            claimBusy: claimBusy === product.id,
+            t,
+            sms: isOfm && sms !== undefined && sms.provider === product.id ? sms : undefined,
+            onSmsOpen: () => void openSmsForm(product),
+            onSmsChange: (patch) => setSms((current) => current === undefined ? current : { ...current, ...patch }),
+            onSmsSend: () => void sendSmsCode(),
+            onSmsSubmit: () => void submitSmsCode(),
+            onAction: (request) => void (isOfm
+              ? runOfmAction(product, request)
+              : runAction({ ...request, provider: product.id })),
+            onModelAction: (request) => void (isOfm
+              ? runOfmModelAction(product, request)
+              : runModelAction(product.id, request)),
+            onLogin: () => void (isOfm ? startOfmLogin(product) : startLogin(product.id)),
+            onClaimAll: () => void (isOfm ? runOfmClaimAll(product) : runClaimAll(product.id)),
+            onRefreshBalances: () => void (isOfm ? loadOfmBalance(product.id) : loadBalances([product], true)),
+            onRenewAll: () => void (isOfm ? runOfmRenewAll(product) : runRenewAll(product.id)),
+          })
+        })),
 
         h('div', { key: 'foot', className: 'ow-foot' }, [
           h(Button, {
@@ -1480,6 +1981,22 @@ window.__ModuleLoader__.load({
 .ow-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .ow-actions .ow-btn { padding: 3px 9px; font-size: 11.5px; font-weight: 520; }
 .ow-empty { margin: 0; padding: 10px 2px; font-size: 12px; color: var(--dsw-alias-label-tertiary); }
+
+/* ── 手机号登录（Loomy 的备用路径）──────────────────────────────────────── */
+.ow-sms { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 2px 0 4px; }
+.ow-sms .ow-hint { flex: 1 1 100%; margin: 0; }
+.ow-input {
+  flex: 0 0 auto;
+  width: 132px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-elevated);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+}
+.ow-input:focus { outline: 2px solid var(--dsw-alias-state-info-primary, var(--dsw-alias-border-l2)); outline-offset: 1px; }
 
 /* ── 模型面板 ──────────────────────────────────────────────────────────── */
 .ow-mpane { display: flex; flex-direction: column; gap: 9px; }

@@ -38,6 +38,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { mountBuddyChannel, BUDDY_PRODUCTS } from './src/channels.js'
+import { OFM_LANES, OFM_RPC_PATH } from './src/lanes.js'
 import { poolView, ensureFallbackPool, resolveDshHome } from './src/pool.js'
 import { createCreditsService } from './src/credits-service.js'
 import { createAutoCheckin, createAutoCheckinStore } from './src/auto-checkin.js'
@@ -233,6 +234,12 @@ export function apply(ctx, config = {}) {
     channels: () => channels,
     pool: () => pool,
     products: ALL_LANES,
+    // 宿主 channel-pack 是否在场（决定 11 条 OFM 侧车道能不能操作）。
+    // 判据用 accountPool 的存在性：那正是 channel-pack 的 apply 末尾
+    // `ctx.provide('accountPool', pool)` 提供的服务，没有别的来源。
+    // 晚绑定：OFM 的 fiber 可能晚于本插件挂载。
+    ofmBackend: () => readServiceOrUndefined(ctx, 'accountPool') !== undefined,
+    ofmRpcPath: OFM_RPC_PATH,
     connection: () => connection,
     logger,
     version,
@@ -291,16 +298,23 @@ const LANE_CREDITS = Object.freeze({
 const NO_CREDITS = Object.freeze({ balance: false, claim: false })
 
 /**
- * 三条车道的完整清单（前两条是账号型，第三条是服务型）。
+ * 全部车道的完整清单：13 条账号型（2 条本插件自己挂 + 11 条 OFM 侧）+ 1 条服务型。
  *
- * 账号型车道在这里**复制一份并补上 `credits`**：`BUDDY_PRODUCTS` 是适配器的
- * 产品配置，往里塞展示字段会让「配置」和「展示」两件事逐渐混在一起。
+ * 账号型车道在这里**复制一份并补上展示字段**：`BUDDY_PRODUCTS` 是适配器的产品
+ * 配置，往里塞展示字段会让「配置」和「展示」两件事逐渐混在一起。
+ *
+ * 11 条 OFM 侧车道的元数据在 `src/lanes.js`（那里写明为什么**不**自己挂载它们：
+ * 宿主 channel-pack 已注册同名 cordis Service 与 LLM 路由，再挂一遍会抛错、
+ * 并让两份 auth 实例并发消费同一个 refresh_token）。
  */
 const ALL_LANES = Object.freeze([
   ...BUDDY_PRODUCTS.map((product) => ({
     ...product,
+    backend: 'native',
+    login: 'browser',
     credits: LANE_CREDITS[product.id] ?? NO_CREDITS,
   })),
+  ...OFM_LANES,
   OPENCODE_LANE,
 ])
 

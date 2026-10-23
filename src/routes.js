@@ -177,18 +177,34 @@ function buildSummary(deps) {
     } catch {
       // 池读失败不致命：概览照样要能渲染，让用户看到「读取失败」而不是白页。
     }
+    // backend 决定这条车道的登录/续期/积分/模型开关走哪个后端：
+    //   'native' —— 本插件自己挂的（buddy / workbuddy），走 /api/free-model/*
+    //   'ofm'    —— 宿主 channel-pack 提供的 11 条，页面直接调 /api/channel-pack
+    const backend = product.backend ?? 'native'
+    const ofmReady = backend === 'ofm' && deps.ofmBackend?.() === true
     return {
       id: product.id,
       displayName: product.displayName,
       endpoint: product.endpoint,
+      backend,
+      // 登录交互形态（页面据此决定「弹窗 + 轮询」还是「本机登录页 + 可选短信」）。
+      // native 两条都是浏览器 OAuth，故 backend === 'ofm' 之外一律 'browser'。
+      login: product.login ?? 'browser',
+      ...(product.smsFallback === true ? { smsFallback: true } : {}),
+      ...(typeof product.note === 'string' && product.note.length > 0 ? { note: product.note } : {}),
       total,
       enabled,
       expiringSoon,
-      // 三条状态必须分辨得开：
+      // 四种状态必须分辨得开：
       //   'registered' —— 本插件接管了路由（OFM 2.5.8 之后，或没装 OFM）
       //   'yielded'    —— 路由已被 OFM 内置 channel-pack 占着（用户还停在 2.5.7）
-      //   undefined    —— 本插件没挂载这条通道（apply 失败 / llm 服务缺席）
-      route: lastRegistrationOutcome(deps.llm, product.id) ?? 'absent',
+      //   'ofm'        —— 该车道本来就由 OFM 侧提供，且它正在跑
+      //   'absent'     —— 没挂载（apply 失败 / llm 服务缺席 / OFM 没装）
+      route: backend === 'ofm'
+        ? (ofmReady ? 'ofm' : 'absent')
+        : (lastRegistrationOutcome(deps.llm, product.id) ?? 'absent'),
+      // ⚠️ mounted 对 OFM 车道**恒为 false**（本插件确实没挂它们），
+      // 故页面不能用它判断「能不能操作」—— 那是 route / backend 的事。
       mounted: deps.channels().has(product.id),
       // 积分能力跟着产品走：页面据此决定渲染不渲染「领取」按钮，
       // 而不是让前端自己拿 provider id 去猜（猜错就是 404）。
@@ -199,6 +215,13 @@ function buildSummary(deps) {
     version: deps.version,
     pool: poolState,
     poolSource: poolState === 'host' ? 'accountPool' : poolState === 'local' ? 'channel-pack/state.json' : 'none',
+    // OFM 侧后端是否就绪（11 条车道的操作能力位）。页面据此把那些卡片标成
+    // 「后端未就绪」并隐藏操作按钮 —— 而不是渲染出点了必然失败的动作。
+    ofm: {
+      available: deps.ofmBackend?.() === true,
+      // 就绪时的转发目标（页面不写死路径，改路由只改这里）。
+      rpcPath: deps.ofmRpcPath ?? '/api/channel-pack',
+    },
     // 只有账号型车道进 products；服务型车道（opencode）单独一段，字段形状不同。
     products,
     serviceLanes: deps.products
@@ -243,7 +266,15 @@ async function listModels(deps, search) {
     if (product.kind === 'service') continue
     const channel = deps.channels().get(product.id)
     if (channel === undefined) {
-      products.push({ id: product.id, displayName: product.displayName, mounted: false, models: [] })
+      // OFM 侧车道在这里**必然是空目录**（本插件没挂它们的适配器）：页面据此
+      // 走宿主 RPC 的 model.list，而不是把空目录渲染成「读不到模型」。
+      products.push({
+        id: product.id,
+        displayName: product.displayName,
+        backend: product.backend ?? 'native',
+        mounted: false,
+        models: [],
+      })
       continue
     }
     let rows = []
@@ -286,6 +317,7 @@ async function listModels(deps, search) {
       id: product.id,
       displayName: product.displayName,
       endpoint: product.endpoint,
+      backend: 'native',
       mounted: true,
       total,
       disabled: off,
@@ -318,6 +350,7 @@ async function mutateModel(deps, body, send) {
   if (product.kind === 'service') {
     return send(409, { error: `${product.id} 是服务型车道，模型开关由本地服务管理；请用 /opencode/refresh 刷新目录` })
   }
+  if (rejectOfmLane(deps, product, send)) return
   if (!deps.channels().has(product.id)) return send(503, { error: 'channel not mounted' })
   const action = String(body.action ?? '')
 
@@ -376,6 +409,7 @@ async function listAccounts(deps) {
 async function startLogin(deps, body, send) {
   const product = findProduct(deps, body.provider)
   if (product === undefined) return send(400, { error: 'unknown provider' })
+  if (rejectOfmLane(deps, product, send)) return
   const { fetchAuthState, decorateLoginUrl } = await import('./core/buddy-oauth.js')
   const state = await fetchAuthState(fetch, undefined, product)
   const loginUrl = decorateLoginUrl(state.authUrl, product)
@@ -394,6 +428,7 @@ async function pollLogin(deps, body, send) {
   if (product === undefined) return send(400, { error: 'unknown provider' })
   const state = String(body.state ?? '')
   if (state === '') return send(400, { error: 'state is required' })
+  if (rejectOfmLane(deps, product, send)) return
   const channel = deps.channels().get(product.id)
   if (channel === undefined) return send(503, { error: 'channel not mounted' })
   const refName = String(body.refName ?? `${product.id.toUpperCase()}_ACCOUNT_${randomSuffix()}`)
@@ -489,6 +524,7 @@ async function claimCheckin(deps, body, send) {
 async function probe(deps, body, send) {
   const product = findProduct(deps, body.provider)
   if (product === undefined) return send(400, { error: 'unknown provider' })
+  if (rejectOfmLane(deps, product, send)) return
   const channel = deps.channels().get(product.id)
   if (channel === undefined) return send(503, { error: 'channel not mounted' })
   const models = await channel.adapter.listModels(product.id)
@@ -522,6 +558,9 @@ async function probe(deps, body, send) {
 async function resolveAccountCredential(deps, body) {
   const product = findProduct(deps, body.provider)
   if (product === undefined) return { status: 400, error: 'unknown provider' }
+  if ((product.backend ?? 'native') !== 'native') {
+    return { status: 409, error: `${product.displayName} 由 OFM 后端提供，请用宿主 RPC 查询积分` }
+  }
   const pool = deps.pool()
   if (pool === undefined) return { status: 503, error: 'account pool unavailable' }
   const id = String(body.id ?? '')
@@ -530,6 +569,26 @@ async function resolveAccountCredential(deps, body) {
     : await pool.resolveCredentialForAccount(id)
   if (credential === undefined || credential === null) return { status: 404, error: 'no usable credential' }
   return { product, credential }
+}
+
+/**
+ * OFM 侧车道不许走本插件的 HTTP 面。
+ *
+ * 那些车道的登录 / 续期 / 积分 / 模型开关全在宿主 channel-pack 里，本插件**刻意**
+ * 不代理（否则要在 13 条车道与 12 个 RPC 方法之间各写一遍转发，且任何一条的产品
+ * 怪癖都会在转发层再漂移一次）。页面直接调宿主 RPC，这里只负责把「走错了后端」
+ * 这件事**明确报出来**，而不是给一个语焉不详的 503。
+ *
+ * @returns {boolean} true = 已回 409，调用方必须立即返回
+ */
+function rejectOfmLane(deps, product, send) {
+  if ((product.backend ?? 'native') === 'native') return false
+  send(409, {
+    code: 'backend-ofm',
+    error: `${product.displayName} 由 OFM 后端（channel-pack）提供，本插件的 HTTP 面不代理它；`
+      + `页面用宿主 RPC（${deps.ofmRpcPath ?? '/api/channel-pack'}）操作这条车道。`,
+  })
+  return true
 }
 
 /** 按 id 找产品。 */
@@ -660,6 +719,7 @@ async function claimAll(deps, body, send) {
   const product = findProduct(deps, body.provider)
   if (product === undefined) return send(400, { error: 'unknown provider' })
   if (product.kind === 'service') return send(409, { error: `${product.id} 是服务型车道，没有积分` })
+  if (rejectOfmLane(deps, product, send)) return
   const capability = product.credits ?? { balance: false, claim: false }
   if (capability.claim !== true) {
     return send(400, { error: capability.claimNote ?? `${product.displayName} 不支持每日签到` })
