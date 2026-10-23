@@ -21,7 +21,7 @@
   ],
   "scripts": {
     "check": "node --check index.js && node --check client.js && node --check src/credits-service.js && node --check src/auto-checkin.js && node --check src/opencode/client.js && node --check src/opencode/adapter.js && node --check src/opencode/service.js",
-    "test": "node --import ./test/hooks.mjs test/smoke.mjs && node test/render.mjs && node test/opencode-sse.mjs",
+    "test": "node --import ./test/hooks.mjs test/smoke.mjs && node test/render.mjs && node test/opencode-sse.mjs && node test/opencode-failure-state.mjs && node --import ./test/hooks.mjs test/opencode-classify.mjs && node --import ./test/hooks.mjs test/opencode-pure.mjs && node --import ./test/hooks.mjs test/opencode-error-wiring.mjs",
     "test:e2e": "node --import ./test/hooks.mjs test/e2e-opencode.mjs",
     "test:affinity": "node --import ./test/hooks.mjs test/opencode-affinity.mjs",
     "test:host": "node test/host-check.mjs && node test/host-apply.mjs",

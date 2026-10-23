@@ -41,8 +41,42 @@
  * @module src/opencode/client
  */
 
+import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
+
 /** 单次 HTTP 的默认超时：上游会内部重试，没有 deadline 会挂死。 */
 const DEFAULT_TIMEOUT_MS = 180_000
+
+/** 失败状态落盘的 schema 标识（改结构时记得一起改）。 */
+const FAILURE_SCHEMA = 'dsh-free-model/opencode-failures/v1'
+
+/** 「other」类失败的保留时长：一天，够用户第二天回来还能看见，又不会变成陈年旧账。 */
+const FAILURE_OTHER_TTL_MS = 24 * 60 * 60 * 1000
+
+/**
+ * 工具开关表的缓存时长。
+ *
+ * **不能永久缓存**：这份表是用来关 opencode 内置工具的，而它的来源是「当前这个 build 的
+ * 真实清单」。用户中途升级 opencode（或 serve 被换成新 build）之后，新出现的工具名不在
+ * 旧表里 —— 而表里没有的名字是**默认启用**的。于是「缓存越久越安全」在这里是反的：
+ * 陈旧缓存的每一个新增工具都是一个静默的 fail-open。10 分钟够挡住同一轮里的并发调用，
+ * 又不至于让 build 升级后的风险窗口无限延长。
+ */
+const TOOL_TABLE_TTL_MS = 10 * 60 * 1000
+
+/** 读不到清单时，退回的硬编码快照也能缓存一小会儿：免得 serve 挂着时被反复捶。 */
+const TOOL_TABLE_FALLBACK_TTL_MS = 60 * 1000
+
+/**
+ * 下一个 UTC 零点（= 北京时间 08:00）。
+ *
+ * opencode 免费层的**当日额度**按这个时刻重置（实测 retry-after 正好指向 UTC 午夜），
+ * 所以落盘时把 resetAt 记下来，页面才能说「今天没戏了，早上 8 点后自动恢复」。
+ */
+export function nextUtcMidnight(nowMs = Date.now()) {
+  const d = new Date(nowMs)
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 0, 0)).toISOString()
+}
 
 /** 轮询降级路径的间隔：200ms 足够顺滑且不烧 CPU。 */
 const POLL_INTERVAL_MS = 200
@@ -127,6 +161,12 @@ export class OpenCodeClient {
     this.sessions = new Map()
     /** 本实例创建过的全部会话（dispose 时清理）。 */
     this.created = new Set()
+    /** 运行时读到的工具开关表（带 TTL 缓存；读不到时退回硬编码快照）。 */
+    this.toolTableCache = undefined
+    this.toolTableAt = 0
+    this.toolTableTtlMs = Number.isFinite(options.toolTableTtlMs) && options.toolTableTtlMs >= 0
+      ? options.toolTableTtlMs
+      : TOOL_TABLE_TTL_MS
     /**
      * 按 provider 记录「上游为什么调不通」。
      *
@@ -134,6 +174,72 @@ export class OpenCodeClient {
      * 否则用户会一直点重试。key 是 providerID，value 是最近一次原因。
      */
     this.providerFailures = new Map()
+    /**
+     * 失败状态落盘位置（可选）。
+     *
+     * 不传就是纯内存 —— 与旧行为完全一致，测试里的替身因此不需要动。
+     */
+    this.stateFile = typeof options.stateFile === 'string' && options.stateFile !== '' ? options.stateFile : undefined
+    this.loadFailures()
+  }
+
+  /**
+   * 失败状态读回（2026-10-24 新增）。
+   *
+   * ## 为什么必须落盘
+   *
+   * 上游的两种拒绝里，**「调用方身份被拒」是结构性的**：重试永远不会好，只能换通道
+   * 或升级 build。可这份结论原先只活在内存 Map 里 —— 宿主一重启，页面又重新显示
+   * 「可点」，用户就会再试一遍永远不会成功的事。额度耗尽同理：它按天重置，页面该说
+   * 的是「今天没戏了」，而不是「刚刚失败了一下」。
+   *
+   * ## 过期规则
+   *
+   * - `quota`（当日额度用尽）：到 `resetAt` 自动作废（UTC 0:00 = 北京 08:00）；
+   * - `identity`（身份被拒）：**不作废** —— 它是 build 级事实；
+   * - `other`：24 小时后作废。
+   */
+  loadFailures() {
+    if (this.stateFile === undefined) return
+    let raw
+    try {
+      raw = JSON.parse(readFileSync(this.stateFile, 'utf8'))
+    } catch {
+      return
+    }
+    const entries = raw?.entries
+    if (entries === null || typeof entries !== 'object') return
+    const now = Date.now()
+    for (const [providerID, entry] of Object.entries(entries)) {
+      if (entry === null || typeof entry !== 'object') continue
+      if (isPersistedFailureExpired(entry, now)) continue
+      if (typeof entry.message === 'string' && entry.message !== '') {
+        this.providerFailures.set(providerID, entry.message)
+      }
+    }
+  }
+
+  /** 把当前失败表写盘：原子（先写 .tmp 再 rename），任何 IO 失败都不影响推理。 */
+  persistFailures() {
+    if (this.stateFile === undefined) return
+    const now = Date.now()
+    const entries = {}
+    for (const [providerID, message] of this.providerFailures) {
+      const text = String(message ?? '')
+      const kind = isQuotaExhausted(text) ? 'quota' : isFreeTierRejection(text) ? 'identity' : 'other'
+      const entry = { message: text, kind, at: new Date(now).toISOString() }
+      if (kind === 'quota') entry.resetAt = nextUtcMidnight(now)
+      entries[providerID] = entry
+    }
+    const payload = { schema: FAILURE_SCHEMA, savedAt: new Date(now).toISOString(), entries }
+    const tmp = this.stateFile + '.tmp'
+    try {
+      mkdirSync(dirname(this.stateFile), { recursive: true })
+      writeFileSync(tmp, JSON.stringify(payload, null, 2))
+      renameSync(tmp, this.stateFile)
+    } catch (error) {
+      this.logger?.warn?.('opencode 失败状态写盘失败：' + (error instanceof Error ? error.message : String(error)))
+    }
   }
 
   /** 低层请求：统一超时 + 统一错误文案（错误里带路径，方便用户自查）。 */
@@ -320,15 +426,59 @@ export class OpenCodeClient {
     } catch { /* 中断是尽力而为：会话可能已经结束 */ }
   }
 
+  /**
+   * 工具开关表：**运行时**取自上游，读不到才退回硬编码快照。
+   *
+   * ## 为什么不能写死（2026-10-24 修正）
+   *
+   * `toolsDisabled()` 只关 `OPENCODE_TOOLS` 里那 14 个名字 —— 那是 1.19.3 的
+   * 快照。opencode 升级新增内置工具时，新名字不在表里就是**默认启用**，而这条
+   * 车道的定位是「不许它动用户的文件」。于是硬编码清单不只是维护负担，它是个
+   * 安全洞：上游漏掉一个名字，就等于在这台机器上开了 bash / write / edit。
+   *
+   * `/experimental/tool/ids` 给出该 build 的真实清单；取到就把每一个都置 false，
+   * 并把硬编码快照里的名字**也一起关**（上游列表有遗漏时兜住）。取不到（老版本
+   * 没有这个接口）退回快照并记一次日志 —— 两条路的语义都是「全关」，绝不会
+   * 因为读不到就放开。
+   */
+  async toolTable() {
+    // 缓存按 TTL 失效：build 升级后新增的工具名必须能被重新发现（见 TOOL_TABLE_TTL_MS 注释）。
+    if (this.toolTableCache !== undefined && Date.now() - this.toolTableAt < this.toolTableTtlMs) {
+      return this.toolTableCache
+    }
+    try {
+      const response = await this.request('/experimental/tool/ids', { method: 'GET' })
+      const ids = Array.isArray(response) ? response : []
+      const names = ids.filter((name) => typeof name === 'string' && name !== '')
+      if (names.length === 0) throw new Error('empty tool id list')
+      const table = {}
+      for (const name of names) table[name] = false
+      for (const name of OPENCODE_TOOLS) table[name] = false
+      this.toolTableCache = table
+      this.toolTableAt = Date.now()
+      return table
+    } catch (error) {
+      this.logger?.warn?.('opencode tool ids 读取失败，退回硬编码清单：' + (error instanceof Error ? error.message : String(error)))
+      // 退回快照也要缓存一小会儿，否则 serve 挂着时每次调用都去撞一次超时。
+      // 注意这里缓存的是**全关**的快照，不是空表 —— fail-closed 的语义不能因为读不到就变。
+      const fallback = toolsDisabled()
+      this.toolTableCache = fallback
+      this.toolTableAt = Date.now() - this.toolTableTtlMs + TOOL_TABLE_FALLBACK_TTL_MS
+      return fallback
+    }
+  }
+
   /** 记一次 provider 级失败（供状态页显示）。 */
   noteFailure(providerID, message) {
     if (typeof providerID !== 'string' || providerID === '') return
     this.providerFailures.set(providerID, String(message).slice(0, 300))
+    this.persistFailures()
   }
 
   /** 清掉某 provider 的失败记录（成功一次就够）。 */
   clearFailure(providerID) {
     this.providerFailures.delete(providerID)
+    this.persistFailures()
   }
 
   /** 当前已知的 provider 失败表。 */
@@ -377,7 +527,7 @@ export class OpenCodeClient {
       // ⚠️ 工具全关：本通道是纯文本模型。opencode 的 build agent 默认带
       // bash / write / edit，一旦放开，模型会真的在用户机器上执行命令 ——
       // 而 DSH 侧的 tool call 又拿不到它的结果（两套工具协议不互通）。
-      tools: toolsDisabled(),
+      tools: await this.toolTable(),
     })
 
     // SSE 优先：真 token 增量 + 立刻拿到 session.error。
@@ -659,6 +809,33 @@ function upstreamError(error) {
 /** 免费层被拒的判定（供状态页与适配器共用）。 */
 export function isFreeTierRejection(message) {
   return FREE_TIER_MARK.test(String(message ?? ''))
+}
+
+/**
+ * 当日免费额度耗尽的固定特征。
+ *
+ * 实测原文：`Free usage limit reached. Subscribe to OpenCode Go to keep going`。
+ *
+ * ⚠️ 这与「调用方身份被拒」（上面那条）是**两件不同的事**，处置完全相反：
+ * 身份拒绝重试永远不会好；额度耗尽是**按天重置**的（UTC 0:00 = 北京 08:00）。
+ * 2026-10-24 之前这里没有这条分支，于是额度耗尽会漏到 `describeUpstreamFailure`
+ * 的兜底分支，用户看到的是上游英文原文 —— 分不清该等到早上还是该换通道。
+ */
+const FREE_QUOTA_MARK = /free usage limit|freeusagelimiterror|usage limit reached|subscribe to opencode go/i
+
+export function isQuotaExhausted(message) {
+  return FREE_QUOTA_MARK.test(String(message ?? ''))
+}
+
+/** 落盘条目是否已过期（规则见 OpenCodeClient#loadFailures 的注释）。 */
+export function isPersistedFailureExpired(entry, nowMs = Date.now()) {
+  if (entry.kind === 'identity') return false
+  if (entry.kind === 'quota') {
+    const resetAt = typeof entry.resetAt === 'string' ? Date.parse(entry.resetAt) : Number.NaN
+    return !Number.isFinite(resetAt) || nowMs >= resetAt
+  }
+  const at = typeof entry.at === 'string' ? Date.parse(entry.at) : Number.NaN
+  return !Number.isFinite(at) || nowMs - at >= FAILURE_OTHER_TTL_MS
 }
 
 /**
