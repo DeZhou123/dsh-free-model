@@ -277,13 +277,18 @@ npm run test:e2e -- 'ofm/codearts/glm-5.3'
 - **余额是「查得到才算」**：合计数只累计读成功的账号；查不到的账号会单独显示原因，
   不会被当成 0（否则卡片上的合计数看起来像「额度凭空少了」）。
 
-- **OpenCode 免费层在本机 IP 上是结构性拒绝，不是限流**。`opencode/*-free`
-  全系列返回 `403 FreeTierError: OpenCode's free tier can only be used from
-  within OpenCode`。2026-10-23 复验：连 `opencode serve` 自己发出的请求都被
-  同样拒绝（试过 Authorization / x-api-key / UA / x-opencode-session 五种组合，
-  全 403），所以这条 build 的免费层通道已关闭，**重试不会恢复**。
-  同一台机器上 `ofm/*`（本机 OFM 网关）是通的。
-  插件做的是：把 403 与「限流」分开报，并在卡片上标「上游拒绝」，别让人一直重试。
+- **OpenCode 免费层的失败有三种，处置完全相反，别混成一句「限流了」**
+  （2026-10-24 修正：早先这里只写了下面第 2 条，还把当日额度误当成它的同义词）：
+
+  | 类别 | 上游原文特征 | 该怎么办 |
+  |---|---|---|
+  | **① 当日额度耗尽** | `Free usage limit reached. Subscribe to OpenCode Go to keep going` | 按天重置，**北京时间 08:00**（UTC 0:00）恢复。在此之前重试无效；换成同池的其它 `*-free` 模型通常也无效。要立刻干活就换通道（例如本机 OFM 网关的 `ofm/*`）或订阅 Go |
+  | **② 调用方身份被拒** | `403 FreeTierError: OpenCode's free tier can only be used from within OpenCode` | 这是 **build 级事实，重试永不恢复**。2026-10-23 复验：连 `opencode serve` 自己发出的请求都被同样拒绝（试过 Authorization / x-api-key / UA / x-opencode-session 五种组合，全 403）。出路是升级 opencode 的 build，或换通道 |
+  | **③ 限流** | `429` / `rate limit` / `too many requests` | 等一两分钟，或换个模型 |
+
+  插件做的是：**按类别分开报**（`adapter.describeUpstreamFailure()` 里额度分支排在限流
+  分支**之前**，否则会被限流正则误伤），并在卡片上标出具体原因，别让人一直重试那件
+  永远不会成功的事。
 - **OpenCode 车道不支持工具**（见上）。
 - **OpenCode 车道支持图片**（2026-10-23 修正）：`/config/providers` 里 4 个
   免费模型声明 `input.image`，图片经 `FilePartInput` 的 `data:` URL 发送
