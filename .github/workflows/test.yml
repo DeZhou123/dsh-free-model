@@ -1,11 +1,15 @@
 name: test
 
-# 只跑离线套件：smoke / render / opencode-sse / opencode-failure-state /
-# opencode-classify / opencode-pure / opencode-error-wiring。
-# test:e2e 与环境强相关（要真装了 opencode、且免费层此刻没被限流），故不进 CI。
-# 第二步是 npm run catalog:check：随包的渠道目录 catalog/channels.json 必须与
-# 随包渠道（src/lanes/keyed/catalog.js + src/lanes/service.js）逐条一致，
-# 不一致就红 —— 否则「改了随包渠道、忘了重新生成远程目录」只会被用户发现。
+# 三步，全程不联网、不装宿主包（不需要 npm install：check 只用 node --check，
+# 套件只用 node: 内建 + 包内文件）：
+#   1. npm run check          —— 19 个文件的 node --check 语法门。故意放第一步：
+#      常数级耗时，语法一旦改坏就在第一分钟红，不必等全套测试跑完。
+#   2. npm test               —— 只跑离线套件：smoke / render / opencode-sse /
+#      opencode-failure-state / opencode-classify / opencode-pure / opencode-error-wiring。
+#      test:e2e 与环境强相关（要真装了 opencode、且免费层此刻没被限流），故不进 CI。
+#   3. npm run catalog:check  —— 随包的渠道目录 catalog/channels.json 必须与
+#      随包渠道（src/lanes/keyed/catalog.js + src/lanes/service.js）逐条一致，
+#      不一致就红 —— 否则「改了随包渠道、忘了重新生成远程目录」只会被用户发现。
 
 on:
   push:
@@ -26,6 +30,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      - name: 语法门（node --check，19 个文件；不联网、不装依赖）
+        run: npm run check
       - name: 离线套件（不联网、不装宿主包）
         run: npm test
       - name: 渠道目录与随包数据一致（不联网）

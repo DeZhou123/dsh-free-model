@@ -39,8 +39,9 @@
 - **`scripts/build-catalog.mjs`（远程目录生成）**：从随包渠道生成 `catalog/channels.json`，
   生成时**用插件自己的校验器过一遍**，不合格就拒绝生成并非零退出；`npm run catalog:check`
   （`--check`）不写盘，把这次生成的结果与已提交的目录**逐条**比对（`updatedAt` 是生成日期，
-  不参与比较），不一致就非零退出。**CI 会跑它**：`.github/workflows/test.yml` 在 `npm test`
-  之后第二步就是 `npm run catalog:check` —— 「改了随包渠道、忘了重新生成远程目录」在 CI 就红。
+  不参与比较），不一致就非零退出。**CI 会跑它**：`.github/workflows/test.yml` 是三步
+  —— `npm run check` → `npm test` → `npm run catalog:check` —— 「改了随包渠道、
+  忘了重新生成远程目录」在 CI 就红。
 - **HTTP 面新增**：`GET /channels`、`GET /catalog`、`POST /catalog/refresh`、
   `GET /update`、`POST /update/refresh`、`GET /service`、`POST /service/probe`。
   未接线时**明确报错**（`503` 或 `wired:false`），而不是回一份空的「一切正常」。
@@ -82,9 +83,14 @@
 - **`test/host-apply.mjs` 的刚性断言**（复核指出的脆弱点）：原写 `adapters.size === 3`，
   而 keyed 车道是异步装载（免 key 渠道先落地就会变 4 条）→ 换机器/慢盘可能假失败。
   改成「三条老车道必须在，多出来的只允许是 keyed 目录里的 id」。
-- **CI 从来没跑过目录校验**（复核 ⑤）：`.github/workflows/test.yml` 现在在 `npm test`
-  之后增加第二步 `npm run catalog:check`；同时把 `--check` 从「只比条数」改成**逐条比内容**
-  （`updatedAt` 是生成日期，不参与比较）—— 只比条数时改一条 baseURL 照样绿，等于没校验。
+- **CI 从来没跑过目录校验**（复核 ⑤）：`.github/workflows/test.yml` 现在是三步
+  `npm run check` → `npm test` → `npm run catalog:check`；同时把 `--check` 从「只比条数」
+  改成**逐条比内容**（`updatedAt` 是生成日期，不参与比较）—— 只比条数时改一条 baseURL
+  照样绿，等于没校验。
+- **CI 也没跑过语法门**（同一条复核线：CI 的覆盖面比发版清单窄）：`test.yml` 现在**第一步**
+  就是 `npm run check`（19 个文件 `node --check`，只用 Node 内建、**不需要 `npm install`**）。
+  放在套件之前是刻意的：这条是常数级耗时，语法一改坏就在第一分钟红，不必等全套测试跑完；
+  以前语法错只能靠发版前手动跑，CI 全绿也说明不了代码能解析。
 
 ## [0.3.2] · 2026-10-24
 
