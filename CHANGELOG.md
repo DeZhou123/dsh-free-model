@@ -27,14 +27,19 @@
   （半份目录会让渠道莫名消失，那种错最难查）；256KB 上限；原子写缓存（临时文件 + rename）；
   失败**只降级不抛** —— 退到缓存、再退到随包数据。
 - **`src/lanes/service.js`（服务车道 + 探针）**：`opencode`（可代起）/ `FreeLLMAPI 网关` /
-  `Ollama`。探针 3 秒超时、成功 30 秒内不重探、失败退避。`401` 也算「进程活着」并单独报
+  `Ollama`。探针 3 秒超时、三条并发（串行最坏要等 9 秒）。`401` 也算「进程活着」并单独报
   「缺凭据」——「去起服务」和「去填 key」是两件不同的事。
+  探针结果的缓存**不在本文件**：状态与双 TTL 判定在 `index.js:127-128,229-243`
+  （`probeServices()` 成功 30 秒内不重探，有服务不可用则按 `SERVICE_PROBE_FAILURE_TTL_MS`
+  退避；这两个常量仍定义在 `service.js`）。
 - **`src/lanes/update.js`（版本检查）**：读 `raw.githubusercontent.com/<repo>/main/package.json`
   而不是 GitHub Releases API（前者不收限、且不会落后于仓库）；无依赖的 semver 比较
   （`0.4.0-rc.1 < 0.4.0`）；6 小时缓存；**失败静默且信息完整**（本机直连 GitHub 常不通，
   这条路径默认就会失败，更要把失败表现得无害）。
 - **`scripts/build-catalog.mjs`（远程目录生成）**：从随包渠道生成 `catalog/channels.json`，
-  生成时**用插件自己的校验器过一遍**，不合格就拒绝生成并非零退出；`--check` 供 CI 比对。
+  生成时**用插件自己的校验器过一遍**，不合格就拒绝生成并非零退出；`npm run catalog:check`
+  （`--check`）只校验不写盘，供本地或发布前比对 —— CI **不跑它**：`.github/workflows/test.yml`
+  只有一步 `npm test`。
 - **HTTP 面新增**：`GET /channels`、`GET /catalog`、`POST /catalog/refresh`、
   `GET /update`、`POST /update/refresh`、`GET /service`、`POST /service/probe`。
   未接线时**明确报错**（`503` 或 `wired:false`），而不是回一份空的「一切正常」。

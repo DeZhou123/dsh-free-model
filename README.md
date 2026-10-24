@@ -356,7 +356,7 @@ provider —— 但**只有 `/config/providers` 里出现过的才真能调用**
 ## 测试
 
 ```powershell
-# 主套件：50 项协议/路由断言 + 客户端离线渲染（不需要宿主、不发网络）
+# 主套件：52 项协议/路由断言 + 客户端离线渲染（不需要宿主、不发网络）
 npm test
 
 # 用真实宿主包验证契约（临时 link dsh-llm / dsh-credentials，跑完删掉）
