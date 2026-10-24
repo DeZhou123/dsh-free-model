@@ -60,6 +60,11 @@ await check('正文解析：合法目录通过，坏目录逐条给出理由', a
   const huge = parseCatalogBody('x'.repeat(MAX_REMOTE_CATALOG_BYTES + 1))
   assert.equal(huge.ok, false)
   assert.ok(huge.reason.includes('上限'))
+  // 上限按**字节**算：多字节正文即使字符数没超，字节数超了也必须拒绝。
+  // （回归 2026-10-25 的字符/字节混淆：32,295 字符其实是 36,621 字节。）
+  const multibyte = parseCatalogBody('中'.repeat(Math.floor(MAX_REMOTE_CATALOG_BYTES / 3) + 1))
+  assert.equal(multibyte.ok, false, '字符数未超但 UTF-8 字节数超限的正文必须拒绝')
+  assert.ok(multibyte.reason.includes('字节'), multibyte.reason)
 })
 
 await check('明文 http 的目录地址直接拒绝，不打网络', async () => {

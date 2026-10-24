@@ -91,6 +91,9 @@ const payload = {
   channels: accepted,
 }
 const text = JSON.stringify(payload, null, 2) + '\n'
+// 远程拉取上限按**字节**算，所以这里也必须报字节；`text.length` 是字符数，
+// 中文渠道名一个字占 3 字节，混用会把 36,621 字节的目录说成 32,295（2026-10-25 修）。
+const bytes = Buffer.byteLength(text, 'utf8')
 
 if (checkOnly) {
   if (!existsSync(OUT)) {
@@ -113,7 +116,7 @@ writeFileSync(OUT, text, 'utf8')
 console.log(`OK  写入 ${OUT}`)
 console.log(`    来源：${sources.join('；')}`)
 console.log(`    渠道：${accepted.length} 条（${accepted.map((row) => row.id).join(', ')}）`)
-console.log(`    字节：${text.length}`)
-if (text.length > 200 * 1024) {
+console.log(`    字节：${bytes}`)
+if (bytes > 200 * 1024) {
   console.warn('    ⚠ 目录超过 200KB，接近远程拉取上限（256KB）；考虑精简字段')
 }

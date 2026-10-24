@@ -19,7 +19,9 @@
  * GET  https://text.pollinations.ai/models   → 200，0.62s，286 字节
  * ```
  *
- * 用法：node test/keyed-live.mjs --live
+ * 用法：npm run test:live
+ * （直接 `node test/keyed-live.mjs --live` 会缺 `--import ./test/hooks.mjs`，
+ *  适配器 import 宿主包时 ERR_MODULE_NOT_FOUND —— 脚本入口已带上钩子。）
  */
 import assert from 'node:assert/strict'
 import { descriptors, mount } from '../src/lanes/keyed/index.js'

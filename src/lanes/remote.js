@@ -21,6 +21,7 @@
  * @module src/lanes/remote
  */
 
+import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -140,8 +141,12 @@ export async function fetchRemoteCatalog(options = {}) {
  */
 export function parseCatalogBody(text) {
   if (typeof text !== 'string') return { ok: false, reason: '目录正文不是文本' }
-  if (text.length > MAX_REMOTE_CATALOG_BYTES) {
-    return { ok: false, reason: `目录正文超过 ${MAX_REMOTE_CATALOG_BYTES} 字节上限（${text.length}）` }
+  // ⚠️ 上限是按**字节**定的（远程拉取与落盘都按字节算），所以这里必须量 UTF-8 字节数，
+  // 不能用 `text.length`（那是 UTF-16 码元数）。中文渠道名一个字符占 3 字节，
+  // 用字符数比会把「已超限」的目录放进来（2026-10-25 复核发现 32,295 字符 / 36,621 字节的混淆）。
+  const bytes = Buffer.byteLength(text, 'utf8')
+  if (bytes > MAX_REMOTE_CATALOG_BYTES) {
+    return { ok: false, reason: `目录正文超过 ${MAX_REMOTE_CATALOG_BYTES} 字节上限（${bytes} 字节）` }
   }
   let parsed
   try {

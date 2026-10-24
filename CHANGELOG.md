@@ -60,8 +60,8 @@
 | `npm test`（16 套件） | **326 项断言全绿** —— 注册表 25 / 目录 IO 10 / 版本检查 9 / 路由 10 / keyed 13+25+22+22 / 车道表 6 / smoke 52 / 渲染 38 / opencode 全套 94 |
 | `node test/host-apply.mjs` | 用**真实** dsh-llm / dsh-credentials 跑 apply：3 条老车道全在，0 warnings |
 | `node test/host-keyed.mjs` | 免 key 渠道**真被挂上**；缺 key 的 20 条一条都没挂，且原因里带凭据名（或指出待填占位符） |
-| `node scripts/build-catalog.mjs` | 生成 24 条渠道的远程目录（32,295 字节），自校验 0 拒绝 |
-| `node test/keyed-live.mjs --live` | 免 key 渠道真联网：`POST text.pollinations.ai/openai` → 200 / 1.06s；`GET /models` → 200 / 0.62s |
+| `node scripts/build-catalog.mjs` | 生成 24 条渠道的远程目录（36,621 字节），自校验 0 拒绝 |
+| `npm run test:live` | 免 key 渠道真联网：通过 4 项；`POST text.pollinations.ai/openai` 与 `GET /models` 均 200（上游不可用时记 `BLOCKED` 且仍退出 0） |
 
 ## [0.3.2] · 2026-10-24
 
