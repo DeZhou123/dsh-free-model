@@ -19,7 +19,7 @@
  *
  * 用法：
  *   node scripts/build-catalog.mjs            # 写 catalog/channels.json
- *   node scripts/build-catalog.mjs --check    # 只校验、不写盘（CI 的第二步，见 test.yml）
+ *   node scripts/build-catalog.mjs --check    # 只校验、不写盘（CI 的第三步，见 test.yml）
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
