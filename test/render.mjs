@@ -288,4 +288,100 @@ const warnTree = ServiceCard({
 })
 assert.ok(walk(warnTree, 'ServiceCard-warn') > 3, 'warn 态服务卡渲染节点过少')
 
+// ── OFM 侧车道（backend='ofm'）：三条分支各渲染一次 ────────────────────────
+//
+// 这 11 条车道的数据来自宿主 RPC（页面里由 AccountsPage 填好再传给卡片），
+// 卡片本身只多认四个字段：backend / ready / backendNote / sms*。这里逐条断言，
+// 免得「卡片在 native 上好看、在 OFM 侧白屏」。
+const ofmLane = {
+  id: 'qoder',
+  displayName: 'Qoder',
+  endpoint: 'https://api2-v2.qoder.sh',
+  kind: 'account',
+  backend: 'ofm',
+  login: 'browser',
+  route: 'ofm',
+  mounted: false,
+  note: '设备码轮询登录（不开本机回调端口）。',
+  credits: { balance: true, claim: true },
+}
+const ofmProduct = {
+  ...accountProduct,
+  ...ofmLane,
+  provider: 'qoder',
+}
+const ofmCardProps = cardProps({
+  product: ofmProduct,
+  accounts: [{ id: 'qoder-11112222', provider: 'qoder', nickname: 'Qoder 号', enabled: true, expiresAt: 0, refreshable: true, modelRateLimits: {} }],
+  models: [{ id: 'qoder-max', name: 'Qoder Max', provider: 'qoder', disabled: false }],
+  creditRow: { accounts: [{ accountId: 'qoder-11112222', nickname: 'Qoder 号', balance: { total: 88, packages: [] } }] },
+  backendNote: 'backendOfmNote',
+  ready: true,
+  tab: 'accounts',
+})
+const ofmTree = ProductCard(ofmCardProps)
+assert.ok(walk(ofmTree, 'ProductCard-ofm') > 5, 'OFM 侧卡片渲染节点过少')
+const ofmStrings = collectStrings(ofmTree)
+assert.ok(ofmStrings.includes('routeOfm'), 'OFM 侧卡片缺少「OFM 提供」药丸')
+assert.ok(ofmStrings.includes('backendOfm'), 'OFM 侧卡片缺少后端药丸')
+assert.ok(ofmStrings.includes('backendOfmNote'), 'OFM 侧卡片缺少后端说明')
+// 说明行是「noteLabel：<note>」拼出来的，故用包含判断而不是全等。
+assert.ok(ofmStrings.some((text) => text.includes(ofmLane.note)), 'OFM 侧卡片缺少车道说明（note）')
+
+// 后端未就绪：卡片仍要能渲染，且**不能**出现新建账号（点了必然失败）。
+const ofmDownTree = ProductCard(cardProps({
+  product: ofmProduct,
+  accounts: [],
+  models: [],
+  creditRow: undefined,
+  backendNote: 'backendMissingNote',
+  ready: false,
+  tab: 'accounts',
+}))
+assert.ok(walk(ofmDownTree, 'ProductCard-ofm-down') > 3, '后端未就绪分支渲染失败')
+const downStrings = collectStrings(ofmDownTree)
+assert.ok(downStrings.includes('backendMissing'), '后端未就绪时缺少提示药丸')
+assert.ok(!downStrings.includes('addAccount'), '后端未就绪时不应渲染「新建账号」')
+
+// Loomy 的手机号备用路径：未展开是一个按钮，展开后是手机号 + 验证码表单。
+const loomyProduct = {
+  ...ofmProduct,
+  id: 'loomy',
+  displayName: 'Loomy (讯飞)',
+  login: 'localPage',
+  smsFallback: true,
+  provider: 'loomy',
+}
+const smsClosedTree = ProductCard(cardProps({ product: loomyProduct, accounts: [], models: [], creditRow: undefined, ready: true, tab: 'accounts' }))
+assert.ok(collectStrings(smsClosedTree).includes('smsOpen'), 'Loomy 卡片缺少「用手机号登录」入口')
+const smsOpenTree = ProductCard(cardProps({
+  product: loomyProduct,
+  accounts: [],
+  models: [],
+  creditRow: undefined,
+  ready: true,
+  tab: 'accounts',
+  sms: { provider: 'loomy', accountId: 'loomy-1', phone: '13800000000', code: '', msgid: '', busy: false, error: '' },
+  onSmsOpen: () => {},
+  onSmsChange: () => {},
+  onSmsSend: () => {},
+  onSmsSubmit: () => {},
+}))
+const smsStrings = collectStrings(smsOpenTree)
+assert.ok(smsStrings.includes('smsSend'), '短信表单缺少「发送验证码」')
+assert.ok(smsStrings.includes('smsSubmit'), '短信表单缺少「提交并登录」')
+assert.ok(walk(smsOpenTree, 'ProductCard-sms') > 5, '短信表单分支渲染节点过少')
+
+// 车道级余额失败（OFM 侧把后端原因原样显示，不显示成 0）。
+const balanceErrorTree = ProductCard(cardProps({
+  product: ofmProduct,
+  accounts: [],
+  models: [],
+  creditRow: { accounts: [], error: '凭据已过期，请重新登录' },
+  balanceNote: '凭据已过期，请重新登录',
+  ready: true,
+  tab: 'accounts',
+}))
+assert.ok(collectStrings(balanceErrorTree).some((text) => text.includes('凭据已过期')), '车道级余额失败原因没有显示')
+
 console.log('render smoke OK | loading =', loadingCount, '| product =', productCount)

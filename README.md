@@ -8,6 +8,71 @@
 | WorkBuddy（腾讯国际版） | `workbuddy/*` | 完整：工具调用、看图 | 一个账号（浏览器登录） | 账号渠道 |
 | OpenCode 本地车道 | `opencode/*`、`ofm/*` 等 | **无工具**：能看图、不能调工具 | 本机 `opencode serve`（插件可代起） | OpenCode 本地车道 |
 
+## 账号渠道：13 条车道（2 条自己挂 + 11 条 OFM 侧）
+
+上面三条是**本插件自己跑**的车道。但 OFM（`dsh-our-free-model` 的 channel-pack）里
+还有 11 条账号车道是活的 —— 它们的 auth、适配器、积分与登录实现都在宿主的
+channel-pack 里，账号也存在**同一份** `channel-pack/state.json`。只显示两条，
+用户就得在两个面板之间来回切。现在「账号渠道」页把它们全部列出：
+
+| 车道 | id | 登录形态 | 余额 | 签到 |
+|---|---|---|---|---|
+| CodeArts (华为云) | `codearts` | 浏览器回调 | ✓ | ✓ |
+| LobsterAI (有道) | `lobsterai` | 浏览器回调 | ✓ | ✓ |
+| Qoder | `qoder` | 设备码轮询 | ✓ | ✓ |
+| Qoder (中国版) | `qodercn` | 设备码轮询 | ✓ | ✓ |
+| TRAE (字节) | `trae` | 浏览器回调 | ✓ | ✓ |
+| Cline | `cline` | WorkOS 设备码 | ✓ | ✓ |
+| Loomy (讯飞) | `loomy` | **本机登录页**（微信扫码；另有手机号备用路径） | ✓ | ✓ |
+| Raccoon (商汤) | `raccoon` | **本机登录页**（微信扫码 / 短信） | ✓ | ✓ |
+| MiniMax Code | `minimax` | 设备码 + PKCE | ✓ | ✓ |
+| Gemini Code Assist | `gemini` | 浏览器回调 | ✓ | **无**（上游不提供签到） |
+| ZCode (智谱) | `zcode` | 官方设备授权 | ✓ | ✓ |
+
+外加本插件自己挂的 `buddy` / `workbuddy` —— **13 条账号车道一个面板**。
+
+### 两条后端，页面自己选（`backend`）
+
+| backend | 谁实现 | 页面怎么操作 |
+|---|---|---|
+| `native` | 本插件挂载的 auth + adapter（`buddy` / `workbuddy`） | `/api/free-model/*` |
+| `ofm` | 宿主 channel-pack（上面 11 条） | 直接调宿主的 `/api/channel-pack` RPC |
+
+`GET /api/free-model/summary` 里每条车道都带 `backend` / `login` / `credits`，
+页面据此渲染卡片与动作 —— 不需要认识任何具体渠道。
+
+### 为什么不把这 11 条也自己挂一遍
+
+两个硬理由（都是实测过的坑，不是洁癖）：
+
+1. **cordis 同名 Service 会抛错**。OFM 侧 `new QoderAuth(ctx)` 这类实例会注册
+   `ctx.qoderAuth`；本插件再 `new` 一个同名的会抛
+   `service "qoderAuth" has been registered`，把整个 apply 打死；
+2. **两份 auth 实例 = 两份续期定时器**。同一个 `refresh_token` 被并发消费，
+   表现是「刚登录却一直认证失败」（本仓库在 CodeArts 上记录过同型事故）。
+
+所以这 11 条只做**页面 + 管理面**：后端一律转发。转发**在浏览器里做**（页面与
+OFM 面板同源、同一份会话），不在 Host 侧再包一层 —— 那等于把 12 个 RPC 方法 ×
+11 条车道写成胶水，且每条车道的产品怪癖都会在转发层再漂移一次。
+
+### 宿主没装 OFM 时（降级）
+
+这 11 条**照样列出**（用户能看到「这台机器上有哪些免费渠道」），但每条标注
+「后端未就绪」、不给任何动作按钮，卡片上写明「要先装 dsh-our-free-model」。
+给出点了必然失败的按钮，用户的下一步动作会是「反复点它」，而不是「去装后端」。
+
+```powershell
+# 后端就绪与否看这一行：ofm.available
+curl -s http://127.0.0.1:<web端口>/api/free-model/summary   # 需要用浏览器会话（同源 JS）
+```
+
+### 回归防线
+
+`node test/lanes.mjs` —— 断言注册表（11 条、id 顺序、积分能力与 OFM 的 claimAll
+分支一致、Loomy 的短信备用路径、RPC 常量）与「不与 native 两条重叠」。
+`test/smoke.mjs` 另断言：OFM 侧车道在本插件的 HTTP 面上一律 **409 `backend-ofm`**
+（走错了门要明确报出来，而不是 503 或静默改池）。
+
 > 账号型两条车道与「不需要登录的本地车道」在**同一个设置项内分页**：前者要管账号、
 > 积分、签到；后者只有一个本地进程要管。同一时刻屏幕上只有一个主题，页签上还带
 > 数字（账号数 / 模型数），切换前就知道对面有没有东西。
@@ -175,6 +240,7 @@ OFM 那边随即以为「今天已经跑过」而跳过它自己的十几个渠�
 ```
 index.js                 三条车道的装配（账号型 ×2 + 服务型 ×1）+ 积分能力位
 src/channels.js          buddy 系通道装配（auth + adapter + 选号）
+src/lanes.js             账号渠道注册表：OFM 侧 11 条车道的元数据（页面/能力/登录形态）
 src/credits-service.js   余额 / 一键领取（缓存 + 并发合并 + 顺序领取）
 src/auto-checkin.js      每日自动领积分（独立状态文件 + 一天一次 + 开关）
 src/routes.js            /api/free-model/*（含积分、自动领取、/opencode/status|start|stop|refresh）

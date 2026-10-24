@@ -366,8 +366,28 @@ await checkAsync('summary 报 route=registered 与池状态', async () => {
   const res = await callRoute(handler, 'GET', '/api/free-model/summary')
   assert.equal(res.status, 200)
   assert.equal(res.payload.pool, 'host')
-  assert.equal(res.payload.products.length, 2)
-  for (const product of res.payload.products) assert.equal(product.route, 'registered')
+  // 13 条账号车道：2 条本插件自己挂（native）+ 11 条由 OFM 侧提供（见 src/lanes.js）。
+  assert.equal(res.payload.products.length, 13)
+  const nativeLanes = res.payload.products.filter((product) => product.backend === 'native')
+  assert.deepEqual(nativeLanes.map((product) => product.id).sort(), ['buddy', 'workbuddy'])
+  for (const product of nativeLanes) assert.equal(product.route, 'registered')
+  // 夹具里 accountPool 由宿主提供 ⇒ OFM 后端就绪，那 11 条应报 route='ofm'
+  //（而不是 native 那种 'registered' —— 本插件确实没挂它们）。
+  assert.equal(res.payload.ofm.available, true)
+  const ofmLanes = res.payload.products.filter((product) => product.backend === 'ofm')
+  assert.equal(ofmLanes.length, 11)
+  for (const product of ofmLanes) {
+    assert.equal(product.route, 'ofm')
+    assert.equal(product.mounted, false, 'OFM 侧车道不该被本插件挂载')
+    // 登录形态与积分能力必须随车道发出（页面据此渲染按钮/表单）。
+    assert.ok(product.login === 'browser' || product.login === 'localPage')
+    assert.equal(typeof product.credits.balance, 'boolean')
+    assert.equal(typeof product.credits.claim, 'boolean')
+  }
+  // Gemini 免费线没有签到接口：能力位必须如实为 false 且带说明。
+  const gemini = ofmLanes.find((product) => product.id === 'gemini')
+  assert.equal(gemini.credits.claim, false)
+  assert.ok(typeof gemini.credits.claimNote === 'string' && gemini.credits.claimNote.length > 0)
 })
 
 await checkAsync('accounts 列出两个 provider 的账号', async () => {
@@ -430,7 +450,10 @@ await checkAsync('路由已被占用时 apply 不抛错并留日志', async () =
 await checkAsync('让位时 summary 报 route=yielded', async () => {
   const res = await callRoute(foreign.routes[0].handler, 'GET', '/api/free-model/summary')
   assert.equal(res.status, 200)
-  for (const product of res.payload.products) assert.equal(product.route, 'yielded')
+  // 只有 native 两条会被让位；OFM 侧 11 条本来就是宿主提供的，与此无关。
+  for (const product of res.payload.products.filter((row) => row.backend === 'native')) {
+    assert.equal(product.route, 'yielded')
+  }
 })
 
 // ── 场景 3：池缺席 ──────────────────────────────────────────────────────────
@@ -449,13 +472,19 @@ await checkAsync('池缺席时退化为本地实现并明确报 pool=local', asy
 await checkAsync('/models 列出两个 provider 的全量模型', async () => {
   const res = await callRoute(handler, 'GET', '/api/free-model/models')
   assert.equal(res.status, 200)
-  assert.equal(res.payload.products.length, 2)
-  for (const product of res.payload.products) {
+  // native 两条有全量目录；OFM 侧 11 条在本插件的 /models 里是**空目录**
+  //（本插件没挂它们的适配器）—— 页面改走宿主 RPC 的 model.list，故这里断言空。
+  const nativeModels = res.payload.products.filter((product) => product.backend === 'native')
+  assert.equal(nativeModels.length, 2)
+  for (const product of nativeModels) {
     assert.ok(product.total > 0, `${product.id} 没有模型`)
     assert.equal(product.models.length, product.total)
     assert.equal(product.disabled, 0)
     assert.equal(product.closed, false)
   }
+  const ofmModels = res.payload.products.filter((product) => product.backend === 'ofm')
+  assert.equal(ofmModels.length, 11)
+  for (const product of ofmModels) assert.deepEqual(product.models, [])
 })
 
 await checkAsync('/models 带元数据（上下文 / 思考档位 / 图片）', async () => {
@@ -626,7 +655,7 @@ await checkAsync('/opencode/stop 与 /opencode/start 往返', async () => {
 
 await checkAsync('summary 把服务型车道单独列出、不混进账号型 products', async () => {
   const res = await callRoute(handler, 'GET', '/api/free-model/summary')
-  assert.equal(res.payload.products.length, 2, '账号型车道应只有两条')
+  assert.equal(res.payload.products.length, 13, '账号型车道 13 条（2 native + 11 OFM 侧）')
   assert.equal(res.payload.serviceLanes.length, 1)
   assert.equal(res.payload.serviceLanes[0].id, 'opencode')
   assert.equal(res.payload.serviceLanes[0].capability, 'no-tools')
@@ -642,8 +671,21 @@ await checkAsync('服务型车道拒绝模型开关（不写进账号池）', as
 
 await checkAsync('/models 不返回服务型车道（形状不同）', async () => {
   const res = await callRoute(handler, 'GET', '/api/free-model/models')
-  assert.equal(res.payload.products.length, 2)
+  assert.equal(res.payload.products.length, 13)
   assert.ok(res.payload.products.every((product) => product.id !== 'opencode'))
+})
+
+// ── OFM 侧车道：本插件的 HTTP 面**不代理**它们 ─────────────────────────────
+await checkAsync('OFM 侧车道在本插件的 HTTP 面上一律 409（改走宿主 RPC）', async () => {
+  const models = await callRoute(handler, 'POST', '/api/free-model/models', { provider: 'qoder', action: 'reset' })
+  assert.equal(models.status, 409)
+  assert.equal(models.payload.code, 'backend-ofm')
+  const login = await callRoute(handler, 'POST', '/api/free-model/login', { provider: 'trae' })
+  assert.equal(login.status, 409)
+  const credits = await callRoute(handler, 'POST', '/api/free-model/credits', { provider: 'zcode' })
+  assert.equal(credits.status, 409)
+  // 关键：这些拒绝**不能**顺手改动账号池（409 是「走错了门」，不是「操作失败」）。
+  assert.equal(Object.keys(pool.listDisabledModels('qoder')).length, 0)
 })
 
 // ── 积分：余额 / 一键领取 / 自动领取开关 ─────────────────────────────────
