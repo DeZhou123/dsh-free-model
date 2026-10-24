@@ -53,14 +53,19 @@ console.log(`  · listModels 返回 ${models.length} 条（source=${models.sourc
 const started = Date.now()
 let content = ''
 try {
-  const stream = await adapter.stream({
-    provider: route,
+  /**
+   * ⚠️ 调用形态必须与宿主一致：适配器走的是 `prepareCall(provider, model)` +
+   * `stream({ model, messages })`，产出的是 **DSH 的块协议**
+   * （`block-start` / `text-delta` / `block-end` / `finish`），不是上游的
+   * `choices[].delta` —— 把上游形状当返回值来解析，会得到「0 字增量」这种假失败
+   *（2026-10-25 04:44 我自己就踩了一次：first 版本按 `chunk.delta` 取文本，断言「必须真的有内容」直接挂）。
+   */
+  const call = await adapter.prepareCall(route, models[0]?.id ?? 'openai')
+  for await (const piece of call.stream({
     model: models[0]?.id ?? 'openai',
     messages: [{ role: 'user', content: 'Reply with exactly: OK' }],
-  })
-  for await (const chunk of stream) {
-    const delta = chunk?.choices?.[0]?.delta?.content ?? chunk?.delta ?? ''
-    if (typeof delta === 'string') content += delta
+  })) {
+    if (piece?.type === 'text-delta' && typeof piece.text === 'string') content += piece.text
     if (content.length > 40) break
   }
 } catch (error) {
