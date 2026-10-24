@@ -39,7 +39,7 @@
 - **`scripts/build-catalog.mjs`（远程目录生成）**：从随包渠道生成 `catalog/channels.json`，
   生成时**用插件自己的校验器过一遍**，不合格就拒绝生成并非零退出；`npm run catalog:check`
   （`--check`）只校验不写盘，供本地或发布前比对 —— CI **不跑它**：`.github/workflows/test.yml`
-  只有一步 `npm test`。
+  里唯一的测试步骤是 `npm test`。
 - **HTTP 面新增**：`GET /channels`、`GET /catalog`、`POST /catalog/refresh`、
   `GET /update`、`POST /update/refresh`、`GET /service`、`POST /service/probe`。
   未接线时**明确报错**（`503` 或 `wired:false`），而不是回一份空的「一切正常」。
