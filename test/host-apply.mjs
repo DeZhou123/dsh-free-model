@@ -99,7 +99,26 @@ try {
   console.log("warnings:", warnings.length)
   for (const line of warnings) console.log("  !", line.slice(0, 160))
 
-  if (adapters.size !== 3) throw new Error("应有 3 条车道，实际 " + adapters.size)
+  /**
+ * ⚠️ 这里**故意**不写 `adapters.size === 3`（2026-10-25 独立复核指出的脆弱点）。
+ *
+ * `src/lanes/keyed/**` 的装载是 `void mountKeyedLanes(...)`（异步）：
+ * 免 key 渠道（pollinations）不需要凭据，只要它在微任务队列里先落地，
+ * 这里就会看到 **4** 条而不是 3 条。断言写死 3 会让这条测试**换台机器/慢盘就假失败**，
+ * 而它要证明的其实是「三条老车道都在、且没多出不该有的东西」。
+ *
+ * 所以判据改成：三条老车道必须全部在（这才是契约），多出来的只允许是 keyed 目录里的 id。
+ */
+const REQUIRED_LANES = ['buddy', 'workbuddy', 'opencode']
+for (const id of REQUIRED_LANES) {
+  if (!adapters.has(id)) throw new Error("缺少车道 " + id + "（现有：" + [...adapters.keys()].sort().join(",") + "）")
+}
+const { KEYED_CHANNELS, KEYLESS_CHANNELS } = await import('../src/lanes/keyed/index.js')
+const keyedIds = new Set([...KEYED_CHANNELS, ...KEYLESS_CHANNELS].map((lane) => lane.id))
+for (const id of adapters.keys()) {
+  if (REQUIRED_LANES.includes(id)) continue
+  if (!keyedIds.has(id)) throw new Error("多出一条既不是老车道、也不在 keyed 目录里的适配器：" + id)
+}
   if (routes.length !== 1) throw new Error("应注册 1 条路由")
   if (routes[0].path !== "/api/free-model") throw new Error("路由前缀不对: " + routes[0].path)
 

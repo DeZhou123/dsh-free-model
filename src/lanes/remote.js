@@ -47,19 +47,37 @@ export function catalogCacheFile(dshHome) {
  *
  * 失败**不抛**：把「为什么没拿到」写进返回值，让页面有话可说。调用方永远拿得到一个对象。
  *
+ * ## `token`：私有仓库的那条路
+ *
+ * 本插件的仓库默认是**私有**的（用户约定：自研插件默认 private），而
+ * `raw.githubusercontent.com/<owner>/<repo>/…` 对私有仓库一律 **404** ——
+ * 所以「远程目录」这个能力在私有仓库上**默认就是不可用的**，本机实测确认过。
+ * 失败会被优雅降级（退到随包数据），所以不会坏事；但「加渠道不用发版」这句承诺就落不了地。
+ *
+ * 三条可行的路，按代价排序：
+ *
+ * | 路 | 怎么做 | 代价 |
+ * |---|---|---|
+ * | ① 把目录放到公开位置 | 公开 Gist / 自己的静态站点，`catalog.url` 指过去 | 目录内容会公开（里面没有凭据，只有渠道元数据） |
+ * | ② 给 token（本函数的 `token`） | 凭据里放 `GITHUB_TOKEN`（只读 fine-grained token 即可） | 用户要建一个 token |
+ * | ③ 仓库转公开 | 用户的决定，不由插件代做 | —— |
+ *
+ * token **只走请求头**，绝不写进 URL、绝不落盘、绝不出现在返回值里（返回值可能被页面显示）。
+ *
  * @param {{
  *   url?: string,
  *   cacheFile?: string,
  *   ttlMs?: number,
  *   force?: boolean,
  *   fetchImpl?: typeof fetch,
+ *   token?: string,
  *   now?: () => number,
  *   logger?: { warn?: (m: string) => void },
  * }} [options]
  * @returns {Promise<{
  *   ok: boolean, from: 'network'|'cache'|'none', url: string,
  *   fetchedAt: number, catalogVersion: number|null, channels: unknown[],
- *   sha256: string|null, reason: string,
+ *   sha256: string|null, reason: string, needsToken: boolean,
  * }>}
  */
 export async function fetchRemoteCatalog(options = {}) {
@@ -99,15 +117,27 @@ export async function fetchRemoteCatalog(options = {}) {
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
     let response
     try {
+      const token = typeof options.token === 'string' ? options.token.trim() : ''
       response = await fetchImpl(url, {
         signal: controller.signal,
-        headers: { accept: 'application/json', 'user-agent': 'dsh-free-model-catalog' },
+        headers: {
+          accept: 'application/json',
+          'user-agent': 'dsh-free-model-catalog',
+          // token 只进请求头：URL 会进日志与返回值（页面会显示来源），头不会。
+          ...(token !== '' ? { authorization: `Bearer ${token}` } : {}),
+        },
       })
     } finally {
       clearTimeout(timer)
     }
     if (response?.ok !== true) {
-      return fallbackOr(cached, url, `HTTP ${response?.status ?? '?'} 拉取目录失败`)
+      // 404 + 私有仓库 + 没有 token —— 这是最可能的一种组合，值得单独说清，
+      // 否则用户只会看到「HTTP 404 拉取目录失败」并以为插件坏了。
+      const hint = response?.status === 404 && options.token === undefined
+        ? '（404 常见原因：仓库是私有的，而 raw.githubusercontent.com 对私有仓库一律 404。'
+          + '三条路：把目录放到公开位置并改 catalog.url / 在凭据里放 GITHUB_TOKEN / 把仓库转公开）'
+        : ''
+      return fallbackOr(cached, url, `HTTP ${response?.status ?? '?'} 拉取目录失败${hint}`, response?.status === 404 && options.token === undefined)
     }
     const text = await response.text()
     const parsed = parseCatalogBody(text)
@@ -126,9 +156,9 @@ export async function fetchRemoteCatalog(options = {}) {
     return fallbackOr(cached, url, `拉取目录失败：${error instanceof Error ? error.message : String(error)}`)
   }
 
-  function fallbackOr(cacheEntry, targetUrl, reason) {
+  function fallbackOr(cacheEntry, targetUrl, reason, needsToken = false) {
     if (cacheEntry !== undefined) return success('cache', targetUrl, cacheEntry, reason)
-    return failure('none', targetUrl, reason)
+    return failure('none', targetUrl, reason, needsToken)
   }
 }
 
@@ -209,6 +239,7 @@ function sha256(text) {
 function success(from, url, payload, reason = '') {
   return {
     ok: true,
+    needsToken: payload.needsToken === true,
     from,
     url,
     fetchedAt: payload.fetchedAt,
@@ -219,6 +250,6 @@ function success(from, url, payload, reason = '') {
   }
 }
 
-function failure(from, url, reason) {
-  return { ok: false, from, url, fetchedAt: 0, catalogVersion: null, channels: [], sha256: null, reason }
+function failure(from, url, reason, needsToken = false) {
+  return { ok: false, needsToken, from, url, fetchedAt: 0, catalogVersion: null, channels: [], sha256: null, reason }
 }

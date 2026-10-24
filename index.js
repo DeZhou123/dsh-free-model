@@ -123,6 +123,9 @@ export function apply(ctx, config = {}) {
     fetchedAt: 0,
     sha256: null,
     reason: '尚未拉取远程目录（首次打开页面或点「检查目录」时拉取）',
+    // 上次拉取是否因为「私有仓库需要 token」而失败：页面据此给出一条**可执行**的指引，
+    // 而不是干说一句「拉取失败」（本插件的仓库默认私有，所以这是最常见的失败）。
+    needsToken: false,
   }
   /** 服务车道探针缓存：成功 30 秒内不重探，失败按 SERVICE_PROBE_FAILURE_TTL_MS 退避。 */
   const serviceProbes = { at: 0, failedAt: 0, byId: {} }
@@ -174,6 +177,8 @@ export function apply(ctx, config = {}) {
     fetchedAt: catalogMeta.fetchedAt,
     sha256: catalogMeta.sha256,
     reason: catalogMeta.reason,
+    // 404 + 没有 token ⇒ 页面显示「仓库是私有的，三条路选一条」（见 src/lanes/remote.js 的表）。
+    needsToken: catalogMeta.needsToken === true,
     // 计数刻意分开报：用户点「检查目录」后要能看出**远程到底带来了什么**
     //（「0 条新增」不等于失败，可能只是远程与随包一致）。
     counts: {
@@ -185,17 +190,43 @@ export function apply(ctx, config = {}) {
   })
 
   /**
+   * 远程目录的 token —— 「私有仓库」那条路。
+   *
+   * 本插件的仓库按用户约定默认 **private**，而 `raw.githubusercontent.com` 对私有仓库
+   * 一律 404（本机 2026-10-25 实测确认）。此时目录层会优雅降级到随包数据（不会坏事），
+   * 但「加渠道不用发版」这句承诺就落不了地。有 token 就能真拉到。
+   *
+   * 顺序：**环境变量 → 宿主凭据 → 没有**。三种都拿不到就照旧走降级路径，
+   * 绝不因此报错、绝不把「没有 token」当成配置错误 —— 它只是少一条增强路径。
+   *
+   * token 只交给 `fetchRemoteCatalog` 放进请求头（那里写明：不进 URL、不落盘、不出现在返回值）。
+   */
+  const catalogToken = async () => {
+    for (const name of ['DSH_FREE_MODEL_CATALOG_TOKEN', 'GITHUB_TOKEN', 'CATALOG_TOKEN']) {
+      const fromEnv = typeof process !== 'undefined' ? process.env?.[name] : undefined
+      if (typeof fromEnv === 'string' && fromEnv.trim() !== '') return fromEnv.trim()
+    }
+    for (const name of ['GITHUB_TOKEN', 'CATALOG_TOKEN']) {
+      const fromStore = await readCredential(name)
+      if (typeof fromStore === 'string' && fromStore.trim() !== '') return fromStore.trim()
+    }
+    return undefined
+  }
+
+  /**
    * 拉一次远程目录。
    *
    * `force=false` 时尊重缓存 TTL（6 小时）；失败**只降级不抛**，
    * 并把原因留在 `catalogStatus().reason` 里给页面显示。
    */
   const refreshCatalog = async (force = false) => {
+    const token = await catalogToken()
     const result = await fetchRemoteCatalog({
       ...(catalogUrl !== undefined ? { url: catalogUrl } : {}),
       cacheFile: catalogCache,
       force,
       logger,
+      ...(token !== undefined ? { token } : {}),
       ...(config.catalogFetcher !== undefined ? { fetchImpl: config.catalogFetcher } : {}),
     })
     if (result.ok) {
@@ -206,13 +237,14 @@ export function apply(ctx, config = {}) {
         fetchedAt: result.fetchedAt,
         sha256: result.sha256,
         reason: result.reason,
+        needsToken: false,
       }
       logger?.info?.(
         `dsh-free-model: 渠道目录 ${result.from === 'network' ? '已更新' : '用缓存'}｜`
         + `${remoteChannels.length} 条远程渠道｜指纹 ${result.sha256 ?? '-'}`,
       )
     } else {
-      catalogMeta = { ...catalogMeta, url: result.url, reason: result.reason }
+      catalogMeta = { ...catalogMeta, url: result.url, reason: result.reason, needsToken: result.needsToken === true }
       logger?.warn?.(`dsh-free-model: 渠道目录未更新（${result.reason}）；继续用随包 + 已有缓存`)
     }
     // 本地覆盖文件每次刷新目录时重读：用户改了它不用重启宿主。

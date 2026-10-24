@@ -126,6 +126,48 @@ await check('HTTP 4xx/5xx 也走缓存降级', async () => {
   assert.ok(result.reason.includes('404'))
 })
 
+await check('token 只进请求头，不进 URL；没有 token 时不带这个头', async () => {
+  const seen = []
+  const capture = async (target, init) => {
+    seen.push({ target, headers: init?.headers ?? {} })
+    return fakeResponse(GOOD)
+  }
+  await fetchRemoteCatalog({
+    url: DEFAULT_CATALOG_URL,
+    cacheFile: join(dir, 'free-model', 'tok1.json'),
+    force: true,
+    token: 'ghp_EXAMPLE_NOT_A_REAL_TOKEN',
+    fetchImpl: capture,
+  })
+  assert.equal(seen[0].headers.authorization, 'Bearer ghp_EXAMPLE_NOT_A_REAL_TOKEN')
+  // token 落在 URL 里就等于进了日志与页面（返回值里的 url 会被显示），这条断言守住它。
+  assert.ok(!String(seen[0].target).includes('ghp_'), 'token 绝不能出现在 URL 里')
+
+  seen.length = 0
+  await fetchRemoteCatalog({
+    url: DEFAULT_CATALOG_URL,
+    cacheFile: join(dir, 'free-model', 'tok2.json'),
+    force: true,
+    fetchImpl: capture,
+  })
+  assert.equal(seen[0].headers.authorization, undefined, '没有 token 时不该凭空发一个空 authorization')
+})
+
+await check('404 且没有 token → needsToken=true，原因里点明「私有仓库」与可执行的路', async () => {
+  const result = await fetchRemoteCatalog({
+    url: DEFAULT_CATALOG_URL,
+    cacheFile: join(dir, 'free-model', 'no-token-404.json'),
+    force: true,
+    fetchImpl: async () => fakeResponse('404: Not Found', 404),
+  })
+  assert.equal(result.ok, false)
+  // 这是本机实测最常见的那种失败：仓库默认私有，raw 一律 404。
+  // 页面要能据此说「三条路选一条」，而不是让用户以为插件坏了。
+  assert.equal(result.needsToken, true)
+  assert.ok(result.reason.includes('私有'), result.reason)
+  assert.ok(result.reason.includes('GITHUB_TOKEN'), result.reason)
+})
+
 await check('没有缓存且网络失败 → 明确失败，绝不抛异常', async () => {
   const fresh = join(dir, 'free-model', 'none-cache.json')
   const result = await fetchRemoteCatalog({

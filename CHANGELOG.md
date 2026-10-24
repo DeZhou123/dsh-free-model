@@ -68,6 +68,19 @@
 | `node scripts/build-catalog.mjs` | 生成 24 条渠道的远程目录（36,621 字节），自校验 0 拒绝 |
 | `npm run test:live` | 免 key 渠道真联网：通过 4 项，真跑通一次对话（本次实测 884ms，「OK」）；`listModels` 走静态表（`source=static`，不发网络请求）；上游不可用时记 `BLOCKED` 且仍退出 0 |
 
+### 复核后补的修复（2026-10-25，独立复核 `_overnight/research/DOC-CODE-REVIEW.md`）
+
+- **`src/lanes/remote.js` / `scripts/build-catalog.mjs` 的字节 vs 字符**：远程目录上限写的是
+  256KB **字节**，判据却用了 `String.length`（UTF-16 码元）—— 中文渠道名一个字符占 3 字节，
+  等于把上限放宽了约 3 倍，报错文案还写「字节」。现在两处都改 `Buffer.byteLength(text,'utf8')`，
+  并加了回归断言（字符数未超、字节数超了必须拒绝）。
+- **404 + 没有 token**：本仓库默认私有，`raw.githubusercontent.com` 对私有仓库一律 404（本机实测）。
+  现在 `fetchRemoteCatalog` 接受 `token`（只进请求头，不进 URL/不落盘/不出现在返回值），
+  并在「404 且无 token」时返回 `needsToken: true` + 点明原因的文案；README 补上三条可选路径。
+- **`test/host-apply.mjs` 的刚性断言**（复核指出的脆弱点）：原写 `adapters.size === 3`，
+  而 keyed 车道是异步装载（免 key 渠道先落地就会变 4 条）→ 换机器/慢盘可能假失败。
+  改成「三条老车道必须在，多出来的只允许是 keyed 目录里的 id」。
+
 ## [0.3.2] · 2026-10-24
 
 - 合并 `wip/lanes-registry-20261024`：账号渠道页补齐 OFM 侧 11 条车道（页面 + 管理面，
