@@ -38,7 +38,15 @@ import { isLocalPool } from './pool.js'
  *   version: string,
  *   credits: { collect: Function, claim: Function, invalidate: Function },
  *   autoCheckin: { state: Function, setEnabled: Function, runNow: Function },
+ *   registry?: () => object,           // 渠道注册表的视图（三类渠道 + 目录元信息）
+ *   catalog?: { status: Function, refresh: Function },
+ *   update?: { check: Function },
+ *   service?: { probe: Function },
  * }} deps
+ *
+ * ⚠️ `registry` / `catalog` / `update` / `service` 都是**可选**依赖：
+ * 缺了只是新页面段落报「未接线」，既有 13 条账号车道的接口一律照旧可用 ——
+ * 这保证老测试夹具（只造老依赖）继续有效，新能力不会把旧契约带崩。
  */
 export function createRoutes(deps) {
   return async function handler(req, res) {
@@ -121,6 +129,40 @@ export function createRoutes(deps) {
       if (method === 'POST' && routePath === '/opencode/refresh') {
         const rows = await deps.opencode.models(true)
         return send(200, { ok: true, count: rows.length })
+      }
+      // ── 渠道注册表：三类渠道的全景（账号 / 服务 / 自带 key） ────────────────
+      //
+      // 与 `/summary` 的分工：`/summary` 回答「账号车道的账号数、有效期、积分」
+      // （页面第一页要的细账）；`/channels` 回答「一共几条渠道、各自现在什么状态、
+      // 其中哪些是刚更新的」—— 页面的渠道总览与自带 key 页用它。
+      if (method === 'GET' && routePath === '/channels') {
+        return send(200, await channelsOverview(deps))
+      }
+      // 渠道目录（可远程迭代的那一层）的状态与强制刷新。
+      if (method === 'GET' && routePath === '/catalog') {
+        return send(200, deps.catalog?.status?.() ?? { wired: false, reason: '目录层未接线' })
+      }
+      if (method === 'POST' && routePath === '/catalog/refresh') {
+        if (deps.catalog?.refresh === undefined) return fail(503, '目录层未接线')
+        return send(200, await deps.catalog.refresh(true))
+      }
+      // 插件自身的版本检查（「方便升级」那一半；目录层管渠道，这里管代码）。
+      if (method === 'GET' && routePath === '/update') {
+        if (deps.update?.check === undefined) return fail(503, '版本检查未接线')
+        return send(200, await deps.update.check(false))
+      }
+      if (method === 'POST' && routePath === '/update/refresh') {
+        if (deps.update?.check === undefined) return fail(503, '版本检查未接线')
+        return send(200, await deps.update.check(true))
+      }
+      // 服务型车道的探针（本地进程在不在、能不能用）。
+      if (method === 'GET' && routePath === '/service') {
+        if (deps.service?.probe === undefined) return fail(503, '服务探针未接线')
+        return send(200, { lanes: await deps.service.probe(false) })
+      }
+      if (method === 'POST' && routePath === '/service/probe') {
+        if (deps.service?.probe === undefined) return fail(503, '服务探针未接线')
+        return send(200, { lanes: await deps.service.probe(true) })
       }
       return fail(404, `unknown route ${method} ${routePath}`)
     } catch (error) {
@@ -235,7 +277,57 @@ function buildSummary(deps) {
         mounted: deps.channels().has(product.id),
         route: lastRegistrationOutcome(deps.llm, product.id) ?? 'absent',
       })),
+    // 渠道总览（三类渠道 + 目录层元信息）。**整段可选**：注册表没接线时省略，
+    // 页面据此只渲染老的账号页 —— 而不是拿到半份数据画出一堆「未知」。
+    ...(deps.registry !== undefined ? { registry: safeCall(() => deps.registry()) } : {}),
+    ...(deps.catalog?.status !== undefined ? { catalog: safeCall(() => deps.catalog.status()) } : {}),
   }
+}
+
+/**
+ * 调一个**纯读**依赖并吞掉异常。
+ *
+ * 为什么吞：概览页是「一眼看全」的地方，任何一个分段坏掉都不该把整页打成 500 ——
+ * 用户会以为整个插件挂了，而实际上只是那一条渠道的元数据读不出来。
+ * 失败以 `{ error: ... }` 的形式留在字段里，页面照样能把它显示出来。
+ */
+function safeCall(fn) {
+  try {
+    return fn()
+  } catch (error) {
+    return { error: error instanceof Error ? error.message.slice(0, 200) : 'read failed' }
+  }
+}
+
+/**
+ * 渠道全景：三类渠道的投影 + 目录层的来源与指纹。
+ *
+ * 与 `/summary` 的分工写在这里，免得以后有人把两件事合并：
+ * - `/summary`：**账号的细账**（每个产品几个账号、几个快到期、积分能力）。
+ * - `/channels`：**渠道的全景**（一共几条、各自什么状态、其中哪条是远程目录刚加进来的）。
+ */
+async function channelsOverview(deps) {
+  const view = deps.registry?.()
+  if (view === undefined || view === null) {
+    return { wired: false, reason: '渠道注册表未接线', channels: [] }
+  }
+  // 服务车道的探针结果并进每一行（页面按 `state`/`reason` 渲染徽章）。
+  // 探针自带失败缓存，故这里可以直接调。
+  if (deps.service?.probe !== undefined) {
+    try {
+      const probes = await deps.service.probe(false)
+      for (const row of view.channels ?? []) {
+        const probe = probes?.[row.id]
+        if (probe !== undefined && row.kind === 'service') {
+          row.state = probe.state
+          row.reason = probe.reason
+        }
+      }
+    } catch (error) {
+      deps.logger?.warn?.(`[free-model] 服务车道探针失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  return { wired: true, ...view }
 }
 
 /**

@@ -34,11 +34,20 @@
  * @module index
  */
 
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { existsSync, readFileSync } from 'node:fs'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { mountBuddyChannel, BUDDY_PRODUCTS } from './src/channels.js'
 import { OFM_LANES, OFM_RPC_PATH } from './src/lanes.js'
+import {
+  buildRegistry,
+  nativeAccountRecords,
+  ofmAccountRecords,
+  projectRegistryView,
+} from './src/lanes/registry.js'
+import { catalogCacheFile, fetchRemoteCatalog } from './src/lanes/remote.js'
+import { checkUpdate, updateCacheFile } from './src/lanes/update.js'
+import { SERVICE_PROBE_FAILURE_TTL_MS, decodeCredentialValue, probeAllServiceLanes } from './src/lanes/service.js'
 import { poolView, ensureFallbackPool, resolveDshHome } from './src/pool.js'
 import { createCreditsService } from './src/credits-service.js'
 import { createAutoCheckin, createAutoCheckinStore } from './src/auto-checkin.js'
@@ -83,6 +92,170 @@ function readPackageVersion() {
  */
 export function apply(ctx, config = {}) {
   const logger = ctx.logger
+
+  // ── 渠道注册表 + 渠道目录（「免费渠道总台」的数据面） ────────────────────────
+  //
+  // 三件事在这一段里定型：
+  //   1. 渠道从哪来（随包 shipped / 远程 remote / 本地 local 三层叠加）；
+  //   2. 页面看到的「就绪状态」怎么算（问运行时，不问页面）；
+  //   3. 远程更新失败怎么退化（永远退到上一份缓存或随包数据，绝不拖垮插件）。
+  //
+  // ⚠️ 这里的 `remoteChannels` / `localChannels` 是**数据**：它们只影响「有哪些渠道、
+  // 各自什么元数据」，不会凭空获得执行能力。远程目录能改的只有渠道描述，
+  // 改不了本插件的代码路径（理由见 `src/lanes/remote.js` 开头）。
+  const dshHome = resolveDshHome(ctx)
+  const catalogCache = catalogCacheFile(dshHome)
+  const updateCache = updateCacheFile(dshHome)
+  const catalogUrl = typeof config.catalogUrl === 'string' && config.catalogUrl.trim() !== ''
+    ? config.catalogUrl.trim()
+    : undefined
+  const repo = typeof config.repo === 'string' && config.repo.trim() !== '' ? config.repo.trim() : undefined
+  const localCatalogFile = join(dshHome, 'free-model', 'channels.local.json')
+
+  let remoteChannels = []
+  let localChannels = readLocalCatalog(localCatalogFile, logger)
+  let keyedRecords = []
+  let keyedReady = Object.freeze({})
+  /** 目录层现状（页面顶部那条「渠道目录 v? · 指纹 ?」用的就是它）。 */
+  let catalogMeta = {
+    url: catalogUrl ?? undefined,
+    from: 'none',
+    fetchedAt: 0,
+    sha256: null,
+    reason: '尚未拉取远程目录（首次打开页面或点「检查目录」时拉取）',
+  }
+  /** 服务车道探针缓存：成功 30 秒内不重探，失败按 SERVICE_PROBE_FAILURE_TTL_MS 退避。 */
+  const serviceProbes = { at: 0, failedAt: 0, byId: {} }
+
+  const readCredential = async (name) => {
+    const credentials = readServiceOrUndefined(ctx, 'credentials')
+    if (credentials?.resolve === undefined) return undefined
+    try {
+      return decodeCredentialValue(await credentials.resolve(`ref:${name}`))
+    } catch {
+      return undefined
+    }
+  }
+
+  /** 组装注册表（纯函数，随取随算：17 条记录，代价可以忽略）。 */
+  const registrySnapshot = () => buildRegistry({
+    keyed: keyedRecords,
+    remote: remoteChannels,
+    local: localChannels,
+  })
+
+  /** 页面用的渠道视图（含就绪状态与目录元信息）。 */
+  const channelsView = () => {
+    const registry = registrySnapshot()
+    const rows = projectRegistryView(registry.channels, {
+      nativeMounted: channels,
+      ofmReady: readServiceOrUndefined(ctx, 'accountPool') !== undefined,
+      serviceProbes: serviceProbes.byId,
+      keyedReady,
+    })
+    return {
+      channels: rows,
+      counts: registry.counts,
+      fingerprint: registry.fingerprint,
+      rejected: registry.rejected,
+      layers: registry.byLayer,
+      catalog: catalogStatus(),
+    }
+  }
+
+  const catalogStatus = () => ({
+    url: catalogMeta.url ?? catalogUrl ?? null,
+    from: catalogMeta.from,
+    fetchedAt: catalogMeta.fetchedAt,
+    sha256: catalogMeta.sha256,
+    reason: catalogMeta.reason,
+    // 计数刻意分开报：用户点「检查目录」后要能看出**远程到底带来了什么**
+    //（「0 条新增」不等于失败，可能只是远程与随包一致）。
+    counts: {
+      remote: remoteChannels.length,
+      local: localChannels.length,
+      keyed: keyedRecords.length,
+    },
+    localFile: localCatalogFile,
+  })
+
+  /**
+   * 拉一次远程目录。
+   *
+   * `force=false` 时尊重缓存 TTL（6 小时）；失败**只降级不抛**，
+   * 并把原因留在 `catalogStatus().reason` 里给页面显示。
+   */
+  const refreshCatalog = async (force = false) => {
+    const result = await fetchRemoteCatalog({
+      ...(catalogUrl !== undefined ? { url: catalogUrl } : {}),
+      cacheFile: catalogCache,
+      force,
+      logger,
+      ...(config.catalogFetcher !== undefined ? { fetchImpl: config.catalogFetcher } : {}),
+    })
+    if (result.ok) {
+      remoteChannels = result.channels
+      catalogMeta = {
+        url: result.url,
+        from: result.from,
+        fetchedAt: result.fetchedAt,
+        sha256: result.sha256,
+        reason: result.reason,
+      }
+      logger?.info?.(
+        `dsh-free-model: 渠道目录 ${result.from === 'network' ? '已更新' : '用缓存'}｜`
+        + `${remoteChannels.length} 条远程渠道｜指纹 ${result.sha256 ?? '-'}`,
+      )
+    } else {
+      catalogMeta = { ...catalogMeta, url: result.url, reason: result.reason }
+      logger?.warn?.(`dsh-free-model: 渠道目录未更新（${result.reason}）；继续用随包 + 已有缓存`)
+    }
+    // 本地覆盖文件每次刷新目录时重读：用户改了它不用重启宿主。
+    localChannels = readLocalCatalog(localCatalogFile, logger)
+    return { ...catalogStatus(), ok: result.ok }
+  }
+
+  /**
+   * 探测服务型车道（带双 TTL 缓存）。
+   *
+   * 为什么要缓存：设置页打开、标签切换、用户连点都会调它，而每次探测都要打本地端口。
+   * 失败的退避更长（30 秒）—— 服务没起的时候不该被反复无效 IO 刷屏。
+   */
+  const probeServices = async (force = false) => {
+    const now = Date.now()
+    const fresh = now - serviceProbes.at < 30_000
+    const backing = now - serviceProbes.failedAt < SERVICE_PROBE_FAILURE_TTL_MS
+    if (!force && fresh && !backing) return serviceProbes.byId
+    const lanes = registrySnapshot().channels.filter((channel) => channel.kind === 'service')
+    const byId = await probeAllServiceLanes(lanes, {
+      readCredential,
+      ...(config.serviceProbeFetcher !== undefined ? { fetchImpl: config.serviceProbeFetcher } : {}),
+    })
+    serviceProbes.at = now
+    const anyDown = Object.values(byId).some((row) => row.state !== 'ready')
+    serviceProbes.failedAt = anyDown ? now : 0
+    serviceProbes.byId = byId
+    return byId
+  }
+
+  const checkVersion = async (force = false) => {
+    const result = await checkUpdate({
+      currentVersion: version,
+      cacheFile: updateCache,
+      force,
+      ...(repo !== undefined ? { repo } : {}),
+      ...(config.updateFetcher !== undefined ? { fetchImpl: config.updateFetcher } : {}),
+    })
+    if (result.updateAvailable) {
+      logger?.info?.(`dsh-free-model: 有新版本 ${result.latest}（当前 ${result.current}）`)
+    }
+    return result
+  }
+
+  // 启动后异步预热远程目录：**延后 5 秒**，不跟宿主启动抢时间；失败无所谓。
+  const warmTimer = setTimeout(() => { void refreshCatalog(false).catch(() => {}) }, 5_000)
+  warmTimer.unref?.()
+  ctx.effect(() => () => clearTimeout(warmTimer), 'dsh-free-model: catalog warmup')
 
   // ── 账号池：晚绑定宿主池，缺席时退化为本地实现 ──────────────────────────────
   const view = poolView(ctx)
@@ -228,6 +401,23 @@ export function apply(ctx, config = {}) {
     } catch (error) {
       logger?.warn?.(`dsh-free-model: OpenCode 车道挂载失败（${String(error)}）`)
     }
+
+    // ── 自带 key / 免 key 车道：模块存在才挂（这是「可插拔」的那一层） ──────────
+    //
+    // ⚠️ **必须容错**：`src/lanes/keyed/**` 是一个独立演进的模块（也可能因为远程
+    // 目录把某条渠道标坏而抛错）。它挂不上只该让那一类渠道显示「未就绪」，
+    // **绝不能让整个插件的 apply 失败** —— 那会把 13 条账号车道一起带走。
+    void mountKeyedLanes(scoped, {
+      logger,
+      pkgDir: PKG_DIR,
+      readCredential,
+      onRecords: (records) => { keyedRecords = records },
+      onReady: (ready) => { keyedReady = Object.freeze(ready) },
+      ...(makeReadImage(scoped) !== undefined ? { readImage: makeReadImage(scoped) } : {}),
+      ...(makeReadImageRequest(scoped) !== undefined ? { readImageRequest: makeReadImageRequest(scoped) } : {}),
+    }).catch((error) => {
+      logger?.warn?.(`dsh-free-model: 自带 key 车道装载失败（${error instanceof Error ? error.message : String(error)}）`)
+    })
   })
 
   // ── HTTP 面 ────────────────────────────────────────────────────────────────
@@ -253,6 +443,12 @@ export function apply(ctx, config = {}) {
       models: loadOpenCodeModels,
       lane: OPENCODE_LANE,
     },
+    // 渠道全景（三类渠道 + 目录层）。`/summary` 保持老语义，新接口另开一条：
+    // 详见 `src/routes.js` 里 `channelsOverview` 的说明。
+    registry: channelsView,
+    catalog: { status: catalogStatus, refresh: refreshCatalog },
+    update: { check: checkVersion },
+    service: { probe: probeServices },
   })
   ctx.inject(['webServer'], (scoped) => {
     scoped.effect(
@@ -286,40 +482,147 @@ const OPENCODE_LANE = Object.freeze({
 })
 
 /**
- * 账号型车道的积分能力。
- *
- * ⚠️ `claim` 是**产品事实**，不是开关：CodeBuddy（国内版）有每日签到接口，
- * WorkBuddy 国际版的后端压根没有这个端点 —— 点一次返回 404 不会让它长出来。
- * 所以页面对 workbuddy 的「领取」必须**不渲染**，而不是渲染成灰色按钮让用户猜。
- * `balance` 两边都支持（同一个 `get-user-resource` 计费接口）。
+ * 账号型车道的积分能力表已迁到 `src/lanes/registry.js`（`LANE_CREDITS`）——
+ * 「哪家有签到」是**产品事实**，和渠道元数据放在一起才不会两处分叉。
+ * 这里只保留 `OPENCODE_LANE` 这一条服务型车道。
  */
-const LANE_CREDITS = Object.freeze({
-  buddy: Object.freeze({ balance: true, claim: true }),
-  workbuddy: Object.freeze({ balance: true, claim: false, claimNote: 'WorkBuddy 国际版没有签到接口（其后端不提供）' }),
-})
-
-const NO_CREDITS = Object.freeze({ balance: false, claim: false })
 
 /**
- * 全部车道的完整清单：13 条账号型（2 条本插件自己挂 + 11 条 OFM 侧）+ 1 条服务型。
+ * 交给 `routes.js` 的车道清单。
  *
- * 账号型车道在这里**复制一份并补上展示字段**：`BUDDY_PRODUCTS` 是适配器的产品
- * 配置，往里塞展示字段会让「配置」和「展示」两件事逐渐混在一起。
- *
- * 11 条 OFM 侧车道的元数据在 `src/lanes.js`（那里写明为什么**不**自己挂载它们：
- * 宿主 channel-pack 已注册同名 cordis Service 与 LLM 路由，再挂一遍会抛错、
- * 并让两份 auth 实例并发消费同一个 refresh_token）。
+ * ⚠️ 它**只含账号型 + OpenCode**，与 0.3.x 的形状逐字一致 —— 这是刻意的：
+ * `/summary` 的 `products` / `serviceLanes` 是既有契约（离线套件与页面都在用），
+ * 三类渠道的**全景**另走 `/channels`（数据来自 `src/lanes/registry.js`，比这里更全：
+ * 多出服务型 3 条与自带 key 车道，以及目录层来源与指纹）。
+ * **新能力走新接口，老接口语义不动** —— 升级不该把用户的页面搞坏。
  */
 const ALL_LANES = Object.freeze([
-  ...BUDDY_PRODUCTS.map((product) => ({
-    ...product,
-    backend: 'native',
-    login: 'browser',
-    credits: LANE_CREDITS[product.id] ?? NO_CREDITS,
-  })),
-  ...OFM_LANES,
+  ...nativeAccountRecords(),
+  ...ofmAccountRecords(),
   OPENCODE_LANE,
 ])
+
+/**
+ * 读用户的本地渠道覆盖文件（`$DSH_HOME/free-model/channels.local.json`）。
+ *
+ * 它让用户能在**不发版、不改代码**的前提下：
+ * - 把某条渠道钉住（`"pinned": true`）—— 之后远程目录再也覆盖不了它；
+ * - 加一条自己公司的 OpenAI 兼容端点；
+ * - 把某条上游换域名的免费渠道改对。
+ *
+ * 文件不存在是最常见的情况（绝大多数用户不会写它），所以**不报错也不告警**。
+ * 存在但坏了则警告一次并忽略 —— 一份坏掉的本地覆盖不该让插件起不来。
+ */
+function readLocalCatalog(file, logger) {
+  if (!existsSync(file)) return []
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8'))
+    const channels = Array.isArray(parsed?.channels) ? parsed.channels : []
+    return channels
+  } catch (error) {
+    logger?.warn?.(
+      `[dsh-free-model] 本地渠道覆盖文件读不出来（${file}）：`
+      + `${error instanceof Error ? error.message : String(error)}；已忽略，插件继续用随包 + 远程目录`,
+    )
+    return []
+  }
+}
+
+/**
+ * 装载「自带 key / 免 key」车道模块（`src/lanes/keyed/**`）。
+ *
+ * ## 为什么要这么小心（这是本插件最容易炸的一处）
+ *
+ * 这一类渠道是最容易变、也最容易写坏的：它们的 baseURL 来自公网、适配器是新写的。
+ * 而 `mountBuddyChannel` / OpenCode 那两条车道已经证明了「一个车道挂载失败不能
+ * 带走另一个」的规矩。这里同样：**模块缺失 → 这一类渠道为空；模块抛错 → 只记一条警告**。
+ * 绝不让它的失败影响 13 条账号车道 —— 那些才是用户每天真的在用的东西。
+ *
+ * ## 模块契约（逐文件独立，缺哪份就退化哪一段）
+ *
+ * | 文件 | 导出 | 缺了会怎样 |
+ * |---|---|---|
+ * | `catalog.js` | `KEYED_CHANNELS` / `KEYLESS_CHANNELS` | 没有这一类渠道（其余照常） |
+ * | `ready.js` | `keyedLaneState(lane, { readCredential })` | 全部显示「未就绪·就绪模块缺失」 |
+ * | `adapter.js` | `createKeyedAdapter({...})` | 只展示、不挂路由（页面会说清） |
+ *
+ * @returns {Promise<{ records: number, mounted: string[] }>}
+ */
+async function mountKeyedLanes(scoped, deps) {
+  const dir = join(deps.pkgDir, 'src', 'lanes', 'keyed')
+  const catalogFile = join(dir, 'catalog.js')
+  if (!existsSync(catalogFile)) return { records: 0, mounted: [] }
+
+  const catalog = await import(pathToFileURL(catalogFile).href)
+  const records = [
+    ...(Array.isArray(catalog.KEYED_CHANNELS) ? catalog.KEYED_CHANNELS : []),
+    ...(Array.isArray(catalog.KEYLESS_CHANNELS) ? catalog.KEYLESS_CHANNELS : []),
+  ]
+  deps.onRecords?.(records)
+  if (records.length === 0) return { records: 0, mounted: [] }
+
+  // 就绪判定：模块在就用它的，不在就把「为什么不知道」说清楚（而不是默认 ready）。
+  let stateOf
+  const readyFile = join(dir, 'ready.js')
+  if (existsSync(readyFile)) {
+    const ready = await import(pathToFileURL(readyFile).href)
+    if (typeof ready.keyedLaneState === 'function') {
+      stateOf = (lane) => ready.keyedLaneState(lane, { readCredential: deps.readCredential })
+    }
+  }
+  const readiness = {}
+  for (const lane of records) {
+    try {
+      readiness[lane.id] = stateOf === undefined
+        ? { ready: false, reason: '就绪模块（ready.js）缺失，无法判断凭据状态' }
+        : await stateOf(lane)
+    } catch (error) {
+      readiness[lane.id] = { ready: false, reason: `就绪判定抛错：${error instanceof Error ? error.message : String(error)}` }
+    }
+  }
+  deps.onReady?.(readiness)
+
+  const adapterFile = join(dir, 'adapter.js')
+  if (!existsSync(adapterFile)) {
+    deps.logger?.info?.('dsh-free-model: 自带 key 车道只做展示（adapter.js 缺失，未挂路由）')
+    return { records: records.length, mounted: [] }
+  }
+  const adapterModule = await import(pathToFileURL(adapterFile).href)
+  if (typeof adapterModule.createKeyedAdapter !== 'function') {
+    deps.logger?.warn?.('dsh-free-model: 自带 key 模块没有导出 createKeyedAdapter，跳过挂载')
+    return { records: records.length, mounted: [] }
+  }
+
+  const mounted = []
+  for (const lane of records) {
+    const state = readiness[lane.id]
+    if (state?.ready !== true) continue
+    try {
+      const created = await adapterModule.createKeyedAdapter({
+        lane,
+        apiKey: state.apiKey,
+        logger: deps.logger,
+        ...(deps.readImage !== undefined ? { readImage: deps.readImage } : {}),
+        ...(deps.readImageRequest !== undefined ? { readImageRequest: deps.readImageRequest } : {}),
+      })
+      const adapter = created?.adapter ?? created
+      if (adapter === undefined || adapter === null) throw new Error('createKeyedAdapter 返回空')
+      const routes = Array.isArray(created?.routes) ? created.routes : [lane.id]
+      registerAdapterIdempotent(scoped.llm, routes, adapter, (message) => deps.logger?.warn?.(message))
+      mounted.push(lane.id)
+    } catch (error) {
+      // 单条失败只影响它自己：一条渠道的 baseURL 写错不该让其它 keyed 渠道一起消失。
+      deps.logger?.warn?.(
+        `dsh-free-model: ${lane.displayName ?? lane.id} 车道挂载失败（${error instanceof Error ? error.message : String(error)}）`,
+      )
+    }
+  }
+  deps.logger?.info?.(
+    `dsh-free-model: 自带 key 车道 ${mounted.length}/${records.length} 已挂载`
+    + (mounted.length > 0 ? `（${mounted.join(', ')}）` : '（都没有 key/未就绪，仅展示）'),
+  )
+  return { records: records.length, mounted }
+}
 
 /** 读宿主池（不建本地池）。 */
 function readLivePool(ctx) {
