@@ -20,7 +20,7 @@
  * 用法：node test/host-keyed.mjs
  */
 
-import { existsSync, mkdirSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -161,6 +161,29 @@ try {
       && keyed.every((row) => typeof row.docsURL === 'string' && row.docsURL !== ''))
   check('已下线的渠道没有进可挂载集合（github-models）',
     rows.every((row) => row.id !== 'github-models'), 'github-models 不该出现在描述符里')
+
+  /**
+   * 装配自证（`$DSH_HOME/free-model/apply-ok.json`）。
+   *
+   * 为什么值得断言：它是「插件到底装上了什么」**唯一**的落盘证据 ——
+   * headless/CLI 模式不打 info 日志，事后问「昨天装上了吗」只能看它。
+   * 而一条真实的教训是：第一版在卸载时删掉它，于是**一次性会话里永远看不到**。
+   */
+  const markerFile = join(homedir(), '.dsh', 'free-model', 'apply-ok.json')
+  const marker = existsSync(markerFile) ? JSON.parse(readFileSync(markerFile, 'utf8')) : undefined
+  check('装配自证被写出来（含版本与已挂路由）', marker !== undefined && marker.plugin === 'dsh-free-model',
+    '没找到 ' + markerFile)
+  if (marker !== undefined) {
+    check('自证里的版本与 package.json 一致', marker.version === entry.version, `${marker.version} vs ${entry.version}`)
+    check('自证记下了三条老车道 + 免 key 渠道',
+      ['buddy', 'workbuddy', 'opencode', 'pollinations'].every((id) => marker.mountedRoutes.includes(id)),
+      marker.mountedRoutes.join(','))
+    // 「不含凭据」要按**值**判，不能按字段名判：自证里本来就有 `keyedMounted` / `keyedFailed`
+// 这类字段名（含 "key" 三个字母），拿名字去匹配只会得到一个假的警报。
+    check('自证里没有任何凭据**值**（只有路由名与计数）',
+      !/(sk-[A-Za-z0-9]{6}|ghp_[A-Za-z0-9]{6}|eyJ[A-Za-z0-9_-]{10,}|Bearer\s+[A-Za-z0-9])/.test(JSON.stringify(marker)),
+      JSON.stringify(marker).slice(0, 160))
+  }
 
   console.log(`\n通过 ${passed} 项`)
   if (process.exitCode === undefined) console.log('全部通过')

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * dsh-free-model —— 免费模型总台。
  *
  * ## 一句话
@@ -34,7 +34,7 @@
  * @module index
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { mountBuddyChannel, BUDDY_PRODUCTS } from './src/channels.js'
@@ -294,6 +294,64 @@ export function apply(ctx, config = {}) {
   warmTimer.unref?.()
   ctx.effect(() => () => clearTimeout(warmTimer), 'dsh-free-model: catalog warmup')
 
+  // ── 装配自证：把「到底装上了什么」写到磁盘 ──────────────────────────────────
+  //
+  // ## 为什么需要它（两个真实场景，都不是为了测试而加）
+  //
+  // 1. **headless / CLI 模式不打 info 日志**（实测：`dsh --profile headless` 的 stdout 只有模型答案），
+  //    于是「插件装配成功了吗」在那种模式下**只能靠猜**。而用户问的第一个问题往往就是它。
+  // 2. 装配是**异步分片**的：native 车道在 `inject` 回调里挂、自带 key 车道是 `void mountKeyedLanes(...)`。
+  //    任何一片失败都只留一行 warn（这是刻意的，见 `mountKeyedLanes` 的注释），看不到 warn 就没法判断。
+  //
+  // 所以把结果落盘为 `$DSH_HOME/free-model/apply-ok.json`：版本、时间、**已经挂上的车道 id**、
+  // OFM 后端在不在、目录层计数。**不含任何凭据**（只记「挂了哪几条」，不记 key）。
+  // 它也是宿主级验证的断言对象：`_supervisor/plugin-boot-check.mjs` 就看这个文件在不在、版本对不对。
+  const applyMarkerFile = join(dshHome, 'free-model', 'apply-ok.json')
+  /**
+   * 已经挂上适配器的路由集合。
+   *
+   * ⚠️ 刻意**不**直接读 `channels`（那个 Map 在本函数更靠后的位置才声明）：
+   * 在它之前求值会撞 TDZ（`Cannot access 'channels' before initialization`）——
+   * 这个仓库为同类问题已经付出过三次代价（见 `_supervisor` 的 requeue / resolvedLauncher）。
+   * 用一个**提前声明**的 Set 记「挂了什么」，两处都不用互相等。
+   */
+  const mountedRoutes = new Set()
+  const writeApplyMarker = (extra = {}) => {
+    try {
+      mkdirSync(dirname(applyMarkerFile), { recursive: true })
+      const keyed = registrySnapshot()
+      const payload = {
+        plugin: 'dsh-free-model',
+        version,
+        appliedAt: new Date().toISOString(),
+        // 已经挂上适配器的路由（native 三条 + 已就绪的 keyed）——**这是「装上了」的硬证据**。
+        mountedRoutes: [...mountedRoutes].sort(),
+        // OFM 在场意味着那 11 条宿主侧车道在页面上可操作（不是本插件挂的，但页面要显示）。
+        ofmBackend: readServiceOrUndefined(ctx, 'accountPool') !== undefined,
+        channels: keyed.counts,
+        catalogFingerprint: keyed.fingerprint,
+        ...extra,
+      }
+      writeFileSync(applyMarkerFile, JSON.stringify(payload, null, 2), 'utf8')
+      return payload
+    } catch (error) {
+      logger?.warn?.(`dsh-free-model: 写装配自证失败（${error instanceof Error ? error.message : String(error)}）`)
+      return undefined
+    }
+  }
+  ctx.effect(() => () => {
+    /**
+     * ⚠️ 卸载时**不删**这个文件（2026-10-25 07:05 改，一次实测暴露的设计缺陷）。
+     *
+     * 第一版在卸载钩子里 `rmSync` 掉它，理由是「留着会误导插件还在跑」。结果是：
+     * **一次性 headless 会话里永远看不到它** —— 装配时写、退出时删，而「它装上了吗」
+     * 恰恰是要在事后问的问题（我也是这么才发现自己在真宿主里根本没验过装配）。
+     *
+     * 所以它现在是**历史记录**（`appliedAt` 是上次装配的时刻），不是存活标记：
+     * 「现在在不在跑」看别的信号（设置页能打开就说明在跑）。
+     */
+  }, 'dsh-free-model: apply marker')
+
   // ── 账号池：晚绑定宿主池，缺席时退化为本地实现 ──────────────────────────────
   const view = poolView(ctx)
   const pool = livePool(view)
@@ -410,6 +468,7 @@ export function apply(ctx, config = {}) {
       try {
         const mounted = mountBuddyChannel(scoped, pool, product, bridge)
         channels.set(product.id, mounted)
+        mountedRoutes.add(product.id)
         scoped.effect(() => () => mounted.auth.stop(), `dsh-free-model: ${product.id} auth`)
         logger?.info?.(`dsh-free-model: ${product.displayName} 通道已挂载（路由 ${product.id}）`)
       } catch (error) {
@@ -434,6 +493,7 @@ export function apply(ctx, config = {}) {
       })
       registerAdapterIdempotent(scoped.llm, [OPENCODE_ROUTE], adapter, (message) => logger?.warn?.(message))
       channels.set(OPENCODE_ROUTE, { adapter, product: OPENCODE_LANE, service })
+      mountedRoutes.add(OPENCODE_ROUTE)
       logger?.info?.('dsh-free-model: OpenCode 车道已挂载（路由 opencode）')
     } catch (error) {
       logger?.warn?.(`dsh-free-model: OpenCode 车道挂载失败（${String(error)}）`)
@@ -450,8 +510,13 @@ export function apply(ctx, config = {}) {
       readCredential,
       onRecords: (records) => { keyedRecords = records },
       onReady: (ready) => { keyedReady = Object.freeze(ready) },
+      onMounted: (route) => mountedRoutes.add(route),
       ...(makeReadImage(scoped) !== undefined ? { readImage: makeReadImage(scoped) } : {}),
       ...(makeReadImageRequest(scoped) !== undefined ? { readImageRequest: makeReadImageRequest(scoped) } : {}),
+    }).then((summary) => {
+      // keyed 挂完之后重写自证：这是**最后一份**记录，谁挂了、挂了几条一目了然。
+      // （写在 `.then` 而不是模块内部，是因为模块只管挂载、不该知道自证文件的存在。）
+      writeApplyMarker({ phase: 'full', keyedMounted: summary?.mounted ?? [], keyedFailed: summary?.failed ?? [] })
     }).catch((error) => {
       logger?.warn?.(`dsh-free-model: 自带 key 车道装载失败（${error instanceof Error ? error.message : String(error)}）`)
     })
@@ -494,6 +559,9 @@ export function apply(ctx, config = {}) {
     )
     logger?.info?.('dsh-free-model: 设置面已挂载到 /api/free-model')
   })
+  // apply 结束前的第一份自证：native 车道通常已经挂好（inject 回调在服务就绪时同步进），
+  // keyed 那一片还没落地 —— 所以这一份是 `phase: 'native-only'`，随后会被 `.then` 覆盖成 'full'。
+  writeApplyMarker({ phase: 'native-only' })
 }
 
 /**
@@ -633,6 +701,7 @@ async function mountKeyedLanes(scoped, deps) {
         (message) => deps.logger?.warn?.(message),
       )
       mounted.push(entryMounted.route)
+      deps.onMounted?.(entryMounted.route)
     } catch (error) {
       deps.logger?.warn?.(
         `dsh-free-model: keyed 车道 ${entryMounted.route} 注册失败（${error instanceof Error ? error.message : String(error)}）`,
