@@ -246,31 +246,41 @@ export class OpenCodeClient {
   async request(path, init = {}) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.timeoutMs)
-    let response
+    // ⚠️ 计时器必须在**所有**出口清掉，包括 response.text() 自己抛错的情况。
+    // 早先只在正常路径与 fetch 失败处 clearTimeout，于是 fetch 替身/异常响应体
+    // 抛错时会留下一个 180 秒的定时器 —— 进程被它拖着不退出（离线测试套件
+    // 因此每次都要多等 3 分钟，CI 里表现为「测试全绿但作业挂住」）。
     try {
-      response = await this.fetchImpl(joinUrl(this.baseUrl, path), { ...init, signal: controller.signal })
-    } catch (error) {
+      const response = await this.requestResponse(path, init, controller)
+      const text = await response.text()
+      if (!response.ok) {
+        let detail = text
+        try {
+          const parsed = JSON.parse(text)
+          detail = parsed?.data?.message ?? parsed?.message ?? parsed?.error?.message ?? text
+        } catch { /* 非 JSON 错误体：原样截断 */ }
+        throw new Error('OpenCode ' + path + ' → HTTP ' + response.status + '：' + String(detail).slice(0, 300))
+      }
+      if (text === '') return null
+      try {
+        return JSON.parse(text)
+      } catch {
+        return null
+      }
+    } finally {
       clearTimeout(timer)
+    }
+  }
+
+  /** request() 的 fetch 阶段：只负责超时与不可达的文案，计时器由调用方 finally 清理。 */
+  async requestResponse(path, init, controller) {
+    try {
+      return await this.fetchImpl(joinUrl(this.baseUrl, path), { ...init, signal: controller.signal })
+    } catch (error) {
       if (error !== null && typeof error === 'object' && error.name === 'AbortError') {
         throw new Error('OpenCode ' + path + ' 超时（' + this.timeoutMs + 'ms）：上游限流时会长时间重试，可稍后再试或换模型')
       }
       throw new Error('OpenCode 不可达（' + this.baseUrl + '）：' + (error instanceof Error ? error.message : String(error)))
-    }
-    const text = await response.text()
-    clearTimeout(timer)
-    if (!response.ok) {
-      let detail = text
-      try {
-        const parsed = JSON.parse(text)
-        detail = parsed?.data?.message ?? parsed?.message ?? parsed?.error?.message ?? text
-      } catch { /* 非 JSON 错误体：原样截断 */ }
-      throw new Error('OpenCode ' + path + ' → HTTP ' + response.status + '：' + String(detail).slice(0, 300))
-    }
-    if (text === '') return null
-    try {
-      return JSON.parse(text)
-    } catch {
-      return null
     }
   }
 
