@@ -1,0 +1,27 @@
+name: test
+
+# 只跑离线套件：smoke / render / opencode-sse / opencode-failure-state /
+# opencode-classify / opencode-pure / opencode-error-wiring。
+# test:e2e 与环境强相关（要真装了 opencode、且免费层此刻没被限流），故不进 CI。
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 与 package.json 的 engines（^22.19.0 || >=24.0.0）对齐
+        node: ['22.19', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: 离线套件（不联网、不装宿主包）
+        run: npm test
