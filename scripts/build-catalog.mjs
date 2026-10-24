@@ -19,7 +19,7 @@
  *
  * 用法：
  *   node scripts/build-catalog.mjs            # 写 catalog/channels.json
- *   node scripts/build-catalog.mjs --check    # 只校验，不写（CI 用）
+ *   node scripts/build-catalog.mjs --check    # 只校验、不写盘（CI 的第二步，见 test.yml）
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -100,14 +100,24 @@ if (checkOnly) {
     console.error('✗ catalog/channels.json 不存在（--check 模式不会创建它）')
     process.exit(1)
   }
-  const existing = readFileSync(OUT, 'utf8')
-  const sameChannels = JSON.parse(existing).channels?.length === accepted.length
-  if (!sameChannels) {
-    console.error('✗ catalog/channels.json 与随包渠道不一致：文件 '
-      + `${JSON.parse(existing).channels?.length ?? 0} 条，随包 ${accepted.length} 条。跑一次 node scripts/build-catalog.mjs`)
+  let existing
+  try {
+    existing = JSON.parse(readFileSync(OUT, 'utf8'))
+  } catch (err) {
+    console.error('✗ catalog/channels.json 不是合法 JSON：' + err.message)
     process.exit(1)
   }
-  console.log(`OK  catalog/channels.json 与随包渠道一致（${accepted.length} 条）`)
+  // 逐条比内容，不只比条数：只比条数时「改了一条 baseURL」「删一条又加一条」
+  // 都能悄悄过关 —— 而远程目录真正会出的错就是这种漂移。
+  // `updatedAt` 是生成日期，每天都会变，不参与比较。
+  const actual = JSON.stringify({ version: existing.catalogVersion, channels: existing.channels })
+  const expected = JSON.stringify({ version: payload.catalogVersion, channels: accepted })
+  if (actual !== expected) {
+    console.error('✗ catalog/channels.json 与随包渠道不一致：文件 '
+      + `${existing.channels?.length ?? 0} 条，随包 ${accepted.length} 条。跑一次 node scripts/build-catalog.mjs`)
+    process.exit(1)
+  }
+  console.log(`OK  catalog/channels.json 与随包渠道一致（${accepted.length} 条，逐条比对）`)
   process.exit(0)
 }
 

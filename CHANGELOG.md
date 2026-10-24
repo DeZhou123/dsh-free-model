@@ -38,8 +38,9 @@
   这条路径默认就会失败，更要把失败表现得无害）。
 - **`scripts/build-catalog.mjs`（远程目录生成）**：从随包渠道生成 `catalog/channels.json`，
   生成时**用插件自己的校验器过一遍**，不合格就拒绝生成并非零退出；`npm run catalog:check`
-  （`--check`）只校验不写盘，供本地或发布前比对 —— CI **不跑它**：`.github/workflows/test.yml`
-  里唯一的测试步骤是 `npm test`。
+  （`--check`）不写盘，把这次生成的结果与已提交的目录**逐条**比对（`updatedAt` 是生成日期，
+  不参与比较），不一致就非零退出。**CI 会跑它**：`.github/workflows/test.yml` 在 `npm test`
+  之后第二步就是 `npm run catalog:check` —— 「改了随包渠道、忘了重新生成远程目录」在 CI 就红。
 - **HTTP 面新增**：`GET /channels`、`GET /catalog`、`POST /catalog/refresh`、
   `GET /update`、`POST /update/refresh`、`GET /service`、`POST /service/probe`。
   未接线时**明确报错**（`503` 或 `wired:false`），而不是回一份空的「一切正常」。
@@ -62,10 +63,11 @@
 | 命令 | 结果 |
 |---|---|
 | `npm run check` | 19 个文件语法全过 |
-| `npm test`（16 套件） | **326 项断言全绿** —— 注册表 25 / 目录 IO 10 / 版本检查 9 / 路由 10 / keyed 13+25+22+22 / 车道表 6 / smoke 52 / 渲染 38 / opencode 全套 94 |
+| `npm test`（16 套件） | **328 项断言全绿** —— 注册表 25 / 目录 IO 12 / 版本检查 9 / 路由 10 / keyed 13+25+22+22 / 车道表 6 / smoke 52 / 渲染 38 / opencode 全套 94（`fd77ba5` 补了字节/字符回归断言，目录 IO 10→12，原记的 326 已过期） |
 | `node test/host-apply.mjs` | 用**真实** dsh-llm / dsh-credentials 跑 apply：3 条老车道全在，0 warnings |
 | `node test/host-keyed.mjs` | 免 key 渠道**真被挂上**；缺 key 的 20 条一条都没挂，且原因里带凭据名（或指出待填占位符） |
 | `node scripts/build-catalog.mjs` | 生成 24 条渠道的远程目录（36,621 字节），自校验 0 拒绝 |
+| `npm run catalog:check` | `OK catalog/channels.json 与随包渠道一致（24 条，逐条比对）`，EXIT=0 |
 | `npm run test:live` | 免 key 渠道真联网：通过 4 项，真跑通一次对话（本次实测 884ms，「OK」）；`listModels` 走静态表（`source=static`，不发网络请求）；上游不可用时记 `BLOCKED` 且仍退出 0 |
 
 ### 复核后补的修复（2026-10-25，独立复核 `_overnight/research/DOC-CODE-REVIEW.md`）
@@ -80,6 +82,9 @@
 - **`test/host-apply.mjs` 的刚性断言**（复核指出的脆弱点）：原写 `adapters.size === 3`，
   而 keyed 车道是异步装载（免 key 渠道先落地就会变 4 条）→ 换机器/慢盘可能假失败。
   改成「三条老车道必须在，多出来的只允许是 keyed 目录里的 id」。
+- **CI 从来没跑过目录校验**（复核 ⑤）：`.github/workflows/test.yml` 现在在 `npm test`
+  之后增加第二步 `npm run catalog:check`；同时把 `--check` 从「只比条数」改成**逐条比内容**
+  （`updatedAt` 是生成日期，不参与比较）—— 只比条数时改一条 baseURL 照样绿，等于没校验。
 
 ## [0.3.2] · 2026-10-24
 
