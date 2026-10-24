@@ -61,7 +61,7 @@
 | `node test/host-apply.mjs` | 用**真实** dsh-llm / dsh-credentials 跑 apply：3 条老车道全在，0 warnings |
 | `node test/host-keyed.mjs` | 免 key 渠道**真被挂上**；缺 key 的 20 条一条都没挂，且原因里带凭据名（或指出待填占位符） |
 | `node scripts/build-catalog.mjs` | 生成 24 条渠道的远程目录（36,621 字节），自校验 0 拒绝 |
-| `npm run test:live` | 免 key 渠道真联网：通过 4 项；`POST text.pollinations.ai/openai` 与 `GET /models` 均 200（上游不可用时记 `BLOCKED` 且仍退出 0） |
+| `npm run test:live` | 免 key 渠道真联网：通过 4 项，真跑通一次对话（本次实测 884ms，「OK」）；`listModels` 走静态表（`source=static`，不发网络请求）；上游不可用时记 `BLOCKED` 且仍退出 0 |
 
 ## [0.3.2] · 2026-10-24
 
