@@ -32,7 +32,9 @@
     "test:lanes": "node --import ./test/hooks.mjs test/lanes-registry.mjs && node test/lanes-catalog-io.mjs && node test/lanes-update.mjs && node --import ./test/hooks.mjs test/routes-channels.mjs && node test/keyed/catalog-shape.mjs && node test/keyed/ready-state.mjs",
     "test:live": "node --import ./test/hooks.mjs test/keyed-live.mjs --live",
     "catalog": "node scripts/build-catalog.mjs",
-    "catalog:check": "node scripts/build-catalog.mjs --check"
+    "catalog:check": "node scripts/build-catalog.mjs --check",
+    "probe:endpoints": "node scripts/probe-endpoints.mjs",
+    "probe:endpoints:dry": "node scripts/probe-endpoints.mjs --dry"
   },
   "keywords": [
     "dsh",

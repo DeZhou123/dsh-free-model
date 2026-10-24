@@ -83,6 +83,16 @@
 - **`test/host-apply.mjs` 的刚性断言**（复核指出的脆弱点）：原写 `adapters.size === 3`，
   而 keyed 车道是异步装载（免 key 渠道先落地就会变 4 条）→ 换机器/慢盘可能假失败。
   改成「三条老车道必须在，多出来的只允许是 keyed 目录里的 id」。
+- **新增 `scripts/probe-endpoints.mjs`（端点健康探针）**：渠道URL是会变的（换域名、下线、改路径），
+  而插件把「能不能用」的责任交给了运行时 —— 目录里的 URL 错了，用户看到的是「配了 key 还是 401/404」，
+  最难查。这个探针**不带凭据**地对每条渠道探 `{baseURL}/models`，按状态码分类：
+  `401/403 = 端点活着且要凭据（最健康的一档）`、`200 = 免凭据`、`404/405 = 路径或方法不对`、
+  `连不上 = 本机此刻不可达`。目录自己声明过的两种例外（`supportsModelList:false`、
+  `placeholders:['{ACCOUNT_ID}']`）算**预期**不算可疑，只有当「声称能列模型且无占位符」的渠道
+  突然 404 时才以非零退出码报警 —— 那才是真该有人去看的事。默认只打印，不往仓库写文件。
+  **2026-10-25 06:50 实测（本机直连，无代理）**：`19/21 可达`
+  （14 条 401/403 = 健康且要凭据、5 条 200 = 免凭据），2 条非 200 且都与目录声明一致
+  （`google-ai-studio` 404 × `supportsModelList:false`、`cloudflare-workers-ai` 405 × `{ACCOUNT_ID}` 未填）。
 - **CI 从来没跑过目录校验**（复核 ⑤）：`.github/workflows/test.yml` 现在是三步
   `npm run check` → `npm test` → `npm run catalog:check`；同时把 `--check` 从「只比条数」
   改成**逐条比内容**（`updatedAt` 是生成日期，不参与比较）—— 只比条数时改一条 baseURL
