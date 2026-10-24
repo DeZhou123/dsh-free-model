@@ -23,7 +23,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "check": "node --check index.js && node --check client.js && node --check src/lanes.js && node --check src/lanes/catalog.js && node --check src/lanes/registry.js && node --check src/lanes/remote.js && node --check src/lanes/service.js && node --check src/lanes/update.js && node --check src/routes.js && node --check src/pool.js && node --check src/credits-service.js && node --check src/auto-checkin.js && node --check src/lanes/keyed/index.js && node --check src/lanes/keyed/catalog.js && node --check src/lanes/keyed/adapter.js && node --check src/lanes/keyed/ready.js && node --check src/opencode/client.js && node --check src/opencode/adapter.js && node --check src/opencode/service.js",
+    "check": "node scripts/check-syntax.mjs",
     "test": "node --import ./test/hooks.mjs test/lanes-registry.mjs && node test/lanes-catalog-io.mjs && node test/lanes-update.mjs && node --import ./test/hooks.mjs test/routes-channels.mjs && node test/keyed/catalog-shape.mjs && node test/keyed/ready-state.mjs && node test/keyed/adapter-stream.mjs && node test/keyed/adapter-errors.mjs && node test/lanes.mjs && node --import ./test/hooks.mjs test/smoke.mjs && node test/render.mjs && node test/opencode-sse.mjs && node test/opencode-failure-state.mjs && node --import ./test/hooks.mjs test/opencode-classify.mjs && node --import ./test/hooks.mjs test/opencode-pure.mjs && node --import ./test/hooks.mjs test/opencode-error-wiring.mjs",
     "test:e2e": "node --import ./test/hooks.mjs test/e2e-opencode.mjs",
     "test:affinity": "node --import ./test/hooks.mjs test/opencode-affinity.mjs",

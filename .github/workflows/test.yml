@@ -2,8 +2,13 @@ name: test
 
 # 三步，全程不联网、不装宿主包（不需要 npm install：check 只用 node --check，
 # 套件只用 node: 内建 + 包内文件）：
-#   1. npm run check          —— 19 个文件的 node --check 语法门。故意放第一步：
-#      常数级耗时，语法一旦改坏就在第一分钟红，不必等全套测试跑完。
+#   1. npm run check          —— 语法门：index.js / client.js / src / test / scripts
+#      下全部 .js/.mjs 逐个 node --check（当前 70 个：产品 41 / 测试 27 / 脚本 2，
+#      遍历得来，新增文件自动纳入，不用改列表）。故意放第一步：
+#      常数级耗时（本机约 8 秒），语法一旦改坏就先红，不必等全套测试跑完。
+#      `npm test` 不跑的套件（e2e-opencode、host-check/apply/keyed、keyed-live、
+#      service-start、opencode-affinity、boot-serve）也在闸门里 —— 以前这些文件
+#      写坏语法，CI 照样全绿。
 #   2. npm test               —— 只跑离线套件：smoke / render / opencode-sse /
 #      opencode-failure-state / opencode-classify / opencode-pure / opencode-error-wiring。
 #      test:e2e 与环境强相关（要真装了 opencode、且免费层此刻没被限流），故不进 CI。
@@ -30,7 +35,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - name: 语法门（node --check，19 个文件；不联网、不装依赖）
+      - name: 语法门（node --check：index/client + src + test + scripts；不联网、不装依赖）
         run: npm run check
       - name: 离线套件（不联网、不装宿主包）
         run: npm test

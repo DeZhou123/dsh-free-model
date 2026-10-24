@@ -63,7 +63,7 @@
 
 | 命令 | 结果 |
 |---|---|
-| `npm run check` | 19 个文件语法全过 |
+| `npm run check` | 70 个文件语法全过（产品 41 / 测试 27 / 脚本 2） |
 | `npm test`（16 套件） | **328 项断言全绿** —— 注册表 25 / 目录 IO 12 / 版本检查 9 / 路由 10 / keyed 13+25+22+22 / 车道表 6 / smoke 52 / 渲染 38 / opencode 全套 94（`fd77ba5` 补了字节/字符回归断言，目录 IO 10→12，原记的 326 已过期） |
 | `node test/host-apply.mjs` | 用**真实** dsh-llm / dsh-credentials 跑 apply：3 条老车道全在，0 warnings |
 | `node test/host-keyed.mjs` | 免 key 渠道**真被挂上**；缺 key 的 20 条一条都没挂，且原因里带凭据名（或指出待填占位符） |
@@ -88,9 +88,28 @@
   改成**逐条比内容**（`updatedAt` 是生成日期，不参与比较）—— 只比条数时改一条 baseURL
   照样绿，等于没校验。
 - **CI 也没跑过语法门**（同一条复核线：CI 的覆盖面比发版清单窄）：`test.yml` 现在**第一步**
-  就是 `npm run check`（19 个文件 `node --check`，只用 Node 内建、**不需要 `npm install`**）。
+  就是 `npm run check`（当时是 19 个产品文件 `node --check`，只用 Node 内建、**不需要
+  `npm install`**；现已扩到全仓遍历，见下一条）。
   放在套件之前是刻意的：这条是常数级耗时，语法一改坏就在第一分钟红，不必等全套测试跑完；
   以前语法错只能靠发版前手动跑，CI 全绿也说明不了代码能解析。
+
+### 语法门覆盖到测试与脚本（2026-10-25）
+
+- **`npm run check` 从 19 个产品文件扩到全仓 70 个 `.js` / `.mjs`**：新增
+  `scripts/check-syntax.mjs`，遍历 `index.js` / `client.js` / `src/**` / `test/**` /
+  `scripts/**`，逐个 `node --check`；只用 Node 内建（fs / path / child_process），
+  **不引第三方、不需要 `npm install`、不联网**。`package.json` 的 `check` 改为调用它。
+- **为什么是遍历，而不是继续手写 `node --check a && node --check b …`**：旧列表只写了
+  19 个产品文件（17 个 `src` + `index` + `client`），`test/**` 与 `scripts/**` 从未进 CI；
+  而 `npm test` 只跑 16 个离线套件，`e2e-opencode`、`host-check/apply/keyed`、`keyed-live`、
+  `service-start`、`opencode-affinity`、`boot-serve` 这些「只在本机手动跑」的套件里
+  写坏一处语法，CI 仍然全绿。遍历还顺手补上 22 个此前未列的产品文件（`src/core/**` 等），
+  并且以后新增测试文件自动纳入闸门，不再依赖「记得同步列表」。
+- **证据**：`npm run check` → `OK  语法门：70 个文件 node --check 全过（产品 41 / 测试 27 /
+  脚本 2）`，EXIT=0（本机 Node 24.19，约 8.4s，CI 两个腿都实跑）。反向验证：往
+  `test/e2e-opencode.mjs` 尾部追加一行 `function broken( {` → `FAIL 语法门：
+  1/70 个文件解析失败` + `- test/e2e-opencode.mjs`，EXIT=1；`git checkout` 复原后
+  sha256 与改前一致。`npm test` 仍 16 套件 / 328 断言全绿。
 
 ## [0.3.2] · 2026-10-24
 

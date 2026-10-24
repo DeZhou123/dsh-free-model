@@ -392,6 +392,11 @@ npm run test:e2e -- 'ofm/codearts/glm-5.3'
 | `render.mjs` | 白屏：用极小的 React 替身把组件树跑一遍（两个设置页都要注册、卡片的三条余额分支、自动领取条的四态）。`node --check` 只能抓语法错，抓不到「渲染时抛 ReferenceError」——而那正是白屏最常见的原因 |
 | `host-check` / `host-apply` | 契约漂移：`instanceof LlmAdapter`、`providerInfo.id === provider`、`prepareCall` 返回 stream、`LlmError` code 被宿主认得 |
 
+`npm run check` 是另一道门：对 `index.js` / `client.js` / `src/**` / `test/**` / `scripts/**`
+下全部 `.js` / `.mjs`（当前 70 个）逐个 `node --check`，只抓语法错、本机约 8 秒。所以上面
+以及下面这些**不进 `npm test`** 的套件（`e2e-opencode`、`host-check/apply/keyed`、`keyed-live`、
+`service-start`、`opencode-affinity`、`boot-serve`）里写坏语法，CI 也会红。
+
 `test:e2e` 依赖本机装没装 opencode、以及免费层此刻有没有被限流，故**不进** `npm test`。
 
 ## 已知边界
