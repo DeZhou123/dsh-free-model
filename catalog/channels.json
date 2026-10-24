@@ -1,0 +1,1089 @@
+{
+  "catalogVersion": 1,
+  "updatedAt": "2026-10-24",
+  "generatedBy": "scripts/build-catalog.mjs",
+  "note": "远程渠道目录。它只改「有哪些渠道、各自什么元数据」，不含任何可执行内容；插件会逐条校验后才采用（见 src/lanes/catalog.js）。",
+  "channels": [
+    {
+      "id": "openrouter-free",
+      "displayName": "OpenRouter 免费模型",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "apiKeyEnv": "OPENROUTER_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "免费型号随时上下架，静态表只是兜底（运行时以 /models 实时结果为准）；模型 id 里那个 \":free\" 后缀是价格档位，忘掉它就会按付费模型计费。",
+      "freeTier": "id 带 \":free\" 后缀的模型计费为 0（实测 pricing.prompt/completion = \"0\"）；每日次数按账户余额档限制，余额 ≥10 美元时额度更高",
+      "docsURL": "https://openrouter.ai/docs/api-reference/overview",
+      "signupURL": "https://openrouter.ai/settings/keys",
+      "models": [
+        {
+          "id": "recursive/flint-v1.0:free",
+          "name": "Recursive: Flint (free)",
+          "contextWindow": 262144,
+          "maxTokens": 235929,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "xingchen-agi/xing4.0-29b-a4b:free",
+          "name": "XingChen: Xing4.0 29B A4B (free)",
+          "contextWindow": 262144,
+          "maxTokens": 235929,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "nvidia/nemotron-3.5-super-vl:free",
+          "name": "NVIDIA: Nemotron 3.5 Super VL (free)",
+          "contextWindow": 1000000,
+          "maxTokens": 131072,
+          "vision": true,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-25 GET https://openrouter.ai/api/v1/models → 200；free 三条取自实测 pricing.prompt=0 的行",
+        "unknownFields": [
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "groq",
+      "displayName": "Groq 免费层",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "apiKeyEnv": "GROQ_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "速度是它的卖点，代价是限速很硬：免费档上并发稍高就会连续 429，等一会儿会恢复（属于限流，不是额度用尽）。",
+      "freeTier": "免费层按模型给每分钟/每天的请求数与 token 上限（RPM/RPD/TPM/TPD），不付费即可调用；超了是 429 而不是扣费",
+      "docsURL": "https://console.groq.com/docs/openai",
+      "signupURL": "https://console.groq.com/keys",
+      "models": [
+        {
+          "id": "openai/gpt-oss-120b",
+          "name": "GPT-OSS 120B",
+          "contextWindow": 131072,
+          "maxTokens": 32768,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "openai/gpt-oss-20b",
+          "name": "GPT-OSS 20B",
+          "contextWindow": 131072,
+          "maxTokens": 32768,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "llama-3.3-70b-versatile",
+          "name": "Llama 3.3 70B Versatile",
+          "contextWindow": 131072,
+          "maxTokens": 32768,
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-25 GET https://api.groq.com/openai/v1/models → 401 {\"error\":{\"code\":\"invalid_api_key\"}}（端点存在且 OpenAI 形状）",
+        "unknownFields": [
+          "models",
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "cerebras",
+      "displayName": "Cerebras Inference 免费层",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.cerebras.ai/v1",
+      "apiKeyEnv": "CEREBRAS_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "头号特点是最快（wafer-scale），所以免费额度用得快；工具调用与结构化输出官方支持，图片输入在 2026 年仍是 Preview。",
+      "freeTier": "注册即得免费层：按模型给每日 token 额度（不是无限），每日重置；官方有独立 Rate Limits 页",
+      "docsURL": "https://inference-docs.cerebras.ai/resources/openai",
+      "signupURL": "https://cloud.cerebras.ai/",
+      "models": [
+        {
+          "id": "gpt-oss-120b",
+          "name": "GPT-OSS 120B",
+          "contextWindow": 131072,
+          "maxTokens": 32768,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "llama-3.3-70b",
+          "name": "Llama 3.3 70B",
+          "contextWindow": 65536,
+          "maxTokens": 8192,
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-25 GET https://api.cerebras.ai/v1/models → 403 {\"detail\":\"Not authenticated\"}（端点存在且已鉴权）",
+        "unknownFields": [
+          "models",
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "google-ai-studio",
+      "displayName": "Google AI Studio (Gemini)",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "apiKeyEnv": "GEMINI_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "⚠️ 这条**没有** OpenAI 的 /models 端点（实测 .../v1beta/openai/models → 404），所以目录只能用静态表，且思维档位用 reasoning_effort 映射；本轮适配器**不发** reasoning_effort（见 adapter.js 的说明）。",
+      "freeTier": "AI Studio 里拿到 key 即免费用（按模型给 RPM/RPD/TPM 上限）；付费档要另外绑结算",
+      "docsURL": "https://ai.google.dev/gemini-api/docs/openai",
+      "signupURL": "https://aistudio.google.com/apikey",
+      "models": [
+        {
+          "id": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash",
+          "contextWindow": 1000000,
+          "maxTokens": 65536,
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "gemini-3-flash",
+          "name": "Gemini 3 Flash",
+          "contextWindow": 1000000,
+          "maxTokens": 65536,
+          "vision": true,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "baseURL 取自官方「OpenAI 兼容」页原文（base_url=\"https://generativelanguage.googleapis.com/v1beta/openai/\"）；2026-10-25 实测该路径 /models → 404，故 supportsModelList:false",
+        "supportsModelList": false,
+        "unknownFields": [
+          "models",
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "cloudflare-workers-ai",
+      "displayName": "Cloudflare Workers AI",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.cloudflare.com/client/v4/accounts/%7BACCOUNT_ID%7D/ai/v1",
+      "apiKeyEnv": "CLOUDFLARE_API_TOKEN",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "⚠️ baseURL 里有 {ACCOUNT_ID}：先去 dash 首页抄账号 ID 并替换，否则这条车道会一直显示「待配置」——那是对的，不是插件坏了。",
+      "freeTier": "每天 10,000 Neurons 的免费额度（Workers AI 定价页口径），日出重置；超了要开 Workers Paid",
+      "docsURL": "https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/",
+      "signupURL": "https://dash.cloudflare.com/profile/api-tokens",
+      "models": [
+        {
+          "id": "@cf/meta/llama-3.1-8b-instruct",
+          "name": "Llama 3.1 8B Instruct",
+          "vision": false,
+          "tools": false
+        },
+        {
+          "id": "@cf/openai/gpt-oss-120b",
+          "name": "GPT-OSS 120B",
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "官方 openai 兼容页原文：baseURL = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai/v1`",
+        "placeholders": [
+          "{ACCOUNT_ID}"
+        ],
+        "unknownFields": [
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "mistral",
+      "displayName": "Mistral (La Plateforme)",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.mistral.ai/v1",
+      "apiKeyEnv": "MISTRAL_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "免费档与付费档是**同一把 key** 上的两种套餐，改套餐后限额会变；static 模型表是长期别名（*-latest），不是快照 id。",
+      "freeTier": "有免费层（控制台里叫 Experiment/免费档），按模型给每秒请求数上限；具体配额以控制台当前显示为准",
+      "docsURL": "https://docs.mistral.ai/api/",
+      "signupURL": "https://console.mistral.ai/api-keys",
+      "models": [
+        {
+          "id": "mistral-small-latest",
+          "name": "Mistral Small (latest)",
+          "contextWindow": 128000,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "mistral-large-latest",
+          "name": "Mistral Large (latest)",
+          "contextWindow": 128000,
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-25 GET https://api.mistral.ai/v1/models → 401 {\"detail\":\"Invalid API Key\"}（端点存在且已鉴权）",
+        "unknownFields": [
+          "models",
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "dashscope",
+      "displayName": "阿里云百炼 (DashScope 兼容模式)",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "apiKeyEnv": "DASHSCOPE_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "国内直连不用代理；qwen-plus / qwen-turbo / qwen-max 是**档位别名**（长期稳定），别写成带日期的快照 id。",
+      "freeTier": "新用户按模型送限时免费额度（每个模型各送固定 token 数，通常 90 天内有效）；额度用完后按量计费",
+      "docsURL": "https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope",
+      "signupURL": "https://bailian.console.aliyun.com/?apiKey=1",
+      "models": [
+        {
+          "id": "qwen-plus",
+          "name": "Qwen Plus",
+          "contextWindow": 131072,
+          "maxTokens": 8192,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "qwen-max",
+          "name": "Qwen Max",
+          "contextWindow": 32768,
+          "maxTokens": 8192,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "qwen-turbo",
+          "name": "Qwen Turbo",
+          "contextWindow": 131072,
+          "maxTokens": 8192,
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "cn",
+        "evidence": "2026-10-25 GET https://dashscope.aliyuncs.com/compatible-mode/v1/models → 401 {\"error\":{\"type\":\"invalid_request_error\"}}（端点存在，OpenAI 形状）",
+        "unknownFields": [
+          "models",
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "modelscope",
+      "displayName": "魔搭 ModelScope 推理 API",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api-inference.modelscope.cn/v1",
+      "apiKeyEnv": "MODELSCOPE_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "⚠️ 它的 /models **不用 key 就能读**（实测 200），所以「目录能拉出来」不等于「能调用」——真正能不能调由 chat/completions 的鉴权决定，别被目录骗了。",
+      "freeTier": "社区版按模型给免费调用额度（绑阿里云账号后额度更高，具体次数见控制台；此处数值未确证）",
+      "docsURL": "https://www.modelscope.cn/docs/model-service/API-Inference/intro",
+      "signupURL": "https://modelscope.cn/my/myaccesstoken",
+      "models": [
+        {
+          "id": "deepseek-ai/DeepSeek-V4.1-Flash",
+          "name": "DeepSeek V4.1 Flash",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "Qwen/Qwen3.8-27B",
+          "name": "Qwen 3.8 27B",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "ZhipuAI/GLM-5.2",
+          "name": "GLM 5.2",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "MiniMax/MiniMax-M3",
+          "name": "MiniMax M3",
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "cn",
+        "evidence": "2026-10-25 GET https://api-inference.modelscope.cn/v1/models → 200，抄下 38 条实测 id（本静态表取其中 4 条）",
+        "unknownFields": [
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "zhipu-bigmodel",
+      "displayName": "智谱 BigModel (GLM)",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://open.bigmodel.cn/api/paas/v4",
+      "apiKeyEnv": "ZHIPUAI_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "免费的是 flash 档；同一把 key 调付费型号会直接扣费，页面上的「免费」标记要跟模型 id 对齐。",
+      "freeTier": "带 \"-flash\" 的型号长期免费（限速调用），其余型号按量计费；免费型号清单会变",
+      "docsURL": "https://docs.bigmodel.cn/",
+      "signupURL": "https://open.bigmodel.cn/usercenter/apikeys",
+      "models": [
+        {
+          "id": "glm-5.3-flash",
+          "name": "GLM 5.3 Flash",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "glm-4.7-flash",
+          "name": "GLM 4.7 Flash",
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "cn",
+        "evidence": "2026-10-25 GET https://open.bigmodel.cn/api/paas/v4/models → 401 {\"error\":{\"code\":\"1001\",\"message\":\"Header中未收到Authorization参数\"}}（端点存在）",
+        "unknownFields": [
+          "models",
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "moonshot",
+      "displayName": "月之暗面 Moonshot (Kimi)",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.moonshot.cn/v1",
+      "apiKeyEnv": "MOONSHOT_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "一次性赠送 ≠ 免费层：用完就是 402，页面要按「额度用尽」报，不要报成限流。",
+      "freeTier": "新账号送一次性体验额度（不是每日免费层）；余额用完即 402，需充值",
+      "docsURL": "https://platform.moonshot.cn/docs/",
+      "signupURL": "https://platform.moonshot.cn/console/api-keys",
+      "models": [
+        {
+          "id": "kimi-k2.6",
+          "name": "Kimi K2.6",
+          "contextWindow": 262144,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "moonshot-v1-8k",
+          "name": "Moonshot v1 8K",
+          "contextWindow": 8192,
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "cn",
+        "evidence": "2026-10-25 GET https://api.moonshot.cn/v1/models → 401 {\"error\":{\"type\":\"incorrect_api_key_error\"}}（端点存在，OpenAI 形状）",
+        "unknownFields": [
+          "models",
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "baidu-qianfan",
+      "displayName": "百度千帆 (v2 OpenAI 兼容)",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://qianfan.baidubce.com/v2",
+      "apiKeyEnv": "QIANFAN_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "v2 才是 OpenAI 兼容面（`/v2/chat/completions`）；老的 v1 与千帆 SDK 是另一套协议，别混。Bearer 用的是控制台的「API Key」（bce-v3/... 形态）。",
+      "freeTier": "部分型号（-speed / lite 档）免费；其余按量计费，新用户另有代金券",
+      "docsURL": "https://cloud.baidu.com/doc/qianfan-api/index.html",
+      "signupURL": "https://console.bce.baidu.com/iam/#/iam/apikey/list",
+      "models": [
+        {
+          "id": "ernie-4.5-turbo-128k",
+          "name": "ERNIE 4.5 Turbo 128K",
+          "contextWindow": 131072,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "ernie-speed-128k",
+          "name": "ERNIE Speed 128K",
+          "contextWindow": 131072,
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "cn",
+        "evidence": "2026-10-25 GET https://qianfan.baidubce.com/v2/models → 429 {\"code\":\"OverRateLimit\"}（端点存在并在工作；未鉴权请求被限流也算实证）",
+        "unknownFields": [
+          "models",
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "volcano-ark",
+      "displayName": "火山方舟 (Volcengine Ark)",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://ark.cn-beijing.volces.com/api/v3",
+      "apiKeyEnv": "ARK_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "model 字段既可以填「接入点 id」（ep-xxxxxxxx）也可以填模型 id；接入点方式需要在方舟控制台建好端点，填错会报 model not found 而不是鉴权错。",
+      "freeTier": "每个模型给固定数量的免费 token（新用户赠送、按模型分别计），用完按量计费",
+      "docsURL": "https://www.volcengine.com/docs/82379",
+      "signupURL": "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey",
+      "models": [
+        {
+          "id": "doubao-seed-1-6-250615",
+          "name": "Doubao Seed 1.6",
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "deepseek-v3-250324",
+          "name": "DeepSeek V3 (Ark)",
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "cn",
+        "evidence": "2026-10-25 GET https://ark.cn-beijing.volces.com/api/v3/models → 401 {\"error\":{\"code\":\"AuthenticationError\"}}（端点存在）",
+        "unknownFields": [
+          "models",
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "siliconflow",
+      "displayName": "硅基流动 SiliconFlow",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.siliconflow.cn/v1",
+      "apiKeyEnv": "SILICONFLOW_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "国内直连即可；免费型号清单在站内按标签滚动，静态表只兜底。国际版是 api.siliconflow.com，key 不通用。",
+      "freeTier": "一批「免费」标记的模型（多为中小尺寸）零计费调用；另有新用户赠送额度，具体型号见站内标签",
+      "docsURL": "https://docs.siliconflow.cn/",
+      "signupURL": "https://cloud.siliconflow.cn/account/ak",
+      "models": [
+        {
+          "id": "Qwen/Qwen3-8B",
+          "name": "Qwen3 8B",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "deepseek-ai/DeepSeek-V3",
+          "name": "DeepSeek V3",
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "cn",
+        "evidence": "2026-10-25 GET https://api.siliconflow.cn/v1/models → 401 {\"code\":30014,\"message\":\"Token is invalid.\"}（端点存在）",
+        "unknownFields": [
+          "models",
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "stepfun",
+      "displayName": "阶跃星辰 StepFun",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.stepfun.com/v1",
+      "apiKeyEnv": "STEPFUN_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "国内直连；赠送额度是一次性的，402 时页面要报「额度用尽」而不是限流。",
+      "freeTier": "新用户赠送体验额度；部分轻量型号限时免费，额度用完后按量计费",
+      "docsURL": "https://platform.stepfun.com/docs",
+      "signupURL": "https://platform.stepfun.com/interface-key",
+      "models": [
+        {
+          "id": "step-3.7-flash",
+          "name": "Step 3.7 Flash",
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "cn",
+        "evidence": "2026-10-25 GET https://api.stepfun.com/v1/models → 401 {\"error\":{\"type\":\"invalid_api_key\"}}（端点存在，OpenAI 形状）",
+        "unknownFields": [
+          "models",
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "spark-xfyun",
+      "displayName": "讯飞星火 (OpenAI 兼容)",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://spark-api-open.xf-yun.com/v1",
+      "apiKeyEnv": "SPARK_API_PASSWORD",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "⚠️ 凭据填的是控制台给的「APIPassword」（不是 APPID/APIKey/APISecret 三件套），直接当 Bearer 用，形态是 `key:secret`。填错会 401 而不是报格式错误。",
+      "freeTier": "每个模型给固定 token 的免费额度（新用户赠送，按模型分别计），用完按量计费",
+      "docsURL": "https://www.xfyun.cn/doc/spark/Web.html",
+      "signupURL": "https://console.xfyun.cn/services/cbm",
+      "models": [
+        {
+          "id": "lite",
+          "name": "Spark Lite（免费档）",
+          "vision": false,
+          "tools": false
+        }
+      ],
+      "extra": {
+        "region": "cn",
+        "evidence": "2026-10-25 GET https://spark-api-open.xf-yun.com/v1/models → 401 {\"message\":\"Unauthorized\"}（端点存在）",
+        "unknownFields": [
+          "models",
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "hunyuan",
+      "displayName": "腾讯混元 (Hunyuan)",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.hunyuan.cloud.tencent.com/v1",
+      "apiKeyEnv": "HUNYUAN_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "国内直连；赠送额度按模型独立，换模型可能又有额度。key 在腾讯云控制台的「API Key」页。",
+      "freeTier": "新用户开通后送固定数量免费 token（按模型分别计，有效期约一年）；用完按量计费",
+      "docsURL": "https://cloud.tencent.com/document/product/1729",
+      "signupURL": "https://console.cloud.tencent.com/hunyuan/start",
+      "models": [
+        {
+          "id": "hunyuan-turbos-latest",
+          "name": "Hunyuan TurboS",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "hunyuan-lite",
+          "name": "Hunyuan Lite（免费档）",
+          "vision": false,
+          "tools": false
+        }
+      ],
+      "extra": {
+        "region": "cn",
+        "evidence": "2026-10-25 GET https://api.hunyuan.cloud.tencent.com/v1/models → 401（错误文案里直接带控制台链接，端点存在）",
+        "unknownFields": [
+          "models",
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "minimax",
+      "displayName": "MiniMax (OpenAI 兼容)",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.minimaxi.com/v1",
+      "apiKeyEnv": "MINIMAX_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "国内与国际端点是 api.minimaxi.com / api.minimax.io，**key 不通用**；本条目是国内端点。",
+      "freeTier": "新用户赠送一次性体验额度；部分型号长期免费（限速），其余按量计费",
+      "docsURL": "https://platform.minimaxi.com/document",
+      "signupURL": "https://platform.minimaxi.com/user-center/basic-information/interface-key",
+      "models": [
+        {
+          "id": "MiniMax-M3.1-Flash",
+          "name": "MiniMax M3.1 Flash",
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "cn",
+        "evidence": "2026-10-25 GET https://api.minimaxi.com/v1/models → 401 {\"error\":{\"type\":\"authorized_error\",\"message\":\"login fail: ...(1004)\"}}（端点存在）",
+        "unknownFields": [
+          "models",
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "nvidia-nim",
+      "displayName": "NVIDIA NIM (build.nvidia.com)",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://integrate.api.nvidia.com/v1",
+      "apiKeyEnv": "NVIDIA_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "⚠️ 它的 /models **不用 key 就能读**（实测 200，80+ 条），所以目录很全但能调的只是其中一部分：页面上要按「能调通」而不是「列出来」计数。",
+      "freeTier": "注册送固定额度（官网口径为 1000 credits，约等于该数量的调用次数），用完需申请或付费",
+      "docsURL": "https://docs.nvidia.com/nim/",
+      "signupURL": "https://build.nvidia.com/settings/api-keys",
+      "models": [
+        {
+          "id": "deepseek-ai/deepseek-v4.1-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "z-ai/glm-5.3",
+          "name": "GLM 5.3",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "moonshotai/kimi-k2.6",
+          "name": "Kimi K2.6",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "nvidia/nemotron-3-super-120b-a12b",
+          "name": "Nemotron 3 Super 120B",
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-25 GET https://integrate.api.nvidia.com/v1/models → 200（抄下实测 id，本静态表取其中 4 条）",
+        "unknownFields": [
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "together",
+      "displayName": "Together AI",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.together.xyz/v1",
+      "apiKeyEnv": "TOGETHER_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "免费型号 id 里带 \"-Free\" 后缀，跟付费版只差后缀一个词；忘掉后缀会直接扣费。",
+      "freeTier": "带 \"-Free\" 后缀的模型零计费（清单会变）；新账号另有一次性赠送额度",
+      "docsURL": "https://docs.together.ai/docs/openai-api-compatibility",
+      "signupURL": "https://api.together.xyz/settings/api-keys",
+      "models": [
+        {
+          "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
+          "name": "Llama 3.3 70B Turbo (Free)",
+          "contextWindow": 131072,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free",
+          "name": "DeepSeek R1 Distill Llama 70B (free)",
+          "contextWindow": 131072,
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-25 GET https://api.together.xyz/v1/models → 401 \"Missing API key\"（端点存在）",
+        "unknownFields": [
+          "models",
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "sambanova",
+      "displayName": "SambaNova Cloud",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.sambanova.ai/v1",
+      "apiKeyEnv": "SAMBANOVA_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "⚠️ /models **不用 key 也能读**（实测 200）；免费档限速偏紧，高并发会连续 429。",
+      "freeTier": "免费开发者档：按模型给每日请求数与 token 上限，不需绑卡",
+      "docsURL": "https://docs.sambanova.ai/cloud/docs/get-started/overview",
+      "signupURL": "https://cloud.sambanova.ai/apis",
+      "models": [
+        {
+          "id": "DeepSeek-V3.1",
+          "name": "DeepSeek V3.1",
+          "contextWindow": 131072,
+          "maxTokens": 131072,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "Meta-Llama-3.3-70B-Instruct",
+          "name": "Llama 3.3 70B Instruct",
+          "contextWindow": 131072,
+          "maxTokens": 3072,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "gpt-oss-120b",
+          "name": "GPT-OSS 120B",
+          "contextWindow": 131072,
+          "maxTokens": 131072,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "gemma-4-31B-it",
+          "name": "Gemma 4 31B IT",
+          "contextWindow": 262144,
+          "maxTokens": 262144,
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-25 GET https://api.sambanova.ai/v1/models → 200（抄下实测 6 条 id，本静态表取其中 4 条）",
+        "unknownFields": [
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "pollinations",
+      "displayName": "Pollinations (免 key 直连)",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://text.pollinations.ai/v1",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "⚠️ 限速是「一次只跑一个、间隔 30 秒」，所以它只适合当兜底车道；上游**用 402 表示「等一下再来」**，与别家的「额度用尽」撞码，页面要按 Retry-After 区分。模型只有 GPT-OSS 20B 一个。",
+      "freeTier": "完全免费、无需注册：文本每次请求间隔≥30 秒（同一 IP 串行），超了回 402 + Retry-After；带自己的 key 可解除按 IP 限速",
+      "docsURL": "https://raw.githubusercontent.com/pollinations/pollinations/master/APIDOCS.md",
+      "signupURL": "https://enter.pollinations.ai",
+      "models": [
+        {
+          "id": "openai-fast",
+          "name": "GPT-OSS 20B (Pollinations 匿名档)",
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "apiKeyEnv": null,
+        "region": "global",
+        "evidence": "2026-10-25 GET https://text.pollinations.ai/models → 200，返回 [{\"name\":\"openai-fast\",\"tier\":\"anonymous\",\"tools\":true,...}]；官方 APIDOCS.md 原文确认 \"POST https://text.pollinations.ai/openai (or /v1/chat/completions)\" 且 \"Free · no signup · rate-limited\"",
+        "supportsModelList": false,
+        "modelsURL": "https://text.pollinations.ai/models",
+        "unknownFields": [
+          "models"
+        ]
+      }
+    },
+    {
+      "id": "opencode",
+      "displayName": "OpenCode 免费层",
+      "kind": "service",
+      "backend": "native",
+      "endpoint": "http://127.0.0.1:4096",
+      "category": "本地",
+      "capability": {
+        "tools": false,
+        "vision": true
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "startable": true,
+      "probe": {
+        "url": "http://127.0.0.1:4096/config/providers",
+        "method": "GET",
+        "okStatus": [
+          200
+        ]
+      },
+      "note": "不需要账号。能对话、能看图，但不能调用工具（opencode 接口不接受外部工具定义）。适合标题、摘要、翻译、识图；别在 agent 会话里当主模型。",
+      "models": []
+    },
+    {
+      "id": "freellmapi",
+      "displayName": "FreeLLMAPI 本地网关",
+      "kind": "service",
+      "backend": "gateway",
+      "endpoint": "http://127.0.0.1:31415",
+      "category": "本地",
+      "capability": {
+        "tools": true,
+        "vision": true
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "probe": {
+        "url": "http://127.0.0.1:31415/v1/models",
+        "method": "GET",
+        "okStatus": [
+          200,
+          401,
+          403
+        ],
+        "auth": {
+          "apiKeyEnv": "FREELLMAPI_API_KEY",
+          "header": "authorization",
+          "scheme": "Bearer"
+        }
+      },
+      "note": "免费额度聚合器（一把 key 聚合多家上游）。它的 LLM 路由由 dsh-llm-pi-ai 注册，本插件只观测、不重复注册；这里显示的是「网关进程 + 凭据是否就绪」。",
+      "models": []
+    },
+    {
+      "id": "ollama",
+      "displayName": "Ollama 本机推理",
+      "kind": "service",
+      "backend": "gateway",
+      "endpoint": "http://127.0.0.1:11434",
+      "category": "本地",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "probe": {
+        "url": "http://127.0.0.1:11434/api/tags",
+        "method": "GET",
+        "okStatus": [
+          200
+        ],
+        "chatModelExcludes": true,
+        "modelListPath": "models"
+      },
+      "note": "本机 Ollama。注意：它当前只装了向量模型（nomic-embed-text），**没有对话模型** —— 故不是一条可用的对话车道，列出来是为了让这件事一眼可见。",
+      "models": []
+    }
+  ]
+}

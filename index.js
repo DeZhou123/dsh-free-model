@@ -127,9 +127,14 @@ export function apply(ctx, config = {}) {
   /** 服务车道探针缓存：成功 30 秒内不重探，失败按 SERVICE_PROBE_FAILURE_TTL_MS 退避。 */
   const serviceProbes = { at: 0, failedAt: 0, byId: {} }
 
-  const readCredential = async (name) => {
+  const readCredential = async (rawName) => {
     const credentials = readServiceOrUndefined(ctx, 'credentials')
     if (credentials?.resolve === undefined) return undefined
+    // ⚠️ 抹掉调用方可能已经带上的 `ref:` 前缀：本函数自己会补一个。
+    // 不抹的话 `ref:ref:NAME` 解析不出来，症状是「明明配了 key 却说缺凭据」——
+    // 而 `src/lanes/keyed/**` 的契约里两种形态都可能传进来（见其 ready.js 的三种形态说明）。
+    const name = String(rawName ?? '').replace(/^ref:/i, '')
+    if (name === '') return undefined
     try {
       return decodeCredentialValue(await credentials.resolve(`ref:${name}`))
     } catch {
@@ -538,90 +543,79 @@ function readLocalCatalog(file, logger) {
  * 带走另一个」的规矩。这里同样：**模块缺失 → 这一类渠道为空；模块抛错 → 只记一条警告**。
  * 绝不让它的失败影响 13 条账号车道 —— 那些才是用户每天真的在用的东西。
  *
- * ## 模块契约（逐文件独立，缺哪份就退化哪一段）
+ * ## 与 `src/lanes/keyed/index.js` 的接线（这是那一侧定义的契约，不是猜的）
  *
- * | 文件 | 导出 | 缺了会怎样 |
+ * | 调用 | 拿到什么 | 用在哪 |
  * |---|---|---|
- * | `catalog.js` | `KEYED_CHANNELS` / `KEYLESS_CHANNELS` | 没有这一类渠道（其余照常） |
- * | `ready.js` | `keyedLaneState(lane, { readCredential })` | 全部显示「未就绪·就绪模块缺失」 |
- * | `adapter.js` | `createKeyedAdapter({...})` | 只展示、不挂路由（页面会说清） |
+ * | `descriptors({ readCredential })` | 每行含 id/displayName/baseURL/apiKeyEnv/models/ready/reason/mountable | ① 注册表的 keyed 层 ② 页面的就绪状态 |
+ * | `mountAll({ readCredential, … })` | `{ mounted:[{lane,route,adapter,readiness}], failed:[{id,error}] }` | 挂适配器（单条失败不带走其余） |
  *
- * @returns {Promise<{ records: number, mounted: string[] }>}
+ * ⚠️ 这一层**不做注册决策**：注册一律走 `registerAdapterIdempotent`（`src/core/register.js`），
+ * 那里已经处理过「宿主抢路由」与「fiber 重启」两件事，重复发明只会漏掉其中一件。
+ *
+ * @returns {Promise<{ records: number, mounted: string[], failed: string[] }>}
  */
 async function mountKeyedLanes(scoped, deps) {
-  const dir = join(deps.pkgDir, 'src', 'lanes', 'keyed')
-  const catalogFile = join(dir, 'catalog.js')
-  if (!existsSync(catalogFile)) return { records: 0, mounted: [] }
+  const entry = join(deps.pkgDir, 'src', 'lanes', 'keyed', 'index.js')
+  if (!existsSync(entry)) return { records: 0, mounted: [], failed: [] }
 
-  const catalog = await import(pathToFileURL(catalogFile).href)
-  const records = [
-    ...(Array.isArray(catalog.KEYED_CHANNELS) ? catalog.KEYED_CHANNELS : []),
-    ...(Array.isArray(catalog.KEYLESS_CHANNELS) ? catalog.KEYLESS_CHANNELS : []),
-  ]
-  deps.onRecords?.(records)
-  if (records.length === 0) return { records: 0, mounted: [] }
+  const mod = await import(pathToFileURL(entry).href)
+  const callDeps = {
+    readCredential: deps.readCredential,
+    logger: deps.logger,
+    ...(deps.readImage !== undefined ? { readImage: deps.readImage } : {}),
+    ...(deps.readImageRequest !== undefined ? { readImageRequest: deps.readImageRequest } : {}),
+  }
 
-  // 就绪判定：模块在就用它的，不在就把「为什么不知道」说清楚（而不是默认 ready）。
-  let stateOf
-  const readyFile = join(dir, 'ready.js')
-  if (existsSync(readyFile)) {
-    const ready = await import(pathToFileURL(readyFile).href)
-    if (typeof ready.keyedLaneState === 'function') {
-      stateOf = (lane) => ready.keyedLaneState(lane, { readCredential: deps.readCredential })
-    }
+  // ① 描述符：即使一条都挂不上，页面也要能看到「有哪些渠道、各自为什么不能用」。
+  let rows = []
+  try {
+    rows = await mod.descriptors({ readCredential: deps.readCredential })
+  } catch (error) {
+    deps.logger?.warn?.(`dsh-free-model: keyed 描述符读取失败（${error instanceof Error ? error.message : String(error)}）`)
   }
-  const readiness = {}
-  for (const lane of records) {
-    try {
-      readiness[lane.id] = stateOf === undefined
-        ? { ready: false, reason: '就绪模块（ready.js）缺失，无法判断凭据状态' }
-        : await stateOf(lane)
-    } catch (error) {
-      readiness[lane.id] = { ready: false, reason: `就绪判定抛错：${error instanceof Error ? error.message : String(error)}` }
-    }
-  }
-  deps.onReady?.(readiness)
+  deps.onRecords?.(rows)
+  deps.onReady?.(Object.fromEntries(rows.map((row) => [row.id, {
+    ready: row.ready === true,
+    reason: row.reason,
+    ...(row.retired === true ? { retired: true } : {}),
+  }])))
 
-  const adapterFile = join(dir, 'adapter.js')
-  if (!existsSync(adapterFile)) {
-    deps.logger?.info?.('dsh-free-model: 自带 key 车道只做展示（adapter.js 缺失，未挂路由）')
-    return { records: records.length, mounted: [] }
-  }
-  const adapterModule = await import(pathToFileURL(adapterFile).href)
-  if (typeof adapterModule.createKeyedAdapter !== 'function') {
-    deps.logger?.warn?.('dsh-free-model: 自带 key 模块没有导出 createKeyedAdapter，跳过挂载')
-    return { records: records.length, mounted: [] }
+  // ② 挂就绪的车道（`mountAll` 内部只会拿 `mountable` 的行）。
+  let outcome = { mounted: [], failed: [] }
+  try {
+    outcome = await mod.mountAll(callDeps)
+  } catch (error) {
+    // 整个 mountAll 抛错（例如模块本身坏掉）也要降级，不能带走账号车道。
+    deps.logger?.warn?.(`dsh-free-model: keyed 车道装载整体失败（${error instanceof Error ? error.message : String(error)}）`)
+    return { records: rows.length, mounted: [], failed: ['<all>'] }
   }
 
   const mounted = []
-  for (const lane of records) {
-    const state = readiness[lane.id]
-    if (state?.ready !== true) continue
+  for (const entryMounted of outcome.mounted ?? []) {
     try {
-      const created = await adapterModule.createKeyedAdapter({
-        lane,
-        apiKey: state.apiKey,
-        logger: deps.logger,
-        ...(deps.readImage !== undefined ? { readImage: deps.readImage } : {}),
-        ...(deps.readImageRequest !== undefined ? { readImageRequest: deps.readImageRequest } : {}),
-      })
-      const adapter = created?.adapter ?? created
-      if (adapter === undefined || adapter === null) throw new Error('createKeyedAdapter 返回空')
-      const routes = Array.isArray(created?.routes) ? created.routes : [lane.id]
-      registerAdapterIdempotent(scoped.llm, routes, adapter, (message) => deps.logger?.warn?.(message))
-      mounted.push(lane.id)
+      registerAdapterIdempotent(
+        scoped.llm,
+        [entryMounted.route],
+        entryMounted.adapter,
+        (message) => deps.logger?.warn?.(message),
+      )
+      mounted.push(entryMounted.route)
     } catch (error) {
-      // 单条失败只影响它自己：一条渠道的 baseURL 写错不该让其它 keyed 渠道一起消失。
       deps.logger?.warn?.(
-        `dsh-free-model: ${lane.displayName ?? lane.id} 车道挂载失败（${error instanceof Error ? error.message : String(error)}）`,
+        `dsh-free-model: keyed 车道 ${entryMounted.route} 注册失败（${error instanceof Error ? error.message : String(error)}）`,
       )
     }
   }
+  const failed = (outcome.failed ?? []).map((row) => row.id)
+  if (failed.length > 0) {
+    deps.logger?.info?.(`dsh-free-model: keyed 车道 ${failed.length} 条未挂载（未就绪/已下线）：${failed.join(', ')}`)
+  }
   deps.logger?.info?.(
-    `dsh-free-model: 自带 key 车道 ${mounted.length}/${records.length} 已挂载`
-    + (mounted.length > 0 ? `（${mounted.join(', ')}）` : '（都没有 key/未就绪，仅展示）'),
+    `dsh-free-model: 自带 key 车道 ${mounted.length}/${rows.length} 已挂载`
+    + (mounted.length > 0 ? `（${mounted.join(', ')}）` : '（都没有 key/未就绪，仅展示 + 指引去拿 key）'),
   )
-  return { records: records.length, mounted }
+  return { records: rows.length, mounted, failed }
 }
 
 /** 读宿主池（不建本地池）。 */

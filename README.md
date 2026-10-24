@@ -1,12 +1,45 @@
 # dsh-free-model
 
-把三条「不花钱」的模型车道装进 DSH，用**两个设置页**分开管起来。
+把本机所有「不花钱」的模型渠道装进 DSH，用**一个设置项、三个页签**管起来，
+并且让渠道清单**能远程更新** —— 加渠道不用等插件发版。
 
-| 车道 | 路由 | 能力 | 需要什么 | 页内页签 |
-|---|---|---|---|---|
-| CodeBuddy（腾讯国内版） | `buddy/*` | 完整：工具调用、看图 | 一个账号（浏览器登录） | 账号渠道 |
-| WorkBuddy（腾讯国际版） | `workbuddy/*` | 完整：工具调用、看图 | 一个账号（浏览器登录） | 账号渠道 |
-| OpenCode 本地车道 | `opencode/*`、`ofm/*` 等 | **无工具**：能看图、不能调工具 | 本机 `opencode serve`（插件可代起） | OpenCode 本地车道 |
+| 类 | 条数 | 路由 | 能力 | 需要什么 | 页内页签 |
+|---|---|---|---|---|---|
+| **账号渠道**（本插件自己挂） | 2 | `buddy/*`、`workbuddy/*` | 完整：工具调用、看图 | 一个账号（浏览器登录） | 账号渠道 |
+| **账号渠道**（宿主 `dsh-our-free-model` 提供后端） | 11 | 各平台自己的路由 | 完整 | 各平台一个账号 | 账号渠道 |
+| **服务渠道**（本机进程） | 3 | `opencode/*` | **无工具**：能看图、不能调工具 | 本机 `opencode serve`（插件可代起） | 本地与网关 |
+| **自带 key / 免 key 渠道** | 21 | `<渠道 id>/*` | 取决于上游声明 | 去上游拿免费 key（免 key 渠道零配置） | 自带 key |
+
+**它要回答的问题是**：我到底有哪些免费模型、它们现在能不能用、不能用的话下一步做什么。
+所以每条渠道都带**就绪状态**（`就绪 / 需动作 / 不可用 / 未知`）与**一条能指导动作的原因**
+（配哪个凭据变量、去哪拿 key、去起哪个服务），而不是等用户点下去猜。
+
+三类渠道的「不能用」是三件不同的事，所以**必须分开**：
+
+| 类 | 不能用时用户要做什么 |
+|---|---|
+| 账号渠道 | 登录 / 续期 / 领积分 / 换账号 |
+| 服务渠道 | 起本地进程 / 填网关 key / 换一个本地服务 |
+| 自带 key | 去上游拿 key、写进凭据条目（免 key 渠道不需要） |
+
+合并成一句「渠道不可用」会让用户乱试方向，所以本插件宁可多写三个分支。
+
+## 骨架：注册表 + 可远程迭代的渠道目录
+
+```
+src/lanes/registry.js     唯一事实来源：三类渠道 → 同一种记录形状 → 就绪四态投影
+  ├── src/lanes.js            11 条宿主侧车道的元数据（**不重复挂载**：会撞同名 cordis Service）
+  ├── src/lanes/service.js    3 条服务车道 + HTTP 探针（双 TTL 缓存，失败退避 30 秒）
+  ├── src/lanes/keyed/**      21 条自带 key / 免 key 车道（目录 + 就绪判定 + OpenAI 兼容适配器）
+  ├── src/lanes/catalog.js    记录校验（远程数据是**不可信输入**）+ 三层叠加（shipped/remote/local）
+  └── src/lanes/remote.js     远程目录拉取（https-only、格式版本不符整份拒绝、原子缓存、失败降级）
+```
+
+**为什么渠道数据要能远程更新**：免费渠道是外部策略，不是技术事实。上游换域名、加免费模型、
+收回额度，都不该逼用户等一次插件发版。所以渠道数据分三层、同形状、按 id 覆盖：
+随包（离线基线）← 远程 JSON（随时可更新）← 本地覆盖文件（用户自己钉住/改对）。
+远程数据只被当作**数据**读：没有 eval、没有动态 import，每条记录都要过校验器，
+不合格的整条丢弃并记账 —— 一条 baseURL 写错的渠道会表现成「插件坏了」，比少一条渠道糟得多。
 
 ## 账号渠道：13 条车道（2 条自己挂 + 11 条 OFM 侧）
 
@@ -241,9 +274,19 @@ OFM 那边随即以为「今天已经跑过」而跳过它自己的十几个渠�
 index.js                 三条车道的装配（账号型 ×2 + 服务型 ×1）+ 积分能力位
 src/channels.js          buddy 系通道装配（auth + adapter + 选号）
 src/lanes.js             账号渠道注册表：OFM 侧 11 条车道的元数据（页面/能力/登录形态）
+src/lanes/registry.js    三类渠道的统一注册表 + 就绪四态投影（页面与路由的唯一事实来源）
+src/lanes/catalog.js     渠道记录校验 + 三层目录叠加（shipped / remote / local）
+src/lanes/remote.js      远程渠道目录：拉取 / 校验 / 原子缓存 / 失败降级
+src/lanes/service.js     服务型车道（opencode / FreeLLMAPI 网关 / Ollama）+ HTTP 探针
+src/lanes/update.js      插件自身的版本检查（semver 比较 + 6 小时缓存 + 失败静默）
+src/lanes/keyed/catalog.js  21 条自带 key / 免 key 车道的目录（每条带 evidence 与未确证标注）
+src/lanes/keyed/ready.js    就绪判定：三种凭据形态 / 环境变量优先 / ref: 解引用
+src/lanes/keyed/adapter.js  OpenAI 兼容适配器（SSE + 工具调用 + 图片 + 错误分类）
+src/lanes/keyed/index.js    descriptors() / mount() / mountAll()（只出描述符，注册留给上层）
+scripts/build-catalog.mjs   从随包渠道生成远程目录 catalog/channels.json（生成时自校验）
 src/credits-service.js   余额 / 一键领取（缓存 + 并发合并 + 顺序领取）
 src/auto-checkin.js      每日自动领积分（独立状态文件 + 一天一次 + 开关）
-src/routes.js            /api/free-model/*（含积分、自动领取、/opencode/status|start|stop|refresh）
+src/routes.js            /api/free-model/*（账号面 + /channels /catalog /update /service + opencode）
 src/pool.js              账号池：宿主池优先，缺席时退化实现
 src/live-pool.js         账号池的晚绑定门面
 src/trust.js             HTTP 面的信任围栏
@@ -251,7 +294,7 @@ src/core/                buddy 全栈（从 v2.5.7 逐行移植，注释即踩�
 src/opencode/client.js   opencode serve 的 HTTP 客户端（会话复用 + 增量流式）
 src/opencode/adapter.js  DSH LlmAdapter（把 parts 翻成 chunk）
 src/opencode/service.js  进程生命周期（探测 / 拉起 / 端口顺延 / 清理）
-client.js                浏览器半身（两个设置页：账号车道 / OpenCode 本地车道）
+client.js                浏览器半身（一个设置项 + 三个页签 + 常驻目录/版本状态条）
 ```
 
 ### 流式是怎么做的（2026-10-23 改为 SSE）

@@ -144,6 +144,11 @@ check('带占位符的渠道必须声明 placeholders（ready 层据此判 not-r
     if (found.length === 0) continue
     assert.ok(Array.isArray(lane.placeholders), `${lane.id} 的 baseURL 里有 ${found.join('、')} 但没声明 placeholders`)
   }
+  // ⚠️ 上游目录校验会用 new URL() 规范化：WHATWG URL 的路径编码集**包含 `{` `}`**，
+  // 于是 `{ACCOUNT_ID}` 会变成 `%7BACCOUNT_ID%7D`。只认花括号的实现会在规范化之后
+  // 把这条车道判成"就绪"，然后去打一个必然 404 的地址 —— 用户看到的是"插件坏了"。
+  assert.deepEqual(lanePlaceholders({ baseURL: 'https://x/%7Baccount_id%7D/ai/v1' }), ['{ACCOUNT_ID}'])
+  assert.deepEqual(lanePlaceholders({ baseURL: 'https://x/plain/v1' }), [])
 })
 
 check('辅助函数：laneById / lanesByRegion / catalogStats', () => {
@@ -158,6 +163,7 @@ check('辅助函数：laneById / lanesByRegion / catalogStats', () => {
   assert.equal(stats.keyed + stats.keyless + stats.retired, ALL_CHANNELS.length)
   assert.ok(stats.withLiveCatalog >= 10, '有实时 /models 的渠道太少（静态表会长期当权威）')
   assert.ok(stats.unknownLanes >= 1, '至少要有渠道带未确证标记（诚实标注应存在）')
+  assert.equal(stats.unverifiedBaseURL, 0, '有渠道的 baseURL 未确证 —— 那是唯一会让用户以为插件坏了的字段')
 })
 
 check('没有把 /models 实测 404 的渠道标成有实时目录', () => {

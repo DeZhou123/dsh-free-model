@@ -79,7 +79,7 @@ async function errorFrom(status, body, { headers = {}, lane = LANE, timeoutMs } 
 await checkAsync('401 → 凭据问题（不是限流、不是额度）', async () => {
   const { error, adapter } = await errorFrom(401, { error: { message: 'Invalid API key', type: 'invalid_request_error' } })
   assert.equal(error.code, 'INVALID_CREDENTIAL')
-  assert.equal(error.failure.status, 401)
+  assert.equal(failureOf(error).status, 401)
   assert.equal(adapter.lastFailure().kind, FAILURE_KINDS.CREDENTIAL)
   assert.equal(adapter.lastFailure().retryable, false)
   assert.match(adapter.lastFailure().advice, /key/)
@@ -104,14 +104,14 @@ await checkAsync('402 + Retry-After（Pollinations 的按 IP 限速）→ 判限
   assert.equal(error.code, 'RATE_LIMIT')
   assert.equal(adapter.lastFailure().kind, FAILURE_KINDS.RATE_LIMIT)
   assert.equal(adapter.lastFailure().retryable, true)
-  assert.equal(error.failure.providerRetryAfterMs, 30_000)
+  assert.equal(failureOf(error).providerRetryAfterMs, 30_000)
 })
 
 await checkAsync('429 + Retry-After: 30 → 限流，带 providerRetryAfterMs', async () => {
   const { error, adapter } = await errorFrom(429, { error: { message: 'Rate limit exceeded' } }, { headers: { 'retry-after': '30' } })
   assert.equal(error.code, 'RATE_LIMIT')
-  assert.equal(error.failure.status, 429)
-  assert.equal(error.failure.providerRetryAfterMs, 30_000)
+  assert.equal(failureOf(error).status, 429)
+  assert.equal(failureOf(error).providerRetryAfterMs, 30_000)
   assert.equal(adapter.lastFailure().retryable, true)
   assert.match(adapter.lastFailure().advice, /30 秒/)
 })
@@ -126,7 +126,7 @@ await checkAsync('429 但正文说额度 → 仍判额度（重试永不恢复�
 await checkAsync('429 无 Retry-After → 限流且不编造等待时间', async () => {
   const { error, adapter } = await errorFrom(429, { error: { message: 'too many requests' } })
   assert.equal(error.code, 'RATE_LIMIT')
-  assert.equal(error.failure.providerRetryAfterMs, undefined)
+  assert.equal(failureOf(error).providerRetryAfterMs, undefined)
   assert.equal(adapter.lastFailure().retryAfterMs, undefined)
 })
 
@@ -202,20 +202,24 @@ await checkAsync('网络不可达（fetch failed）→ connection/TRANSPORT，�
 
 await checkAsync('外层取消 → ABORTED（不是"上游失败"）', async () => {
   const controller = new AbortController()
-  controller.abort()
   const adapter = createKeyedAdapter({
     lane: LANE,
     apiKey: 'sk-test',
     timeoutMs: 5000,
-    fetchImpl: async (url, init) => {
-      if (init.signal?.aborted === true) throw Object.assign(new Error('aborted'), { name: 'AbortError' })
-      return statusFetch(200, {})()
-    },
+    // 上游挂在半路：只对 signal 做出反应。外层取消 → 我们的 controller 也 abort →
+    // 这里 reject，分类必须是 ABORTED 而不是"上游报了错"。
+    fetchImpl: (url, init) => new Promise((_, reject) => {
+      init.signal?.addEventListener('abort', () => {
+        reject(Object.assign(new Error('aborted by caller'), { name: 'AbortError' }))
+      }, { once: true })
+    }),
   })
-  let caught
-  try {
+  const pending = (async () => {
     for await (const _piece of adapter.stream({ model: 'recursive/flint-v1.0:free', messages: [{ role: 'user', content: 'x' }], signal: controller.signal })) { /* 空 */ }
-  } catch (error) { caught = error }
+  })()
+  setTimeout(() => controller.abort(), 20)
+  let caught
+  try { await pending } catch (error) { caught = error }
   assert.equal(adapter.lastFailure().kind, FAILURE_KINDS.ABORTED)
   assert.equal(caught?.code, 'ABORTED', 'code=' + caught?.code)
 })

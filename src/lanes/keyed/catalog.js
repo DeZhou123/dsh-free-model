@@ -588,10 +588,28 @@ export function staticModels(lane) {
   return Array.isArray(lane?.models) ? lane.models : []
 }
 
-/** 该渠道是否必须先替换 baseURL 占位符才能用。 */
+/**
+ * 该渠道是否必须先替换 baseURL 占位符才能用。
+ *
+ * ⚠️ **同时认百分号编码形态**（`{ACCOUNT_ID}` 与 `%7BACCOUNT_ID%7D`）：
+ * 上游的渠道目录校验会用 `new URL()` 规范化 URL，而 WHATWG URL 的路径编码集
+ * **包含 `{` `}`** —— 也就是 `https://…/accounts/{ACCOUNT_ID}/ai/v1` 过一遍
+ * 就变成 `…/%7BACCOUNT_ID%7D/…`。只认花括号的话，这条车道会被判成"就绪"，
+ * 然后去打一个必然 404 的地址，用户看到的是"插件坏了"。
+ *
+ * @param {object} lane
+ * @returns {string[]} 待替换的占位符名（统一成 `{NAME}` 形态，已去重）
+ */
 export function lanePlaceholders(lane) {
+  const raw = typeof lane?.baseURL === 'string' ? lane.baseURL : ''
+  const found = []
+  // ① 花括号形态
+  for (const match of raw.match(/\{[A-Z0-9_]+\}/g) ?? []) found.push(match)
+  // ② 百分号编码形态（%7B = {、%7D = }，大小写都可能）
+  for (const match of raw.match(/%7B[A-Za-z0-9_]+%7D/g) ?? []) {
+    found.push('{' + match.slice(3, -3).toUpperCase() + '}')
+  }
   const declared = Array.isArray(lane?.placeholders) ? lane.placeholders.filter((p) => typeof p === 'string') : []
-  const found = typeof lane?.baseURL === 'string' ? (lane.baseURL.match(/\{[A-Z0-9_]+\}/g) ?? []) : []
   return [...new Set([...declared, ...found])]
 }
 
@@ -615,6 +633,11 @@ export function catalogStats() {
     globally: count(ALL_CHANNELS.filter((lane) => lane.region === 'global')),
     unknownLanes: count(ALL_CHANNELS.filter((lane) => lane.unknown === true)),
     unknownModels,
+    // 这两个才是**真正该盯**的数字：`unknownLanes` 那 20 来条几乎全是「模型 id 是快照」，
+    // 而 baseURL 一旦错，用户会以为插件坏了。所以单独把 baseURL 的未确证数拎出来 ——
+    // 本轮应为 0（每条都有 evidence，见文件头的探测表）。
+    unverifiedBaseURL: count(ALL_CHANNELS.filter((lane) => lane.unknownFields?.includes('baseURL'))),
+    unverifiedModels: unknownModels,
     // 有 /models 端点的渠道占比 —— 它决定「静态表会不会被实时结果覆盖」。
     withLiveCatalog: count(ALL_CHANNELS.filter((lane) => lane.supportsModelList !== false && lane.retired !== true)),
   }

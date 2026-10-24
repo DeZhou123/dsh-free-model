@@ -213,6 +213,68 @@ window.__ModuleLoader__.load({
       noteLabel: '说明',
       localWhy: '这条车道单独一页：它的失败点与账号车道完全不同（二进制在不在、端口被占、serve 版本太旧），排错时不该和「账号要不要重新登录」混在一起看。',
       renewalNote: '续期只换令牌，不动账号索引；凭据写入仍然是宿主那一份。',
+
+      // ── 三页签 / 顶部状态条 / 自带 key / 本地与网关（2026-10-25 夜间新增）──────
+      //
+      // ⚠️ `navLocal` / `localTitle` / `localIntro` / `renewAll` 早先**只有引用没有词条**，
+      // 缺失时页面会直接把 key 名当正文显示（`navLocal` 就是这么露出来的）。
+      // 这里补齐 —— 缺词条不是「显示英文」，是「显示变量名」。
+      navLocal: '本地与网关',
+      navKeyed: '自带 key',
+      localTitle: '本地与网关',
+      localIntro: '跑在本机的免费入口：OpenCode 免费层，加上别处注册进来的本地网关。这一页只回答「进程在不在、能不能用」，不涉及登录，也不涉及积分。',
+      renewAll: '全部续期',
+      stateReady: '就绪',
+      stateNeeds: '需动作',
+      stateDown: '不可用',
+      stateUnknown: '未知',
+      capVision: '能看图',
+      capUnknown: '未知能力',
+
+      // 顶部常驻状态条（渠道目录 / 插件版本）
+      catTitle: '渠道目录',
+      catCheck: '检查目录',
+      catChecking: '检查中…',
+      catVersion: 'v{version}',
+      catCounts: '远程 {remote} 条 · 本地 {local} 条 · 自带 key {keyed} 条',
+      catReason: '为什么没拿到：',
+      catLocalFile: '本地覆盖文件',
+      catUnwired: '渠道目录层未接线',
+      updTitle: '插件',
+      updCheck: '检查更新',
+      updChecking: '检查中…',
+      updNew: '有新版本 {latest}',
+      updCurrent: '当前 v{current}',
+      updFresh: '已是最新（v{current}）',
+      updReason: '版本检查没成功：',
+      updInstall: '升级（复制命令自己执行，本页不代跑）',
+      updRepo: '仓库',
+      updChangelog: '更新日志',
+      fetchedAt: '拉取于',
+      reasonLabel: '原因',
+
+      // 第三页：自带 key
+      keyedTitle: '自带 key 的免费渠道',
+      keyedIntro: '注册即送额度、或有免费层的 OpenAI 兼容端点。有 key 就能用；没 key 时这一页只回答「去哪拿 key」，不放点了必然失败的按钮。',
+      keyedEmpty: '暂无自带 key 渠道（渠道目录里可以随时加）',
+      keyedEmptyHint: '渠道目录是三层叠加的：随包 / 远程 / 本地覆盖文件。点上面的「检查目录」拉一次远程目录，或往本地覆盖文件里加一条。',
+      keyedEnv: '凭据名',
+      keyedGetKey: '去拿 key',
+      keyedDocs: '文档',
+      keyedFree: '免费额度',
+      keyedUnknown: '未确证',
+      keyedUnknownHint: '这条记录有字段没有实证（多半是免费额度的具体数值）；运行时以实时模型目录为准。',
+      keyedNoTest: '这一页不提供「测试连通性」：没有 key 的车道点下去必然失败，只给「去哪拿 key」。',
+      keyedModels: '{count} 个模型',
+
+      // 第二页：本地与网关
+      serviceProbe: '重新探测',
+      serviceProbing: '探测中…',
+      serviceWiredOff: '渠道注册表未接线：只显示 OpenCode 这一条内置车道。',
+      serviceWhyGateway: '不在本页启动：由其它插件注册的网关（如 dsh-llm-pi-ai），路由不归本插件，这里只观测它的状态。',
+      serviceWhyOther: '不在本页启动：这条车道没有可执行的启动方式，只能看状态。',
+      serviceModels: '{count} 个模型',
+      serviceEmpty: '没有服务型渠道。',
     }
     const en = {
       nav: 'Free models',
@@ -349,6 +411,61 @@ window.__ModuleLoader__.load({
       noteLabel: 'Note',
       localWhy: 'This lane has its own page because its failure modes are completely different (missing binary, port taken, old serve build) — debugging it should not be mixed up with “does an account need to sign in again”.',
       renewalNote: 'Renewal only swaps tokens; the account index and the credential store stay the same.',
+
+      // ── Three tabs / status bar / keyed / local+gateway (2026-10-25) ──────────
+      navLocal: 'Local & gateways',
+      navKeyed: 'Own keys',
+      localTitle: 'Local & gateways',
+      localIntro: 'Free entry points running on this machine: the OpenCode free tier plus any local gateway registered elsewhere. This page answers only “is the process up and usable” — no sign-in, no credits.',
+      renewAll: 'Renew all',
+      stateReady: 'Ready',
+      stateNeeds: 'Needs action',
+      stateDown: 'Down',
+      stateUnknown: 'Unknown',
+      capVision: 'Vision',
+      capUnknown: 'Unknown capability',
+
+      catTitle: 'Channel catalog',
+      catCheck: 'Check catalog',
+      catChecking: 'Checking…',
+      catVersion: 'v{version}',
+      catCounts: 'remote {remote} · local {local} · own-key {keyed}',
+      catReason: 'Why it failed: ',
+      catLocalFile: 'Local override file',
+      catUnwired: 'Catalog layer not wired',
+      updTitle: 'Plugin',
+      updCheck: 'Check update',
+      updChecking: 'Checking…',
+      updNew: 'New version {latest}',
+      updCurrent: 'current v{current}',
+      updFresh: 'Up to date (v{current})',
+      updReason: 'Update check failed: ',
+      updInstall: 'Upgrade (copy the command and run it yourself; this page never runs it)',
+      updRepo: 'Repository',
+      updChangelog: 'Changelog',
+      fetchedAt: 'fetched',
+      reasonLabel: 'Reason',
+
+      keyedTitle: 'Free channels that use your own key',
+      keyedIntro: 'OpenAI-compatible endpoints with signup credits or a free tier. With a key they work; without one this page only answers “where do I get the key” — no buttons that are guaranteed to fail.',
+      keyedEmpty: 'No own-key channels yet (the channel catalog can add them any time)',
+      keyedEmptyHint: 'The catalog stacks three layers: shipped / remote / local override file. Press “Check catalog” above to pull the remote layer, or add a record to the local file.',
+      keyedEnv: 'Credential name',
+      keyedGetKey: 'Get a key',
+      keyedDocs: 'Docs',
+      keyedFree: 'Free tier',
+      keyedUnknown: 'unconfirmed',
+      keyedUnknownHint: 'Some fields of this record have no evidence (usually the exact free-tier numbers); the live model catalog wins at runtime.',
+      keyedNoTest: 'This page offers no “test connectivity”: a lane without a key would always fail, so it only points at “where to get the key”.',
+      keyedModels: '{count} models',
+
+      serviceProbe: 'Probe again',
+      serviceProbing: 'Probing…',
+      serviceWiredOff: 'Channel registry not wired: only the built-in OpenCode lane is shown.',
+      serviceWhyGateway: 'Not startable here: the gateway is registered by another plugin (e.g. dsh-llm-pi-ai), its routes are not ours — this page only observes it.',
+      serviceWhyOther: 'Not startable here: this lane exposes no start action, it can only be observed.',
+      serviceModels: '{count} models',
+      serviceEmpty: 'No service channels.',
     }
 
     async function call(path, body) {
@@ -913,15 +1030,452 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 用户/远程可控字符串的安全正文。
+     *
+     * ## 为什么还需要它（React 不是已经转义了吗）
+     *
+     * React 把文本子节点当**文本**渲染，天然转义 `<`/`&` —— 所以这里**不做**
+     * HTML 实体转义（那会让人看到字面的 `&amp;`）。真正需要挡的是另外三件事：
+     *
+     * 1. **控制字符与双向覆盖符**（`\u202e` 等）：渠道目录来自公网，一个 RLO 字符
+     *    能把整行文案反过来显示，用户读到的就不是真实内容；
+     * 2. **超长正文**：远程目录单字段上限各不相同，渲染层必须自己截断，否则一张卡能撑满整页；
+     * 3. **非字符串**（远程写了数字/对象）：直接 `String()` 会得到 `[object Object]`，
+     *    归空比显示垃圾好。
+     *
+     * @param {unknown} value
+     * @param {number} [max] 最大字符数
+     * @returns {string} 可以直接放进 element child 的字符串
+     */
+    function safeText(value, max = 200) {
+      if (typeof value !== 'string') return ''
+      // eslint-disable-next-line no-control-regex
+      const cleaned = value.replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+      return cleaned.length > max ? cleaned.slice(0, max) + '…' : cleaned
+    }
+
+    /**
+     * 只放行 http(s) 的链接；其它（`javascript:` / `data:` / 相对路径）返回 undefined。
+     *
+     * ⚠️ 这是**唯一**真正的注入面：React 会转义文本，但 `<a href>` 不做协议白名单。
+     * 渠道目录里的 `signupURL` / `docsURL` / `repoUrl` 全来自公网 JSON，
+     * 一条 `javascript:...` 就是一次点击即执行。不合法就**不渲染链接**，只留纯文本。
+     *
+     * @param {unknown} value
+     * @returns {string|undefined}
+     */
+    function safeHref(value) {
+      if (typeof value !== 'string') return undefined
+      const trimmed = value.trim()
+      if (trimmed === '' || trimmed.length > 500) return undefined
+      return /^https?:\/\//i.test(trimmed) ? trimmed : undefined
+    }
+
+    /** 时间戳的可读写法；0/非法值一律给「—」（不显示 1970 年）。 */
+    function formatStamp(ms) {
+      if (typeof ms !== 'number' || ms <= 0) return '—'
+      try {
+        return new Date(ms).toLocaleString()
+      } catch {
+        return '—'
+      }
+    }
+
+    /**
+     * 四态 → 药丸色调。
+     *
+     * ⚠️ 四态**必须分得开**：`unavailable` 与 `needs-action` 的处置完全相反
+     * （一个「你做什么都没用」，一个「你去做一件事就好」），染色相同会让人乱试。
+     * `unknown` 刻意用中性色（没有状态点）—— 它是「本插件判断不了」，不是错误。
+     */
+    function stateTone(state) {
+      if (state === 'ready') return 'ok'
+      if (state === 'needs-action') return 'warn'
+      if (state === 'unavailable') return 'err'
+      return undefined
+    }
+
+    /** 四态 → 文案 key。 */
+    function stateLabel(state) {
+      if (state === 'ready') return 'stateReady'
+      if (state === 'needs-action') return 'stateNeeds'
+      if (state === 'unavailable') return 'stateDown'
+      return 'stateUnknown'
+    }
+
+    /** 状态药丸（四态）：`data-state` 让离线测试能逐态断言。 */
+    function StatePill(props) {
+      const { state, t } = props
+      return h('span', {
+        className: 'ow-pill strong ow-state',
+        'data-state': String(state ?? 'unknown'),
+      }, h('span', { className: `ow-dot ${stateTone(state) ?? 'unknown'}` }), t(stateLabel(state)))
+    }
+
+    /**
+     * 顶部常驻状态条：**渠道目录** + **插件版本**。
+     *
+     * ## 为什么常驻在壳上，而不是放在某一页里
+     *
+     * 「目录是不是最新的」「有没有新版本」是**全局**事实，与当前停在哪一页无关。
+     * 放在页内会让用户在另一页看不到它，而这恰恰是他最想确认的两件事。
+     *
+     * ## 失败一定要说「为什么」
+     *
+     * 本机 `github.com:443` 直连不通（见 `src/lanes/remote.js` 的说明），所以
+     * 「检查目录」在这台机器上**默认就会失败**。只显示「失败」等于什么也没说 ——
+     * 必须把后端给的 `reason` 原文摆出来，用户才知道是代理没开、还是目录格式不对。
+     */
+    function StatusBar(props) {
+      const t = props.t ?? ((key) => key)
+      const [version, setVersion] = useState(props.version ?? '')
+      // ⚠️ `props.catalog` / `props.update` 是**可注入的首屏值**（默认 undefined =
+      // 自己去拉）。两个用途：① 离线渲染测试要断言「失败原因原文」这条分支，
+      // 而它只有拿到后端返回才出现；② 以后若外壳先批量取好数据再下发给它，
+      // 不必改这里的取数逻辑。
+      const [catalog, setCatalog] = useState(props.catalog)
+      const [update, setUpdate] = useState(props.update)
+      const [busy, setBusy] = useState('')
+
+      // 首屏只读缓存（不强制刷新）：打开设置页就打两次网络是不可接受的。
+      useEffect(() => {
+        if (props.version !== undefined && props.catalog !== undefined && props.update !== undefined) return
+        void call('/summary')
+          .then((payload) => setVersion(typeof payload?.version === 'string' ? payload.version : ''))
+          .catch(() => {})
+        void call('/catalog')
+          .then((payload) => setCatalog(payload))
+          .catch((error) => setCatalog({ wired: false, reason: error.message }))
+        void call('/update')
+          .then((payload) => setUpdate(payload))
+          .catch((error) => setUpdate({ ok: false, from: 'none', reason: error.message, updateAvailable: false }))
+      }, [props.version, props.catalog, props.update])
+
+      const checkCatalog = useCallback(async () => {
+        setBusy('catalog')
+        try {
+          // 返回值比 /catalog 多一个 `ok`，其余字段同形 —— 直接替换，不合并，
+          // 否则上一轮的 ok:false 会黏在下一轮的「成功」上。
+          setCatalog(await call('/catalog/refresh', {}))
+        } catch (error) {
+          setCatalog({ wired: false, reason: error.message })
+        } finally {
+          setBusy('')
+        }
+      }, [])
+
+      const checkUpdate = useCallback(async () => {
+        setBusy('update')
+        try {
+          setUpdate(await call('/update/refresh', {}))
+        } catch (error) {
+          setUpdate({ ok: false, from: 'none', reason: error.message, updateAvailable: false })
+        } finally {
+          setBusy('')
+        }
+      }, [])
+
+      const counts = catalog?.counts ?? {}
+      const catalogWired = catalog !== undefined && catalog.wired !== false
+      const sha = typeof catalog?.sha256 === 'string' && catalog.sha256 !== '' ? catalog.sha256 : null
+      const from = typeof catalog?.from === 'string' ? catalog.from : null
+      const catalogFailed = catalog !== undefined && catalog.ok === false
+
+      const latest = typeof update?.latest === 'string' && update.latest !== '' ? update.latest : null
+      const updateFailed = update !== undefined && update.ok === false
+      const installSpec = safeText(update?.install?.githubSpec, 200)
+
+      return h('div', { className: 'ow-statusbar' }, [
+        // ── 左：渠道目录 ──
+        h('div', { key: 'cat', className: 'ow-statusrow' }, [
+          h('span', { key: 'l', className: 'ow-statuslabel' }, t('catTitle')),
+          catalog === undefined
+            ? h('span', { key: 'wait', className: 'ow-dim' }, t('busy'))
+            : catalogWired
+              ? h('span', { key: 'v', className: 'ow-statusmeta' }, [
+                  sha !== null ? h('code', { key: 'sha', className: 'ow-mono' }, sha) : null,
+                  from !== null ? h('span', { key: 'from', className: 'ow-dim' }, from) : null,
+                  h('span', { key: 'at', className: 'ow-dim' },
+                    t('fetchedAt') + ' ' + formatStamp(catalog.fetchedAt)),
+                  typeof counts.remote === 'number'
+                    ? h('span', { key: 'cnt', className: 'ow-dim' },
+                        t('catCounts')
+                          .replace('{remote}', String(counts.remote ?? 0))
+                          .replace('{local}', String(counts.local ?? 0))
+                          .replace('{keyed}', String(counts.keyed ?? 0)))
+                    : null,
+                ])
+              : h('span', { key: 'off', className: 'ow-dim' }, safeText(catalog.reason, 240) || t('catUnwired')),
+          h(Button, { key: 'b', disabled: busy !== '', onClick: () => void checkCatalog() },
+            busy === 'catalog' ? t('catChecking') : t('catCheck')),
+        ]),
+        // 目录失败/降级：**原文**摆出来（本机访问 GitHub 常失败，这是预期）。
+        catalogFailed || (catalog !== undefined && catalogWired && typeof catalog.reason === 'string' && catalog.reason !== '')
+          ? h('p', { key: 'cr', className: 'ow-statuserr', role: 'status' },
+              t('catReason') + safeText(catalog.reason, 300))
+          : null,
+        catalogWired && typeof catalog?.localFile === 'string' && catalog.localFile !== ''
+          ? h('p', { key: 'lf', className: 'ow-dim ow-statusfoot' },
+              t('catLocalFile') + '：' + h('code', { className: 'ow-mono' }, safeText(catalog.localFile, 200)))
+          : null,
+
+        // ── 右：插件版本 + 更新 ──
+        h('div', { key: 'upd', className: 'ow-statusrow' }, [
+          h('span', { key: 'l', className: 'ow-statuslabel' }, t('updTitle')),
+          h('span', { key: 'v', className: 'ow-mono' }, 'v' + (version === '' ? '?' : version)),
+          update === undefined
+            ? h('span', { key: 'wait', className: 'ow-dim' }, t('busy'))
+            : update.updateAvailable === true && latest !== null
+              ? h(Pill, { key: 'new', tone: 'warn', strong: true }, t('updNew').replace('{latest}', latest))
+              : updateFailed
+                ? h('span', { key: 'fail', className: 'ow-dim' }, t('updReason') + safeText(update.reason, 240))
+                : h('span', { key: 'ok', className: 'ow-dim' },
+                    t('updFresh').replace('{current}', safeText(update.current ?? version, 32))),
+          h(Button, { key: 'b', disabled: busy !== '', onClick: () => void checkUpdate() },
+            busy === 'update' ? t('updChecking') : t('updCheck')),
+        ]),
+        // 有新版本：给仓库链接 + **可复制的安装命令**。本页绝不代跑升级命令 ——
+        // 升级会替换正在运行的插件代码，那是用户自己的决定。
+        update?.updateAvailable === true
+          ? h('div', { key: 'newline', className: 'ow-statusrow ow-statusnew' }, [
+              h('span', { key: 't', className: 'ow-dim' },
+                t('updCurrent').replace('{current}', safeText(update.current, 32))),
+              safeHref(update.repoUrl) !== undefined
+                ? h('a', { key: 'repo', className: 'ow-link', href: safeHref(update.repoUrl), target: '_blank', rel: 'noreferrer noopener' },
+                    t('updRepo'))
+                : null,
+              safeHref(update.changelogUrl) !== undefined
+                ? h('a', { key: 'cl', className: 'ow-link', href: safeHref(update.changelogUrl), target: '_blank', rel: 'noreferrer noopener' },
+                    t('updChangelog'))
+                : null,
+              installSpec !== ''
+                ? h('span', { key: 'ins', className: 'ow-install' }, [
+                    h('span', { key: 'l', className: 'ow-dim' }, t('updInstall') + '：'),
+                    h('code', { key: 'c', className: 'ow-mono' }, installSpec),
+                  ])
+                : null,
+            ])
+          : null,
+      ])
+    }
+
+    /**
+     * 一张「自带 key」渠道卡。
+     *
+     * ## 为什么这里**没有**「测试连通性」
+     *
+     * 没有 key 的车道点测试必然失败，而失败信息会被读成「这条渠道不可用」——
+     * 结论完全错了（它只是还没配 key）。所以这一页只回答两件事：
+     * **它要什么**（凭据名）与**去哪拿**（signupURL）。真正能测的时候（凭据就绪）
+     * 用户已经在会话里选到它的模型了，那里才是验证的地方。
+     */
+    function KeyedCard(props) {
+      const { channel, t } = props
+      const capability = channel?.capability ?? { tools: null, vision: null }
+      const tools = capability.tools ?? null
+      const vision = capability.vision ?? null
+      const capText = tools === true ? t('capFull') : tools === false ? t('capText') : t('capUnknown')
+      const capTone = tools === true ? 'ok' : tools === false ? 'warn' : undefined
+      const signup = safeHref(channel?.signupURL)
+      const docs = safeHref(channel?.docsURL)
+      const env = safeText(channel?.apiKeyEnv, 64)
+      const freeTier = safeText(channel?.freeTier, 300)
+
+      return h('div', { className: 'ow-card ow-keyed', 'data-kind': 'keyed' }, [
+        h('div', { key: 'head', className: 'ow-cardhead' }, [
+          h('strong', { key: 'n' }, safeText(channel?.displayName, 80)),
+          h(Pill, { key: 'cap', tone: capTone }, capText),
+          vision === true ? h(Pill, { key: 'vi', tone: 'ok' }, t('capVision')) : null,
+          // 记录自己声明「有字段没实证」时标出来，而不是让用户以为这是确证数据。
+          channel?.unknown === true ? h(Pill, { key: 'un', tone: 'warn', strong: true }, t('keyedUnknown')) : null,
+          h(StatePill, { key: 'st', state: channel?.state, t }),
+          typeof channel?.modelCount === 'number'
+            ? h('span', { key: 'c', className: 'ow-count' }, t('keyedModels').replace('{count}', String(channel.modelCount)))
+            : null,
+        ]),
+        channel?.endpoint !== undefined
+          ? h('code', { key: 'ep', className: 'ow-ep' }, safeText(channel.endpoint, 200))
+          : null,
+        freeTier !== ''
+          ? h('p', { key: 'ft', className: 'ow-hint' }, t('keyedFree') + '：' + freeTier)
+          : null,
+        // 就绪/未就绪的**原文原因**（后端算的，页面不重算）。
+        typeof channel?.reason === 'string' && channel.reason !== ''
+          ? h('p', { key: 'why', className: 'ow-statuserr', role: 'status' }, t('reasonLabel') + '：' + safeText(channel.reason, 300))
+          : null,
+        env !== ''
+          ? h('p', { key: 'env', className: 'ow-keyenv' }, [
+              h('span', { key: 'l', className: 'ow-dim' }, t('keyedEnv') + '：'),
+              h('code', { key: 'c', className: 'ow-mono' }, env),
+            ])
+          : null,
+        channel?.unknown === true
+          ? h('p', { key: 'uh', className: 'ow-hint' }, t('keyedUnknownHint'))
+          : null,
+        h('div', { key: 'links', className: 'ow-actions' }, [
+          signup !== undefined
+            ? h('a', {
+                key: 's', className: 'ow-btn', href: signup,
+                target: '_blank', rel: 'noreferrer noopener',
+              }, t('keyedGetKey'))
+            : null,
+          docs !== undefined
+            ? h('a', {
+                key: 'd', className: 'ow-btn', href: docs,
+                target: '_blank', rel: 'noreferrer noopener',
+              }, t('keyedDocs'))
+            : null,
+        ]),
+      ])
+    }
+
+    /**
+     * 第三页：自带 key 的免费渠道。
+     *
+     * 数据只来自 `/channels` 里 `kind === 'keyed'` 的行 —— 与账号页、服务页**同一次**
+     * 全景观测，不另开一套接口（否则「渠道总数」会出现两个口径）。
+     */
+    function KeyedPage(props) {
+      const t = props.t ?? ((key) => key)
+      // `props.channels` / `props.wired` / `props.reason` 同样是**可注入的首屏值**
+      // （见 StatusBar 的说明）：生产路径不传，测试用它断言空状态与非空两种渲染。
+      const [channels, setChannels] = useState(props.channels)
+      const [wired, setWired] = useState(props.wired === undefined ? true : props.wired)
+      const [reason, setReason] = useState(props.reason ?? '')
+
+      const reload = useCallback(async () => {
+        try {
+          const payload = await call('/channels')
+          setChannels(Array.isArray(payload.channels) ? payload.channels : [])
+          setWired(payload.wired !== false)
+          setReason(typeof payload.reason === 'string' ? payload.reason : '')
+        } catch (error) {
+          setChannels([])
+          setWired(false)
+          setReason(error.message)
+        }
+      }, [])
+
+      // 注入模式下不自己打网络：测试不该有 fetch。
+      const injected = props.channels !== undefined
+      useEffect(() => {
+        if (injected) return
+        void reload()
+      }, [injected, reload])
+
+      const reportMeta = props.onMeta
+      useEffect(() => {
+        if (channels === undefined || reportMeta === undefined) return
+        reportMeta({ text: String(channels.filter((row) => row.kind === 'keyed').length) })
+      }, [channels, reportMeta])
+
+      const keyed = (channels ?? []).filter((row) => row.kind === 'keyed')
+
+      return h('div', { className: 'ow-root' }, [
+        h('header', { key: 'hero', className: 'ow-hero' }, [
+          h('div', { key: 'head', className: 'ow-pagehead' }, [
+            h('div', { key: 't', className: 'ow-pagetitle' }, [
+              h('h2', { key: 'h' }, t('keyedTitle')),
+              h('p', { key: 's', className: 'ow-pagesub' }, t('keyedIntro')),
+            ]),
+            h('div', { key: 'pills', className: 'ow-pills' }, [
+              h(Pill, { key: 'c', strong: true }, String(keyed.length)),
+              h(Pill, { key: 'n', tone: 'warn' }, t('keyedNoTest')),
+            ]),
+          ]),
+        ]),
+
+        channels === undefined
+          ? h('p', { key: 'wait', className: 'ow-dim' }, t('busy'))
+          : !wired
+            ? h('p', { key: 'off', className: 'ow-statuserr', role: 'status' },
+                safeText(reason, 240) || t('catUnwired'))
+            : keyed.length === 0
+              ? h('div', { key: 'empty', className: 'ow-empty' }, [
+                  h('p', { key: 'e' }, t('keyedEmpty')),
+                  h('p', { key: 'h', className: 'ow-hint' }, t('keyedEmptyHint')),
+                ])
+              : h('div', { key: 'cards', className: 'ow-cards' },
+                  keyed.map((channel) => h(KeyedCard, { key: channel.id, channel, t }))),
+
+        h('div', { key: 'foot', className: 'ow-foot' }, [
+          h(Button, { key: 'r', onClick: () => void reload() }, t('refresh')),
+        ]),
+      ])
+    }
+
+    /**
+     * 一条**服务型**车道的卡（第二页的通用形态）。
+     *
+     * 与 OpenCode 的 `ServiceCard` 分工：那张卡是 OpenCode 专用（有版本、端口、SSE、
+     * 失败分类），这张是「注册表里任意一条 service」的通用形态 —— 只有
+     * 状态 / 原因 / 模型数 / 能不能在本页启动。
+     *
+     * ## 为什么「不能启动」要写明白
+     *
+     * 不写的话，用户看到别的卡有「启动服务」而这张没有，第一反应是「页面坏了」。
+     * 实际原因是 `backend !== 'native'`：那条网关的路由由**别的插件**注册，
+     * 本插件只观测。把这句话印在卡上，比给一个点了会 404 的按钮好。
+     */
+    function ServiceLaneCard(props) {
+      const { channel, probe, busy, onStart, t } = props
+      const state = probe?.state ?? channel?.state
+      const reason = typeof probe?.reason === 'string' && probe.reason !== ''
+        ? probe.reason
+        : (typeof channel?.reason === 'string' ? channel.reason : '')
+      const models = Array.isArray(probe?.models) ? probe.models : []
+      const modelCount = models.length > 0 ? models.length
+        : (typeof channel?.modelCount === 'number' ? channel.modelCount : 0)
+      const startable = channel?.startable === true && channel?.backend === 'native'
+      const isGateway = channel?.backend === 'gateway'
+
+      return h('div', { className: 'ow-card', 'data-kind': 'service' }, [
+        h('div', { key: 'head', className: 'ow-cardhead' }, [
+          h('strong', { key: 'n' }, safeText(channel?.displayName, 80)),
+          h(StatePill, { key: 'st', state, t }),
+          typeof channel?.category === 'string' && channel.category !== ''
+            ? h(Pill, { key: 'cat' }, safeText(channel.category, 24))
+            : null,
+          h('span', { key: 'c', className: 'ow-count' },
+            t('serviceModels').replace('{count}', String(modelCount))),
+        ]),
+        typeof channel?.endpoint === 'string' && channel.endpoint !== ''
+          ? h('code', { key: 'ep', className: 'ow-ep' }, safeText(channel.endpoint, 200))
+          : null,
+        reason !== ''
+          ? h('p', { key: 'why', className: 'ow-statuserr', role: 'status' }, t('reasonLabel') + '：' + safeText(reason, 300))
+          : null,
+        typeof channel?.note === 'string' && channel.note !== ''
+          ? h('p', { key: 'note', className: 'ow-hint' }, t('noteLabel') + '：' + safeText(channel.note, 400))
+          : null,
+        models.length > 0
+          ? h('p', { key: 'mlist', className: 'ow-dim ow-servicemodels' },
+              models.slice(0, 12).map((id) => safeText(id, 80)).join(' · ')
+              + (models.length > 12 ? ' …' : ''))
+          : null,
+        h('div', { key: 'acts', className: 'ow-actions' }, startable
+          ? h(Button, { key: 's', kind: 'primary', disabled: busy, onClick: onStart }, t('opencodeStart'))
+          // 不能启动时**不说空话**：把为什么写出来。
+          : h('span', { key: 'no', className: 'ow-dim' },
+              isGateway ? t('serviceWhyGateway') : t('serviceWhyOther'))),
+      ])
+    }
+
+    /**
      * 页内分页外壳（与 OFM 的页内 `ofm_tabs` 同一套做法）。
      *
-     * 设置侧边栏里**只有一项**「免费模型」；账号车道与「不需要登录的本地车道」
+     * 设置侧边栏里**只有一项**「免费模型」；三类渠道（账号 / 本地与网关 / 自带 key）
      * 在这里用一排页签切换。理由：
      *
-     * - 侧边栏是「系统功能」的层级，免费模型是一个功能，不该占两行；
-     * - 两条车道的**切换是高频动作**（看一眼余额 → 顺手开本地服务），页内切换
-     *   比「退出设置页 → 找另一个导航项 → 再进来」少三次点击；
-     * - 页签上的数字（账号数 / 模型数）让用户在切换前就知道对面有没有东西。
+     * - 侧边栏是「系统功能」的层级，免费模型是一个功能，不该占三行；
+     * - 页面之间的**切换是高频动作**（看一眼余额 → 顺手开本地服务 → 去拿个 key），
+     *   页内切换比「退出设置页 → 找另一个导航项 → 再进来」少三次点击；
+     * - 页签上的数字（启用/账号数、条数）让用户在切换前就知道对面有没有东西。
+     *
+     * ## 顶部状态条在这里常驻
+     *
+     * 渠道目录与插件版本是**全局**事实，与当前停在哪一页无关，故挂在页签下方、
+     * 页面内容之上（`StatusBar`）。它自己拉 `/catalog` + `/update`，不进各页的 state。
      *
      * ⚠️ 选中项写进 localStorage，刷新后停在原页签；写失败（隐私模式）不影响功能。
      */
@@ -941,11 +1495,13 @@ window.__ModuleLoader__.load({
       // ⚠️ 每个页签的回调必须是**稳定引用**：子组件把它放进 useEffect 依赖里，
       // 每次渲染都新建一个箭头函数会让「上报 → 重渲染 → 再上报」转成死循环。
       const reportAccounts = useCallback((patch) => report('accounts', patch), [report])
-      const reportLocal = useCallback((patch) => report('opencode', patch), [report])
+      const reportLocal = useCallback((patch) => report('local', patch), [report])
+      const reportKeyed = useCallback((patch) => report('keyed', patch), [report])
 
       const tabs = [
         ['accounts', t('navAccounts'), meta.accounts?.text],
-        ['opencode', t('navLocal'), meta.opencode?.text],
+        ['local', t('navLocal'), meta.local?.text],
+        ['keyed', t('navKeyed'), meta.keyed?.text],
       ]
 
       return h('div', { className: 'ow-root' }, [
@@ -960,16 +1516,31 @@ window.__ModuleLoader__.load({
           }, label, num === undefined || num === null
             ? null
             : h('span', { key: 'n', className: 'ow-tabnum' }, String(num))))),
-        tab === 'opencode'
-          ? h(OpenCodePage, { key: 'opencode', t, ...props, onMeta: reportLocal })
-          : h(AccountsPage, { key: 'accounts', t, ...props, onMeta: reportAccounts }),
+        // 常驻状态条：跨页签的全局事实（目录指纹 / 更新）。放在这里意味着
+        // 切页签时它不会重挂载、也不会重复拉一次网络。
+        h(StatusBar, { key: 'status', t }),
+        tab === 'keyed'
+          ? h(KeyedPage, { key: 'keyed', t, ...props, onMeta: reportKeyed })
+          : tab === 'local'
+            ? h(LocalPage, { key: 'local', t, ...props, onMeta: reportLocal })
+            : h(AccountsPage, { key: 'accounts', t, ...props, onMeta: reportAccounts }),
       ])
     }
 
-    /** 读回上次选中的页签；任何异常都回落到账号页（有账号才是常见起点）。 */
+    /**
+     * 读回上次选中的页签。
+     *
+     * 白名单而不是「记住什么都行」：`localStorage` 里的旧值可能是上一版的
+     * `'opencode'`（第二页当时的 id），而那个字符串现在**不是**页签 id 了 ——
+     * 直接信任它会渲染出一个空壳。认不出的值一律回落到账号页（常见起点）。
+     */
     function readStoredTab() {
+      const KNOWN = ['accounts', 'local', 'keyed']
       try {
-        return window.localStorage?.getItem(TAB_KEY) === 'opencode' ? 'opencode' : 'accounts'
+        const stored = window.localStorage?.getItem(TAB_KEY)
+        // 向后兼容：老值 'opencode' 映射到新的 'local'（同一页，只是 id 改了）。
+        if (stored === 'opencode') return 'local'
+        return KNOWN.includes(stored) ? stored : 'accounts'
       } catch {
         return 'accounts'
       }
@@ -1643,8 +2214,10 @@ window.__ModuleLoader__.load({
      */
     function OpenCodePage(props) {
       const t = props.t ?? ((key) => key)
-      const [status, setStatus] = useState(undefined)
-      const [version, setVersion] = useState('')
+      // `props.status` / `props.version` 是**可注入的首屏值**（同 StatusBar 的说明）：
+      // 生产路径不传，离线渲染测试用它断言「运行中 / 已停止」两种卡。
+      const [status, setStatus] = useState(props.status)
+      const [version, setVersion] = useState(props.version ?? '')
       const [busy, setBusy] = useState(false)
       const [note, setNote] = useState(undefined)
 
@@ -1656,11 +2229,16 @@ window.__ModuleLoader__.load({
         }
       }, [t])
 
-      useEffect(() => { void reload() }, [reload])
+      const injected = props.status !== undefined
+      useEffect(() => {
+        if (injected) return
+        void reload()
+      }, [injected, reload])
       // 版本号只是一行脚注：单独拉、失败就算了，不能影响服务卡。
       useEffect(() => {
+        if (props.version !== undefined) return
         void call('/summary').then((payload) => setVersion(payload.version ?? '')).catch(() => {})
-      }, [])
+      }, [props.version])
 
       // 页签数字：服务在跑时显示模型数，没跑就不显示（显示 0 会被读成「没有模型」）。
       const reportMeta = props.onMeta
@@ -1738,6 +2316,144 @@ window.__ModuleLoader__.load({
           h(Button, { key: 'r', disabled: busy, onClick: () => void reload() }, t('refresh')),
           h('span', { key: 'v', className: 'ow-dim' }, 'v' + version),
         ]),
+      ])
+    }
+
+    /**
+     * 第二页：**本地与网关**。
+     *
+     * ## 为什么不是「把 OpenCode 那张卡换掉」
+     *
+     * OpenCode 那条车道比其它服务车道多很多事实（版本、端口、是插件起的还是你自己起的、
+     * 流式走 SSE 还是轮询、失败按 quota / identity / rateLimit 三类分）。把它压成
+     * 「通用服务卡」会把这些信息全丢掉 —— 而它们正是排错时要看的第一现场。
+     *
+     * 所以这一页是**叠一层**：`OpenCodePage` 原样照搬（一个字没改），
+     * 下面再挂注册表里其余的 `kind === 'service'` 车道（FreeLLMAPI 网关、Ollama…）。
+     *
+     * ## 探针的数据源
+     *
+     * 用 `/service`（`POST /service/probe` 强制重探），不用 `/channels`：
+     * 后者会顺带把 17 条渠道全算一遍，而这一页只需要服务车道那三条的探针结果。
+     * 页签数字仍然来自 `/channels` 的 counts（那是「一共几条服务车道」的唯一口径）。
+     */
+    function LocalPage(props) {
+      const t = props.t ?? ((key) => key)
+      // 同 KeyedPage：这三个 props 是**可注入的首屏值**，生产路径不传。
+      const [lanes, setLanes] = useState(props.lanes)
+      const [registry, setRegistry] = useState(props.channels)
+      const [wired, setWired] = useState(props.wired === undefined ? true : props.wired)
+      const [reason, setReason] = useState(props.reason ?? '')
+      const [busy, setBusy] = useState(false)
+      const [note, setNote] = useState(undefined)
+
+      const loadService = useCallback(async (force) => {
+        try {
+          const payload = force === true
+            ? await call('/service/probe', {})
+            : await call('/service')
+          setLanes(payload?.lanes ?? {})
+        } catch (error) {
+          // 探针未接线（503）时不是「三条都不可用」，而是「这一层没有」：
+          // 两者在页面上必须说清，否则用户会去起一个根本没接的服务。
+          setLanes({})
+          setReason(error.message)
+          setWired(false)
+        }
+      }, [])
+
+      const loadChannels = useCallback(async () => {
+        try {
+          const payload = await call('/channels')
+          setRegistry(Array.isArray(payload.channels) ? payload.channels : [])
+          if (payload.wired === false) {
+            setWired(false)
+            setReason(typeof payload.reason === 'string' ? payload.reason : '')
+          }
+        } catch (error) {
+          setRegistry([])
+          setWired(false)
+          setReason(error.message)
+        }
+      }, [])
+
+      useEffect(() => {
+        void loadService(false)
+        void loadChannels()
+      }, [loadService, loadChannels])
+
+      // 页签数字：服务车道**条数**（不是模型数 —— 这一页的粒度是「几条车道」）。
+      const reportMeta = props.onMeta
+      const serviceCount = (registry ?? []).filter((row) => row.kind === 'service').length
+      useEffect(() => {
+        if (registry === undefined || reportMeta === undefined) return
+        reportMeta(serviceCount > 0 ? { text: String(serviceCount) } : { text: null })
+      }, [registry, serviceCount, reportMeta])
+
+      const reprobe = useCallback(async () => {
+        setBusy(true)
+        setNote(undefined)
+        try {
+          await loadService(true)
+          await loadChannels()
+          setNote({ kind: 'ok', text: t('serviceProbe') })
+        } finally {
+          setBusy(false)
+        }
+      }, [loadChannels, loadService, t])
+
+      const startService = useCallback(async (id) => {
+        setBusy(true)
+        setNote(undefined)
+        try {
+          // 只有 opencode 走这条：别的服务车道的 `startable` 都是 false，
+          // 页面上根本不会出现这个按钮（见 ServiceLaneCard）。
+          const started = await call('/opencode/start')
+          setNote({
+            kind: started.ok ? 'ok' : 'error',
+            text: started.ok ? t('opencodeRunning') + ' · :' + started.port : String(started.error ?? id),
+          })
+          await loadService(true)
+        } catch (error) {
+          setNote({ kind: 'error', text: t('error') + ': ' + error.message })
+        } finally {
+          setBusy(false)
+        }
+      }, [loadService, t])
+
+      // opencode 在注册表里也有，但它的专用卡由 OpenCodePage 渲染 —— 这里排除它，
+      // 免得同一页出现两张说同一件事的卡。
+      const others = (registry ?? []).filter((row) => row.kind === 'service' && row.id !== 'opencode')
+
+      return h('div', { className: 'ow-root ow-localpage' }, [
+        note !== undefined ? h('p', { key: 'n', className: 'ow-note ' + note.kind }, note.text) : null,
+
+        // OpenCode 那一套原样保留（停止服务 / 刷新目录 / SSE 徽章 / 失败三分类）。
+        h(OpenCodePage, { key: 'oc', t, ...props, onMeta: undefined }),
+
+        h('div', { key: 'divider', className: 'ow-statusrow ow-divider' }, [
+          h('span', { key: 'l', className: 'ow-statuslabel' }, t('navLocal')),
+          h(Button, { key: 'p', disabled: busy, onClick: () => void reprobe() },
+            busy ? t('serviceProbing') : t('serviceProbe')),
+        ]),
+
+        !wired
+          ? h('p', { key: 'off', className: 'ow-statuserr', role: 'status' },
+              safeText(reason, 240) || t('serviceWiredOff'))
+          : null,
+
+        lanes === undefined || registry === undefined
+          ? h('p', { key: 'wait', className: 'ow-dim' }, t('busy'))
+          : others.length === 0
+            ? h('p', { key: 'empty', className: 'ow-empty' }, t('serviceEmpty'))
+            : h('div', { key: 'cards', className: 'ow-cards' }, others.map((channel) => h(ServiceLaneCard, {
+                key: channel.id,
+                channel,
+                probe: lanes[channel.id],
+                busy,
+                t,
+                onStart: () => void startService(channel.id),
+              }))),
       ])
     }
 
@@ -2147,6 +2863,71 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-secondary);
 }
 
+/* ── 顶部常驻状态条（渠道目录 / 插件版本 / 更新） ────────────────────────── */
+.ow-statusbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 12px;
+  border-radius: var(--dsw-radius-lg, 13px);
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 62%, transparent);
+  font-size: 11.5px;
+}
+.ow-statusrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ow-statuslabel {
+  font-weight: 620;
+  color: var(--dsw-alias-label-secondary);
+  letter-spacing: .01em;
+}
+.ow-statusmeta { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ow-statusfoot { margin: 0; font-size: 10.5px; overflow-wrap: anywhere; }
+.ow-statuserr {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
+}
+.ow-statusnew { gap: 10px; }
+.ow-mono {
+  font-family: var(--dsw-font-family-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+.ow-link {
+  color: var(--dsw-alias-state-business-primary);
+  text-decoration: none;
+  border-bottom: 1px dashed color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, transparent);
+}
+.ow-link:hover { color: var(--dsw-alias-label-primary); }
+.ow-install { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ow-install code {
+  padding: 2px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 82%, transparent);
+  user-select: all;
+}
+.ow-divider {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+/* ── 状态药丸（四态）：四色必须分得开 ─────────────────────────────────────── */
+.ow-state[data-state="ready"] { border-color: color-mix(in srgb, var(--dsw-alias-state-success-primary) 52%, transparent); }
+.ow-state[data-state="needs-action"] { border-color: color-mix(in srgb, var(--dsw-alias-state-warning-primary, #f0a441) 55%, transparent); }
+.ow-state[data-state="unavailable"] { border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 55%, transparent); }
+.ow-state[data-state="unknown"] { border-style: dashed; }
+/* unknown 刻意**没有**状态点：它是「判断不了」，不是「坏了」。 */
+.ow-dot.unknown { background: transparent; box-shadow: inset 0 0 0 1px var(--dsw-alias-label-tertiary); }
+
+/* ── 自带 key 卡 ─────────────────────────────────────────────────────────── */
+.ow-keyed .ow-keyenv { margin: 0; font-size: 11.5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ow-keyed a.ow-btn { text-decoration: none; display: inline-flex; align-items: center; }
+.ow-servicemodels { margin: 0; font-size: 10.5px; overflow-wrap: anywhere; }
+
 /* 尊重系统的减少动效偏好：与 OFM 同一条约定。 */
 @media (prefers-reduced-motion: reduce) {
   .ow-btn, .ow-row, .ow-mrow, .ow-tab, .ow-pill { transition: none !important; }
@@ -2173,7 +2954,12 @@ window.__ModuleLoader__.load({
        * 只为**离线渲染测试**：`test/render.mjs` 需要单独渲染卡片，而它们
        * 定义在 factory 闭包里。生产路径完全不读这个字段。
        */
-      __test: { ProductCard, ServiceCard, ConsolePage, AccountsPage, OpenCodePage, AutoCheckinBar },
+      __test: {
+        ProductCard, ServiceCard, ConsolePage, AccountsPage, OpenCodePage, AutoCheckinBar,
+        // 2026-10-25 夜间新增：三页签外壳的两个新页 + 顶部条 + 两张新卡
+        KeyedPage, KeyedCard, LocalPage, ServiceLaneCard, StatusBar, StatePill,
+        safeText, safeHref, stateTone, stateLabel,
+      },
       inject: ['slots', 'locale'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-free-model: dictionaries')

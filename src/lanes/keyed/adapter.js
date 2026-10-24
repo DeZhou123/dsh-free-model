@@ -47,7 +47,7 @@
  */
 
 import { LlmAdapter, LlmError } from '@deepseek-ai/dsh-llm'
-import { staticModels } from './catalog.js'
+import { lanePlaceholders, staticModels } from './catalog.js'
 
 /** 上游不给上下文窗口时的兜底（与 `opencode/adapter.js` 同一取法：0 是「未知」）。 */
 export const FALLBACK_CONTEXT_WINDOW = 200_000
@@ -92,6 +92,8 @@ const CONTEXT_WORDING = /context[\s_-]?(?:length|window)|maximum context|too (?:
 /** 正文里出现这些词，说明是模型 id 的问题（"The model `x/y` does not exist" 这类，
  *  名字与措辞之间隔着模型 id，所以不能只允许几个非字母字符）。 */
 const MODEL_WORDING = /(?:model|模型)[\s\S]{0,80}?(?:not found|does not exist|doesn't exist|unknown|invalid|deprecated|decommission|不存在|不可用|已下线)|(?:not found|does not exist)[\s\S]{0,40}?(?:model|模型)/i
+/** 正文里出现这些词，说明是限流（**流内错误帧**没有状态码，只能靠措辞）。 */
+const RATE_WORDING = /rate[\s_-]?limit|too many requests|requests? per|限流|请求过于频繁|请求太快/i
 
 /**
  * 解析 `Retry-After` / `x-ratelimit-reset-*` 的取值。
@@ -864,48 +866,27 @@ export class KeyedAdapter extends LlmAdapter {
         'MISSING_CREDENTIAL',
       )
     }
-
-    const row = await this.#rowFor(modelKey)
-    const supportsTools = row?.tools !== false
-    const visionAllowed = row?.vision === true
-    const converted = await convertRequestMessages(options?.messages, {
-      readImage: this.readImage,
-      readImageRequest: this.readImageRequest,
-      logger: this.logger,
-      laneId: lane.id,
-      supportsTools,
-      visionAllowed,
-    })
-    const ownSystem = typeof options?.system === 'string' ? options.system.trim() : ''
-    const system = [ownSystem, ...converted.systems].filter((part) => part !== '').join('\n\n')
-    if (converted.messages.length === 0 && system === '') {
-      throw new LlmError(`${lane.id}: 本轮没有可发送的内容`, 'INVALID_REQUEST')
+    // ⚠️ 占位符没替换就别发请求：这里的地址必然 404，而 404 在页面上会被读成
+    // "插件坏了"。宁可抛一条说得清的错误。`keyedLaneState` 同样会判 not-ready，
+    // 这里是给"绕过就绪判定直接挂适配器"留的兜底。
+    const pending = lanePlaceholders(lane)
+    if (pending.length > 0) {
+      throw new LlmError(
+        `${lane.id}: baseURL 里还有未替换的占位符 ${pending.join('、')}（例如 Cloudflare 的账号 ID），`
+        + '替换之前这条车道的地址必然是 404。',
+        'INVALID_REQUEST',
+      )
     }
-    const body = buildOpenAiBody({
-      model: modelKey,
-      messages: converted.messages,
-      system,
-      tools: options?.tools,
-      supportsTools,
-      maxTokens: options?.maxTokens,
-      temperature: options?.temperature,
-      stop: options?.stop,
-      streamUsage: this.streamUsageSupported,
-    })
 
-    const headers = { 'content-type': 'application/json', accept: 'text/event-stream' }
-    if (this.apiKey !== null && this.apiKey !== '') headers.authorization = 'Bearer ' + this.apiKey
-    const url = this.baseURL + '/chat/completions'
-
-    // ── 超时/取消：一个 controller 管到流结束，finally 里清 ────────────────────
-    // ⚠️ 这个 timer **不 unref**：它如果是当时唯一还没 settle 的东西（例如上游
-    // 挂在半路上），unref 会让进程直接退出而不是等到超时 —— 那时连分类错误都写不出来。
-    // setTimeout 只触发一次，且下面 finally 一定会 clearTimeout，不会拖住任何东西。
+    // ── 超时/取消：一个 controller 管到流结束（目录探测 + 请求 + 读流），finally 里清 ──
+    // ⚠️ 这个 timer **不 unref**：它如果是当时唯一还没 settle 的东西（例如上游挂在
+    // 半路上），unref 会让进程直接退出而不是等到超时 —— 那时连分类错误都写不出来。
+    // setTimeout 只触发一次，且 finally 一定会 clearTimeout，不会拖住任何东西。
     let timedOut = false
-    const controller = new AbortController()
-    const timer = setTimeout(() => { timedOut = true; controller.abort() }, this.timeoutMs)
+    const abort = new AbortController()
+    const timer = setTimeout(() => { timedOut = true; abort.abort() }, this.timeoutMs)
     const outerSignal = options?.signal
-    const onOuterAbort = () => controller.abort(outerSignal?.reason)
+    const onOuterAbort = () => abort.abort(outerSignal?.reason)
     outerSignal?.addEventListener?.('abort', onOuterAbort, { once: true })
 
     let response
@@ -923,7 +904,39 @@ export class KeyedAdapter extends LlmAdapter {
     const toolCalls = new Map()
 
     try {
-      const first = await this.#send(url, body, headers, controller.signal)
+      const row = await this.#rowFor(modelKey, abort.signal)
+      const supportsTools = row?.tools !== false
+      const visionAllowed = row?.vision === true
+      const converted = await convertRequestMessages(options?.messages, {
+        readImage: this.readImage,
+        readImageRequest: this.readImageRequest,
+        logger: this.logger,
+        laneId: lane.id,
+        supportsTools,
+        visionAllowed,
+      })
+      const ownSystem = typeof options?.system === 'string' ? options.system.trim() : ''
+      const system = [ownSystem, ...converted.systems].filter((part) => part !== '').join('\n\n')
+      if (converted.messages.length === 0 && system === '') {
+        throw new LlmError(`${lane.id}: 本轮没有可发送的内容`, 'INVALID_REQUEST')
+      }
+      const body = buildOpenAiBody({
+        model: modelKey,
+        messages: converted.messages,
+        system,
+        tools: options?.tools,
+        supportsTools,
+        maxTokens: options?.maxTokens,
+        temperature: options?.temperature,
+        stop: options?.stop,
+        streamUsage: this.streamUsageSupported,
+      })
+
+      const headers = { 'content-type': 'application/json', accept: 'text/event-stream' }
+      if (this.apiKey !== null && this.apiKey !== '') headers.authorization = 'Bearer ' + this.apiKey
+      const url = this.baseURL + '/chat/completions'
+
+      const first = await this.#send(url, body, headers, abort.signal)
       if (first.status === 400 && body.stream_options !== undefined) {
         // 有些端点不认 stream_options：剥掉重试一次，并把结论记住（下次别问）。
         const detail = first.text ?? ''
@@ -932,7 +945,7 @@ export class KeyedAdapter extends LlmAdapter {
           this.logger?.warn?.(`[dsh-free-model] ${lane.id} 不接受 stream_options，已关闭（usage 将缺失）`)
           const retryBody = { ...body }
           delete retryBody.stream_options
-          const second = await this.#send(url, retryBody, headers, controller.signal)
+          const second = await this.#send(url, retryBody, headers, abort.signal)
           response = second.response
           if (!second.ok) {
             const classified = classifyUpstreamFailure({ status: second.status, body: second.text, headers: second.headers, lane })
@@ -953,7 +966,7 @@ export class KeyedAdapter extends LlmAdapter {
         throw new LlmError(`${lane.id}: 上游回了 ${response.status} 但没有可读的流（不是 SSE 响应）`, 'UPSTREAM_ERROR')
       }
 
-      for await (const payload of this.#frames(response, controller.signal)) {
+      for await (const payload of this.#frames(response, abort.signal)) {
         if (payload === '[DONE]') break
         let chunk
         try {
@@ -1136,9 +1149,9 @@ export class KeyedAdapter extends LlmAdapter {
   }
 
   /** 实时目录优先、静态兜底的行。 */
-  async #rowFor(modelId) {
+  async #rowFor(modelId, signal) {
     const key = String(modelId ?? '')
-    const live = await this.#catalog()
+    const live = await this.#catalog(signal)
     return live.find((row) => row.id === key)
       ?? live.find((row) => String(row.id).toLowerCase() === key.toLowerCase())
       ?? this.#staticRow(key)
@@ -1151,10 +1164,10 @@ export class KeyedAdapter extends LlmAdapter {
    * （实测 404），Cloudflare 的目录不在同一路径。所以 `supportsModelList:false`
    * 的渠道直接走静态表，一次网络都不发 —— 否则每次开模型选择器都白等一次超时。
    */
-  async #catalog() {
+  async #catalog(signal) {
     const now = Date.now()
     if (this.catalogModels !== undefined && now - this.catalogAt < CATALOG_TTL_MS) return this.catalogModels
-    if (this.lane.supportsModelList === false) {
+    if (this.lane.supportsModelList === false || lanePlaceholders(this.lane).length > 0) {
       this.catalogModels = staticModels(this.lane)
       this.catalogSource = 'static'
       this.catalogAt = now
@@ -1171,11 +1184,16 @@ export class KeyedAdapter extends LlmAdapter {
       if (this.apiKey !== null && this.apiKey !== '') headers.authorization = 'Bearer ' + this.apiKey
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), Math.min(this.timeoutMs, 20_000))
+      // ⚠️ 把调用方的取消信号接进来：用户取消一轮对话时，正在跑的那次目录探测
+      // 也必须一起停 —— 否则它会在后台把 20 秒跑满，下一次请求还要排在它后面。
+      const onAbort = () => controller.abort(signal?.reason)
+      signal?.addEventListener?.('abort', onAbort, { once: true })
       let response
       try {
         response = await this.fetchImpl(url, { method: 'GET', headers, signal: controller.signal })
       } finally {
         clearTimeout(timer)
+        signal?.removeEventListener?.('abort', onAbort)
       }
       if (!response.ok) throw new Error('HTTP ' + response.status)
       const payload = await response.json()
@@ -1220,17 +1238,15 @@ export class KeyedAdapter extends LlmAdapter {
    * 非 2xx 时顺手把正文读出来（Response 的 body 只能读一次，留给分类用）。
    */
   async #send(url, body, headers, signal) {
-    let response
-    try {
-      response = await this.fetchImpl(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal,
-      })
-    } catch (error) {
-      throw error
-    }
+    // 已经取消就别发：真实 fetch 会立刻拒，但这里显式判一下，语义更清楚，
+    // 也让「取消后不再产生任何上游流量」成为一条可断言的性质。
+    if (signal?.aborted === true) throw signal.reason ?? new Error('aborted')
+    const response = await this.fetchImpl(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    })
     if (response.ok === true) return { ok: true, status: response.status, headers: response.headers, response }
     let text = ''
     try {

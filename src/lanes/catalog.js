@@ -37,6 +37,22 @@ import { createHash } from 'node:crypto'
 export const CHANNEL_KINDS = Object.freeze(['account', 'service', 'keyed'])
 
 /**
+ * 作者可以写、但落库时会被**归一**的类型别名。
+ *
+ * `keyless`（免 key 直连）不是第四类渠道，而是 `keyed` 的一个特例：它同样注册
+ * OpenAI 兼容适配器，只是不需要凭据。若不归一，页面就得为「同一件事」写两套分支
+ * （`kind === 'keyed' || kind === 'keyless'`），而分叉正是本模块存在的理由。
+ *
+ * 归一规则：`kind: 'keyless'` ⇒ `kind: 'keyed'` 且**没有** `apiKeyEnv`
+ *（后者即使写了也忽略 —— 免 key 渠道带着一个凭据名，只会让页面渲染出
+ * 「缺凭据 XXX」这种自相矛盾的状态）。
+ */
+const KIND_ALIASES = Object.freeze({ keyless: 'keyed' })
+
+/** 归一化后的类型能取哪些值（含别名的全集）。 */
+const ACCEPTED_KINDS = Object.freeze([...CHANNEL_KINDS, ...Object.keys(KIND_ALIASES)])
+
+/**
  * 渠道记录里允许出现的 `backend`。
  *
  * - `native`   本插件自己挂适配器（有账号/服务在本插件手里）
@@ -77,10 +93,11 @@ export function normalizeChannelRecord(raw, origin, options = {}) {
   const displayName = cleanText(raw.displayName, 80)
   if (displayName === undefined) return reject('displayName 缺失或过长')
 
-  const kind = cleanText(raw.kind, 16)
-  if (kind === undefined || !CHANNEL_KINDS.includes(kind)) {
-    return reject(`kind 必须是 ${CHANNEL_KINDS.join(' / ')} 之一`)
+  const kindRaw = cleanText(raw.kind, 16)
+  if (kindRaw === undefined || !ACCEPTED_KINDS.includes(kindRaw)) {
+    return reject(`kind 必须是 ${ACCEPTED_KINDS.join(' / ')} 之一`)
   }
+  const kind = KIND_ALIASES[kindRaw] ?? kindRaw
 
   const backend = raw.backend === undefined ? defaultBackendFor(kind) : cleanText(raw.backend, 16)
   if (backend === undefined || !CHANNEL_BACKENDS.includes(backend)) {
@@ -98,10 +115,11 @@ export function normalizeChannelRecord(raw, origin, options = {}) {
   if (models === undefined) return reject('models 必须是数组（可为空）')
   if (kind === 'keyed' && models.length === 0) return reject('keyed 渠道至少要声明 1 个模型')
 
-  const apiKeyEnv = raw.apiKeyEnv === null || raw.apiKeyEnv === undefined
+  const apiKeyEnv = (kindRaw === 'keyless' || raw.apiKeyEnv === null || raw.apiKeyEnv === undefined)
     ? null
     : cleanCredentialName(raw.apiKeyEnv)
-  if (raw.apiKeyEnv !== null && raw.apiKeyEnv !== undefined && apiKeyEnv === null) {
+  const keyedProvided = kindRaw !== 'keyless' && raw.apiKeyEnv !== null && raw.apiKeyEnv !== undefined
+  if (keyedProvided && apiKeyEnv === null) {
     return reject('apiKeyEnv 不合规（只允许大写字母/数字/下划线，且不超过 64 字符）')
   }
 

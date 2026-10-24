@@ -468,6 +468,23 @@ await checkAsync('已下线车道：stream 直接拒，不去发请求', async (
   assert.match(error.message, /已下线/)
 })
 
+await checkAsync('baseURL 占位符未替换：stream 直接拒（不发一个必然 404 的请求）', async () => {
+  let calls = 0
+  const adapter = createKeyedAdapter({ lane: laneById('cloudflare-workers-ai'), apiKey: 'sk-x', fetchImpl: async () => { calls += 1 } })
+  const { error } = await runStream(adapter)
+  assert.equal(calls, 0)
+  assert.match(error.message, /\{ACCOUNT_ID\}/)
+  assert.equal(error.code, 'INVALID_REQUEST')
+  // 百分号编码形态（上游目录校验用 new URL() 规范化后的样子）同样要拦住。
+  const encoded = createKeyedAdapter({
+    lane: { ...laneById('cloudflare-workers-ai'), baseURL: 'https://api.cloudflare.com/client/v4/accounts/%7Baccount_id%7D/ai/v1' },
+    apiKey: 'sk-x',
+    fetchImpl: async () => { calls += 1 },
+  })
+  const encodedRun = await runStream(encoded)
+  assert.match(encodedRun.error.message, /\{ACCOUNT_ID\}/)
+})
+
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：')
