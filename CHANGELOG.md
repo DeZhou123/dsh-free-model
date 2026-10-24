@@ -121,6 +121,16 @@
   1/70 个文件解析失败` + `- test/e2e-opencode.mjs`，EXIT=1；`git checkout` 复原后
   sha256 与改前一致。`npm test` 仍 16 套件 / 328 断言全绿。
 
+- **新增装配自证 `$DSH_HOME/free-model/apply-ok.json`**：headless/CLI 模式不打 info 日志，
+  「插件装上了吗」只能靠猜；装配又是异步分片的（native 在 inject 回调、keyed 是 `void mountKeyedLanes`），
+  任何一片失败只留一行 warn。现在把结果落盘：版本 / 时间 / **已挂上的路由** / OFM 后端在不在 /
+  目录层计数与指纹，**不含任何凭据值**。它是**历史记录**（`appliedAt` = 上次装配时刻），不是存活标记 ——
+  第一版在卸载钩子里删掉它，结果一次性 headless 会话里永远看不到（装配时写、退出时删），
+  而「昨天装上了吗」恰恰是事后要问的问题。
+  **真宿主进程内验证**（`_supervisor/plugin-boot-check.mjs`，用 A 的 headless profile 起真会话）：
+  `version 0.4.0 / phase full / mountedRoutes [buddy, opencode, pollinations, workbuddy] /`
+  **`ofmBackend: true`**（宿主 channel-pack 在同一进程里在场）/ `channels {13, 21, 3, 37}`。
+
 ## [0.3.2] · 2026-10-24
 
 - 合并 `wip/lanes-registry-20261024`：账号渠道页补齐 OFM 侧 11 条车道（页面 + 管理面，

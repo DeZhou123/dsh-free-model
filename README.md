@@ -59,6 +59,28 @@ src/lanes/registry.js     唯一事实来源：三类渠道 → 同一种记录�
 （不是干说一句「拉取失败」）。页面上同一行还给出本地覆盖文件的全路径
 （`$DSH_HOME/free-model/channels.local.json`）—— 不想动仓库时，那是第四条路。
 
+## 怎么确认它真的装上了
+
+```powershell
+Get-Content "$env:USERPROFILE\.dsh\free-model\apply-ok.json"
+```
+
+这个文件是**装配自证**：版本、上次装配时间、**已经挂上适配器的路由**、宿主 channel-pack 在不在场、
+目录层计数与指纹。**不含任何凭据值**（只记「挂了哪几条」）。
+
+为什么需要它：headless / CLI 模式**不打 info 日志**，而装配是异步分片的（native 车道在 `inject`
+回调里挂、自带 key 车道是 `void mountKeyedLanes(...)`），任何一片失败都只留一行 warn ——
+看不到 warn 就没法判断。它是**历史记录**（`appliedAt` 是上次装配的时刻），不是存活标记：
+「现在在不在跑」看设置页能不能打开。
+
+正常装配时它长这样（真宿主进程内实测）：
+
+```json
+{ "plugin": "dsh-free-model", "version": "0.4.0", "phase": "full",
+  "mountedRoutes": ["buddy", "opencode", "pollinations", "workbuddy"],
+  "ofmBackend": true, "channels": { "account": 13, "keyed": 21, "service": 3, "total": 37 } }
+```
+
 ### 端点会变：`npm run probe:endpoints` 复查一次
 
 渠道 URL 是会变的（换域名、下线、改路径），而插件把「能不能用」的责任交给了运行时 ——
