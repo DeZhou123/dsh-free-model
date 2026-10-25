@@ -640,7 +640,7 @@ window.__ModuleLoader__.load({
      * @param {'GET'|'POST'|'DELETE'} [method] 默认「有 body 就 POST，没有就 GET」。
      *        DELETE 必须显式指定：浏览器不会因为「有没有 body」自己换方法，
      *        而 `/key` 的删除语义与保存**完全不同**（一个写凭据、一个删凭据）。
-     * @param {{ timeoutMs?: number }} [options]
+     * @param {{ timeoutMs?: number, query?: Record<string, string|number|boolean> }} [options]
      *
      * ## 为什么必须有超时（0.6.0 修，审计的 P0-5）
      *
@@ -653,13 +653,15 @@ window.__ModuleLoader__.load({
      */
     async function call(path, body, method, options) {
       const verb = method ?? (body === undefined ? 'GET' : 'POST')
+      // query 走 URLSearchParams，**不拼进 path**：拼进去的后果是「测试与真实请求看到两条
+      // 不同的路径」（新加的 client-routes 一致性断言第一次跑就抓到了 /credits?provider= 这条）。
       const timeoutMs = Number.isFinite(options?.timeoutMs) ? Number(options.timeoutMs) : 12_000
       // AbortSignal.timeout 在旧 Safari 上没有；没有就退回无超时（不让整页因为缺 API 崩掉）。
       const makeSignal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
       const signal = makeSignal ? AbortSignal.timeout(timeoutMs) : undefined
       let response
       try {
-        response = await fetch(API + path, {
+        response = await fetch(API + path + queryStringOf(options?.query), {
           method: verb,
           headers: body === undefined
             ? { accept: 'application/json' }
@@ -677,6 +679,18 @@ window.__ModuleLoader__.load({
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`)
       return payload
+    }
+
+    /** 把 {a:1,b:true} 变成 '?a=1&b=true'（空对象返回空串）。 */
+    function queryStringOf(query) {
+      if (query === null || query === undefined) return ''
+      const params = new URLSearchParams()
+      for (const [key, value] of Object.entries(query)) {
+        if (value === undefined || value === null || value === '') continue
+        params.set(key, String(value))
+      }
+      const text = params.toString()
+      return text === '' ? '' : '?' + text
     }
 
     function formatTime(ms, t) {
@@ -2484,7 +2498,7 @@ window.__ModuleLoader__.load({
         try {
           const pairs = await Promise.all(products.map(async (product) => {
             try {
-              const payload = await call('/credits?provider=' + product.id + (force ? '&force=1' : ''))
+              const payload = await call('/credits', undefined, 'GET', { query: { provider: product.id, ...(force ? { force: 1 } : {}) } })
               return [product.id, payload]
             } catch (error) {
               // 单条车道查询失败只影响它自己那张卡：别把另一条的余额也清掉。
