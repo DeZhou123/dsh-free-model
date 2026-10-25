@@ -171,6 +171,20 @@ export function createRoutes(deps) {
         const outcome = await manager.probeAllKeys({ onlyConfigured, force })
         return send(200, { ok: true, ...outcome })
       }
+      // ── 余额/额度（0.6.0）：这条渠道还剩多少 ────────────────────────────────
+      //
+      // 与 /key/probe 的分工：那个回答「key 能不能用」，这个回答「还剩多少」。
+      // 失败仍是 200：那是「查询完成、结论是查不到」，不是请求错误。
+      if (method === 'POST' && routePath === '/key/balance') {
+        const manager = deps.keyed?.manager?.()
+        if (manager === undefined) return fail(503, '自带 key 车道未就绪（插件还没完成装配，或该模块缺失）')
+        if (typeof manager.probeBalance !== 'function') return fail(503, '这个版本的管理器没有余额查询')
+        const body = await readJson(req)
+        const lane = laneIdOf(body)
+        if (lane === '') return fail(400, '缺少 lane')
+        const result = await manager.probeBalance(lane, { force: body?.force === true })
+        return send(200, result)
+      }
       // ── 渠道健康（0.6.0）：上次真打上游的结果 + 冷却到什么时候 ──────────────
       //
       // 与 `/channels` 的分工：那里是**目录与就绪**（有哪些渠道、凭据配了没），

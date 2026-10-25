@@ -158,6 +158,7 @@ export const MORE_KEYED_CHANNELS = [
     protocol: 'openai',
     baseURL: 'https://api.novita.ai/v3/openai',
     apiKeyEnv: 'NOVITA_API_KEY',
+    balance: { url: 'https://api.novita.ai/v3/user/balance', rowKind: 'balance' },
     docsURL: 'https://novita.ai/docs/api-reference/introduction',
     signupURL: 'https://novita.ai/settings/key-management',
     freeTier: '新号赠小额试用额度，之后按 token 计费。',

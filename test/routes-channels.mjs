@@ -345,6 +345,48 @@ await check('信任围栏对新端点同样生效（跨站 Origin → 403）', a
   assert.equal(rebound.status, 403, 'Host 不是回环必须拒')
 })
 
+
+await check('/key/balance：走 manager.probeBalance，未接线时 503、缺 lane 时 400', async () => {
+  const calls = []
+  const handler = createRoutes(makeDeps({
+    registry: registryStub,
+    keyed: {
+      manager: () => ({
+        probeBalance: async (lane, options) => {
+          calls.push({ lane, force: options?.force === true })
+          return { ok: true, kind: 'ok', reason: '余额 USD 7.5', amount: '7.5', currency: 'USD', ms: 12 }
+        },
+      }),
+      keyStates: () => ({}),
+      keyCounts: () => ({}),
+    },
+  }))
+  const ok = await makeCallWithBody(handler, 'POST', '/api/free-model/key/balance', { lane: 'openrouter-free', force: true })
+  assert.equal(ok.status, 200)
+  assert.equal(ok.json().amount, '7.5')
+  assert.deepEqual(calls, [{ lane: 'openrouter-free', force: true }])
+  const bad = await makeCallWithBody(handler, 'POST', '/api/free-model/key/balance', {})
+  assert.equal(bad.status, 400)
+  const off = await makeCallWithBody(createRoutes(makeDeps({ registry: registryStub })), 'POST', '/api/free-model/key/balance', { lane: 'x' })
+  assert.equal(off.status, 503)
+})
+
+await check('/channels 投影暴露 hasBalance，但**不**暴露端点地址', async () => {
+  const rows = projectRegistryView(buildRegistry({
+    keyed: [{
+      id: 'with-balance',
+      displayName: '有余额端点的渠道',
+      kind: 'keyed',
+      baseURL: 'https://x.example/v1',
+      apiKeyEnv: 'X_KEY',
+      balance: { url: 'https://x.example/balance', rowKind: 'balance' },
+      models: [{ id: 'm', name: 'm' }],
+    }],
+  }).channels, {})
+  const row = rows.find((item) => item.id === 'with-balance')
+  assert.equal(row.hasBalance, true, '带余额端点的渠道没标 hasBalance')
+  assert.equal(JSON.stringify(row).includes('x.example/balance'), false, '端点地址被下发到页面了')
+})
 await check('未知路由仍是 404（新端点的加入不许把兜底打掉）', async () => {
   const res = await call(createRoutes(makeDeps()), 'GET', '/api/free-model/nope')
   assert.equal(res.status, 404)

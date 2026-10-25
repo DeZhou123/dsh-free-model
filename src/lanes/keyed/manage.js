@@ -35,6 +35,7 @@
 import { descriptors, mount } from './index.js'
 import { keyRefOf, laneKeyState, saveLaneKey, clearLaneKey, maskKey } from './keys.js'
 import { probeLaneKey } from './probe.js'
+import { probeLaneBalance, BALANCE_TIMEOUT_MS } from './balance.js'
 import { laneById } from './catalog.js'
 import { resolveApiKey } from './ready.js'
 import { createHealthStore, describeHealth } from '../health.js'
@@ -282,6 +283,38 @@ export function createKeyedManager(deps = {}) {
     return { ok: true }
   }
 
+  /** 余额查询缓存：成功 60 秒（余额变化以分钟计，没必要每点一次都打上游）。 */
+  const balances = new Map()
+
+  /**
+   * 查一条车道的余额（0.6.0）。
+   *
+   * 与 key 探测**刻意分开**：那个回答「key 能不能用」，这个回答「还剩多少」。
+   * 两个问题都可能只答得上一半（比如 key 有效但这条渠道没有余额端点），
+   * 合成一次调用会让页面拿不到另一半信息。
+   *
+   * 失败**不抛**：余额是附加信息，任何失败只让「查额度」按钮显示一句原因。
+   */
+  async function probeBalance(laneId, options = {}) {
+    const lane = laneById(laneId)
+    if (lane === undefined) {
+      return { ok: false, kind: 'missing-config', reason: '未知的 keyed 车道：' + String(laneId), ms: 0 }
+    }
+    const cached = balances.get(laneId)
+    if (cached !== undefined && options.force !== true && Date.now() - cached.at < 60_000) {
+      return { ...cached.result, cached: true }
+    }
+    const resolved = await resolveApiKey(lane, { readCredential: deps.readCredential })
+    const result = await probeLaneBalance(lane, {
+      apiKey: resolved.key ?? '',
+      ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
+      timeoutMs: BALANCE_TIMEOUT_MS,
+      logger,
+    })
+    balances.set(laneId, { result, at: Date.now() })
+    return result
+  }
+
   /**
    * 探测一条车道的 key。
    *
@@ -404,6 +437,7 @@ export function createKeyedManager(deps = {}) {
     clearKey,
     probeKey,
     probeAllKeys,
+    probeBalance,
     snapshot,
     availability,
     healthSnapshot,

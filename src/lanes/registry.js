@@ -232,6 +232,9 @@ export function projectRegistryView(channels, runtime = {}) {
       ...(channel.startable === true ? { startable: true } : {}),
       // 目录免 key 可读：页面据此在探测结果旁边挂一句「通过≠有额度」。
       ...(channel.openCatalog === true ? { openCatalog: true } : {}),
+      // 这条渠道能不能查余额（0.6.0）：**只暴露布尔**，不把端点交给页面 ——
+      // 页面拿不到端点就没人能拼一个「带 key 去打任意地址」的请求。
+      ...(channel.balance !== undefined ? { hasBalance: true } : {}),
       ...(channel.native === true ? { native: true } : {}),
       ...(channel.unknown === true ? { unknown: true } : {}),
       ...(channel.extra !== undefined ? { extra: channel.extra } : {}),

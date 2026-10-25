@@ -32,6 +32,7 @@
  */
 
 import { createHash } from 'node:crypto'
+import { BALANCE_ROW_KINDS } from './keyed/balance.js'
 
 /** 渠道类型。三类渠道的**管理面**完全不同，页面也按这个分页。 */
 export const CHANNEL_KINDS = Object.freeze(['account', 'service', 'keyed'])
@@ -170,6 +171,12 @@ export function normalizeChannelRecord(raw, origin, options = {}) {
     // 写在 note 里只能靠人读到；做成字段，页面才能统一挂一句"目录免 key 可读，
     // 通过≠有额度"，新人也不必逐条去猜。
     ...(raw.openCatalog === true ? { openCatalog: true } : {}),
+    // `balance`：这条渠道**查余额的端点**（0.6.0）。
+    //
+    // 只接受数据：URL 必须过同一个 cleanUrl（http(s)、无 query/hash、无内嵌凭据）。
+    // 这一点比渠道本体的 baseURL 更要紧 —— 余额端点是**带着 key 去 GET** 的，
+    // 一个能被远程目录改成任意地址的探针就是一台「把你的 key 送到我这」的机器。
+    ...(kind === 'keyed' ? normalizeBalance(raw.balance) : {}),
     // 探针**只留给服务型车道**：它是唯一会去访问这个 URL 的地方（见 `./service.js` 的
     // `probeServiceLane`），别的类型带上它只是多一条没人用的攻击面描述。
     ...(kind === 'service' ? normalizeProbe(raw.probe) : {}),
@@ -199,7 +206,7 @@ export function normalizeChannelRecord(raw, origin, options = {}) {
 }
 
 /** 规范字段之外，仍属于「本模块认识但不下发」的名字（避免重复进 extra）。 */
-const RESERVED_FIELDS = new Set(['kind', 'baseURL', 'endpoint', 'capability', 'probe', 'native', 'startable', 'openCatalog'])
+const RESERVED_FIELDS = new Set(['kind', 'baseURL', 'endpoint', 'capability', 'probe', 'native', 'startable', 'openCatalog', 'balance'])
 
 /**
  * 按 id 叠加多层目录。
@@ -381,6 +388,20 @@ function normalizeCredits(value) {
     claim,
     ...(claimNote !== undefined ? { claimNote } : {}),
   })
+}
+
+/**
+ * 余额端点描述（只有自带 key 渠道需要）。
+ *
+ * 与探针同一条纪律：**只接受数据**，URL 过 cleanUrl，rowKind 只认白名单。
+ * 认不出来就整条丢掉 —— 少一个「查额度」按钮，比多一个能往任意地址发 key 的按钮好。
+ */
+function normalizeBalance(value) {
+  if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) return {}
+  const url = cleanUrl(value.url)
+  if (url.value === undefined) return {}
+  const rowKind = typeof value.rowKind === 'string' && BALANCE_ROW_KINDS.includes(value.rowKind) ? value.rowKind : 'balance'
+  return { balance: Object.freeze({ url: url.value, rowKind }) }
 }
 
 /**

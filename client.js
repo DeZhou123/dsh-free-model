@@ -283,6 +283,20 @@ window.__ModuleLoader__.load({
       keyedProbing: '测试中…',
       keyedProbeModels: '上游返回 {count} 个模型',
       keyedProbeWait: '上游要求等 {left} 再试',
+      // ── 查额度（0.6.0）───────────────────────────────────────────────────
+      keyedBalance: '查额度',
+      keyedBalanceChecking: '查询中…',
+      keyedBalanceOk: '余额',
+      keyedBalanceNoKey: '还没填 key',
+      keyedBalanceMissingConfig: '这条渠道没有余额端点',
+      keyedBalanceInvalidKey: 'key 被上游拒绝',
+      keyedBalanceRateLimited: '查询被限流，等一会',
+      keyedBalanceNotFound: '余额端点 404（目录里的地址可能过期）',
+      keyedBalanceServerError: '上游故障（与 key 无关）',
+      keyedBalanceNetwork: '连不上上游',
+      keyedBalanceTimeout: '查询超时',
+      keyedBalanceBadRequest: '响应读不了（多半是网关页）',
+      keyedBalanceUnparsed: '拿到了响应但读不出余额',
       keyedProbeWait: '上游要求等 {left} 再试',
       // 探测结果的九种结论：**分开说**，因为处置完全不同（换 key / 等一会 / 换网络）。
       keyedProbeOk: 'key 有效：上游接受了这把 key',
@@ -520,6 +534,19 @@ window.__ModuleLoader__.load({
       keyedProbing: 'Testing…',
       keyedProbeModels: 'upstream returned {count} models',
       keyedProbeWait: 'upstream asks you to wait {left}',
+      keyedBalance: 'Check balance',
+      keyedBalanceChecking: 'Checking…',
+      keyedBalanceOk: 'Balance',
+      keyedBalanceNoKey: 'no key yet',
+      keyedBalanceMissingConfig: 'this channel declares no balance endpoint',
+      keyedBalanceInvalidKey: 'the upstream rejected this key',
+      keyedBalanceRateLimited: 'rate limited, try again later',
+      keyedBalanceNotFound: 'balance endpoint returned 404 (the catalog URL may be stale)',
+      keyedBalanceServerError: 'upstream error (unrelated to the key)',
+      keyedBalanceNetwork: 'cannot reach the upstream',
+      keyedBalanceTimeout: 'balance query timed out',
+      keyedBalanceBadRequest: 'the response could not be read (likely a gateway page)',
+      keyedBalanceUnparsed: 'got a response but could not read a balance',
       keyedProbeOk: 'key accepted by the upstream',
       keyedProbeNoKey: 'no key stored yet: save one first',
       keyedProbeMissingConfig: 'this lane cannot be tested right now',
@@ -1382,7 +1409,7 @@ window.__ModuleLoader__.load({
      * - 回车即保存（粘贴 → Enter 是最短路径），但按钮同时存在（触屏没有回车）。
      */
     function KeyedCard(props) {
-      const { channel, t, keyState, probe, busy, error, onSave, onClear, onProbe, health } = props
+      const { channel, t, keyState, probe, busy, error, onSave, onClear, onProbe, health, balance, onBalance } = props
       const capability = channel?.capability ?? { tools: null, vision: null }
       const tools = capability.tools ?? null
       const vision = capability.vision ?? null
@@ -1516,6 +1543,25 @@ window.__ModuleLoader__.load({
                   onClick: () => { if (typeof onProbe === 'function') onProbe() },
                 }, busyProbe ? t('keyedProbing') : t('keyedProbe')),
               ]),
+              // 查额度：只在**目录声明了 balance 端点**的渠道上出现 —— 没声明的点了也只会
+              // 得到「没有余额端点」，那不如不给按钮（0.6.0）。
+              channel?.hasBalance === true
+                ? h('div', { key: 'balrow', className: 'ow-actions' }, [
+                    h(Button, {
+                      key: 'b',
+                      disabled: busy === 'balance' || canWrite === false,
+                      onClick: () => { if (typeof onBalance === 'function') onBalance() },
+                    }, busy === 'balance' ? t('keyedBalanceChecking') : t('keyedBalance')),
+                    balance !== undefined && balance !== null
+                      ? h('span', {
+                          key: 'v',
+                          className: balance.ok === true ? 'ow-probeok' : 'ow-probeerr',
+                          role: 'status',
+                          'data-kind': String(balance.kind ?? ''),
+                        }, balanceText(balance, t))
+                      : null,
+                  ])
+                : null,
               probe !== undefined && probe !== null
                 ? h('p', {
                     key: 'res',
@@ -1548,6 +1594,25 @@ window.__ModuleLoader__.load({
             : null,
         ]),
       ])
+    }
+
+    /**
+     * 余额结果 → 一行文字。
+     *
+     * 金额是**字符串原样显示**（后端保证不经过浮点）：各家精度不同，
+     * 前端再转一次数字就会把 `0.30000000000000004` 这种事造出来。
+     */
+    function balanceText(balance, t) {
+      if (balance.ok === true) {
+        const amount = safeText(balance.amount, 32)
+        const currency = safeText(balance.currency, 8)
+        return (currency === '' ? '' : currency + ' ') + amount
+      }
+      const kind = String(balance.kind ?? '')
+      const known = ['no-key', 'missing-config', 'invalid-key', 'rate-limited', 'not-found', 'server-error', 'network', 'timeout', 'bad-request', 'unparsed']
+      const title = known.includes(kind) ? t('keyedBalance' + probeKindSuffix(kind)) : kind
+      const why = typeof balance.reason === 'string' && balance.reason !== '' ? '：' + safeText(balance.reason, 200) : ''
+      return title + why
     }
 
     /** 凭据来源的人话（与后端 `describeSource` 同一套词汇）。 */
@@ -1637,6 +1702,8 @@ window.__ModuleLoader__.load({
       const [health, setHealth] = useState(props.health ?? {})
       /** laneId → 配了几把 key（>1 时卡片上显示，0.6.0）。 */
       const [keyCounts, setKeyCounts] = useState(props.keyCounts ?? {})
+      /** 余额查询结果（laneId → { ok, kind, amount, currency, reason }）。 */
+      const [balances, setBalances] = useState(props.balances ?? {})
       /** 工具条的整页提示（批量探测的「探了 N 条、跳了 M 条」）。 */
       const [note, setNote] = useState('')
       /** 搜索框内容（渠道名 / 凭据名 / 模型 id 都能匹配）。 */
@@ -1800,6 +1867,19 @@ window.__ModuleLoader__.load({
           setBusy((current) => ({ ...current, __all: '' }))
         }
       }, [t])
+      /** 查一条车道的余额（0.6.0）。失败也只显示一句原因，不影响其它任何状态。 */
+      const balanceOf = useCallback(async (id) => {
+        mark(id, 'balance')
+        try {
+          const payload = await call('/key/balance', { lane: id, force: true })
+          setBalances((current) => ({ ...current, [id]: payload }))
+        } catch (error) {
+          setBalances((current) => ({ ...current, [id]: { ok: false, kind: 'network', reason: error.message } }))
+        } finally {
+          mark(id, '')
+        }
+      }, [mark])
+
       const probeKeyOf = useCallback(async (id) => {
         mark(id, 'probe')
         setErrorOf(id, '')
@@ -1954,6 +2034,8 @@ window.__ModuleLoader__.load({
                       keyCount: keyCounts?.[channel.id],
                       probe: probes?.[channel.id],
                       health: health?.[channel.id],
+                      balance: balances?.[channel.id],
+                      onBalance: () => void balanceOf(channel.id),
                       busy: busy?.[channel.id] ?? '',
                       error: errors?.[channel.id] ?? '',
                       onSave: (value) => void saveKeyOf(channel.id, value),
