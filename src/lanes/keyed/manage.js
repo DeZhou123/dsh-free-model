@@ -36,6 +36,7 @@ import { descriptors, mount } from './index.js'
 import { keyRefOf, laneKeyState, saveLaneKey, clearLaneKey, maskKey } from './keys.js'
 import { probeLaneKey } from './probe.js'
 import { probeLaneBalance, BALANCE_TIMEOUT_MS } from './balance.js'
+import { probeLaneChat } from './probe.js'
 import { laneById } from './catalog.js'
 import { resolveApiKey } from './ready.js'
 import { createHealthStore, describeHealth } from '../health.js'
@@ -283,6 +284,27 @@ export function createKeyedManager(deps = {}) {
     return { ok: true }
   }
 
+  /**
+   * 真发一句话（0.6.0）：这条才是「我填的 key 能不能干活」的答案。
+   *
+   * 结果**不进**健康账本：它是用户主动发起的一次诊断，而不是渠道在正常工作流里
+   * 的表现。把它记成失败会让一条好渠道因为「我试的时候它正忙」而进冷却 ——
+   * 那是最难解释的一种「莫名其妙不能用了」。
+   */
+  async function probeChat(laneId, options = {}) {
+    const lane = laneById(laneId)
+    if (lane === undefined) {
+      return { ok: false, kind: 'missing-config', reason: '未知的 keyed 车道：' + String(laneId), ms: 0 }
+    }
+    const resolved = await resolveApiKey(lane, { readCredential: deps.readCredential })
+    return await probeLaneChat(lane, {
+      apiKey: resolved.key ?? '',
+      ...(typeof options.model === 'string' && options.model !== '' ? { model: options.model } : {}),
+      ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
+      logger,
+    })
+  }
+
   /** 余额查询缓存：成功 60 秒（余额变化以分钟计，没必要每点一次都打上游）。 */
   const balances = new Map()
 
@@ -470,6 +492,7 @@ export function createKeyedManager(deps = {}) {
     probeKey,
     probeAllKeys,
     probeBalance,
+    probeChat,
     catalogDiagnostics,
     snapshot,
     availability,

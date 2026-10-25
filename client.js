@@ -284,6 +284,9 @@ window.__ModuleLoader__.load({
       keyedProbing: '测试中…',
       keyedProbeModels: '上游返回 {count} 个模型',
       keyedProbeWait: '上游要求等 {left} 再试',
+      keyedTry: '试一句话',
+      keyedTrying: '试调中…',
+      keyedTryOk: '真的通了（{ms} ms）：上游回了「{reply}」',
       // ── 查额度（0.6.0）───────────────────────────────────────────────────
       keyedBalance: '查额度',
       keyedBalanceChecking: '查询中…',
@@ -541,6 +544,9 @@ window.__ModuleLoader__.load({
       keyedProbing: 'Testing…',
       keyedProbeModels: 'upstream returned {count} models',
       keyedProbeWait: 'upstream asks you to wait {left}',
+      keyedTry: 'Send one message',
+      keyedTrying: 'Testing…',
+      keyedTryOk: 'It really works ({ms} ms): upstream replied "{reply}"',
       keyedBalance: 'Check balance',
       keyedBalanceChecking: 'Checking…',
       keyedBalanceOk: 'Balance',
@@ -1421,7 +1427,7 @@ window.__ModuleLoader__.load({
      * - 回车即保存（粘贴 → Enter 是最短路径），但按钮同时存在（触屏没有回车）。
      */
     function KeyedCard(props) {
-      const { channel, t, keyState, probe, busy, error, onSave, onClear, onProbe, health, balance, onBalance, suspect } = props
+      const { channel, t, keyState, probe, busy, error, onSave, onClear, onProbe, onTry, tried, health, balance, onBalance, suspect } = props
       const capability = channel?.capability ?? { tools: null, vision: null }
       const tools = capability.tools ?? null
       const vision = capability.vision ?? null
@@ -1544,6 +1550,28 @@ window.__ModuleLoader__.load({
         typeof error === 'string' && error !== ''
           ? h('p', { key: 'err', className: 'ow-statuserr', role: 'alert' }, safeText(error, 300))
           : null,
+        // ── 真发一句话：/models 通过 ≠ 能干活（0.6.0）────────────────────────
+        keyless
+          ? null
+          : h('div', { key: 'trybox', className: 'ow-probebox' }, [
+              h('div', { key: 'row', className: 'ow-actions' }, [
+                h(Button, {
+                  key: 'b',
+                  disabled: busy === 'try' || canWrite === false,
+                  onClick: () => { if (typeof onTry === 'function') onTry() },
+                }, busy === 'try' ? t('keyedTrying') : t('keyedTry')),
+              ]),
+              tried !== undefined && tried !== null
+                ? h('p', {
+                    key: 'r',
+                    className: tried.ok === true ? 'ow-probeok' : 'ow-probeerr',
+                    role: 'status',
+                    'data-kind': String(tried.kind ?? ''),
+                  }, tried.ok === true
+                    ? t('keyedTryOk').replace('{ms}', String(tried.ms ?? 0)).replace('{reply}', safeText(tried.reply ?? '', 80))
+                    : probeText(tried, t))
+                : null,
+            ]),
         // ── 探测：结果按 kind 分类，绝不把「key 不对」说成「渠道不可用」 ──────
         keyless
           ? null
@@ -1727,6 +1755,8 @@ window.__ModuleLoader__.load({
       const [suspects, setSuspects] = useState(props.modelSuspects ?? {})
       /** laneId → 配了几把 key（>1 时卡片上显示，0.6.0）。 */
       const [keyCounts, setKeyCounts] = useState(props.keyCounts ?? {})
+      /** 试调结果（laneId → { ok, kind, ms, reply, reason }）。 */
+      const [tries, setTries] = useState(props.tries ?? {})
       /** 余额查询结果（laneId → { ok, kind, amount, currency, reason }）。 */
       const [balances, setBalances] = useState(props.balances ?? {})
       /** 工具条的整页提示（批量探测的「探了 N 条、跳了 M 条」）。 */
@@ -1900,6 +1930,24 @@ window.__ModuleLoader__.load({
           setBusy((current) => ({ ...current, __all: '' }))
         }
       }, [t])
+      /**
+       * 真发一句话（0.6.0）。
+       *
+       * 与「测试 key」是两个问题：那个打的是目录端点（最便宜），这个真的发一次
+       * 最小补全 —— 只有它能回答「我填的 key 能不能干活」。
+       */
+      const tryOf = useCallback(async (id) => {
+        mark(id, 'try')
+        try {
+          const payload = await call('/key/try', { lane: id }, 'POST', { timeoutMs: 20_000 })
+          setTries((current) => ({ ...current, [id]: payload }))
+        } catch (error) {
+          setTries((current) => ({ ...current, [id]: { ok: false, kind: 'network', reason: error.message } }))
+        } finally {
+          mark(id, '')
+        }
+      }, [mark])
+
       /** 查一条车道的余额（0.6.0）。失败也只显示一句原因，不影响其它任何状态。 */
       const balanceOf = useCallback(async (id) => {
         mark(id, 'balance')
@@ -2086,6 +2134,8 @@ window.__ModuleLoader__.load({
                       probe: probes?.[channel.id],
                       health: health?.[channel.id],
                       balance: balances?.[channel.id],
+                      tried: tries?.[channel.id],
+                      onTry: () => void tryOf(channel.id),
                       onBalance: () => void balanceOf(channel.id),
                       busy: busy?.[channel.id] ?? '',
                       error: errors?.[channel.id] ?? '',

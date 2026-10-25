@@ -387,6 +387,31 @@ await check('/channels 投影暴露 hasBalance，但**不**暴露端点地址', 
   assert.equal(row.hasBalance, true, '带余额端点的渠道没标 hasBalance')
   assert.equal(JSON.stringify(row).includes('x.example/balance'), false, '端点地址被下发到页面了')
 })
+
+await check('/key/try：走 manager.probeChat，未接线 503、缺 lane 400', async () => {
+  const calls = []
+  const handler = createRoutes(makeDeps({
+    registry: registryStub,
+    keyed: {
+      manager: () => ({
+        probeChat: async (lane, options) => {
+          calls.push({ lane, model: options?.model })
+          return { ok: true, kind: 'ok', ms: 321, reply: 'ok' }
+        },
+      }),
+      keyStates: () => ({}),
+      keyCounts: () => ({}),
+    },
+  }))
+  const ok = await makeCallWithBody(handler, 'POST', '/api/free-model/key/try', { lane: 'groq' })
+  assert.equal(ok.status, 200)
+  assert.equal(ok.json().reply, 'ok')
+  assert.deepEqual(calls, [{ lane: 'groq', model: undefined }])
+  const bad = await makeCallWithBody(handler, 'POST', '/api/free-model/key/try', {})
+  assert.equal(bad.status, 400)
+  const off = await makeCallWithBody(createRoutes(makeDeps({ registry: registryStub })), 'POST', '/api/free-model/key/try', { lane: 'x' })
+  assert.equal(off.status, 503)
+})
 await check('未知路由仍是 404（新端点的加入不许把兜底打掉）', async () => {
   const res = await call(createRoutes(makeDeps()), 'GET', '/api/free-model/nope')
   assert.equal(res.status, 404)

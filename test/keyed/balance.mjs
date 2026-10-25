@@ -144,6 +144,55 @@ await checkAsync('非 JSON 正文 → bad-request（拦住的是网关页，不�
   assert.equal(result.kind, 'bad-request')
 })
 
+
+// ── 0.6.0：真发一句话（/key/try 的后端）────────────────────────────────────
+import { probeLaneChat, extractReplyText } from '../../src/lanes/keyed/probe.js'
+
+await checkAsync('试调：没有 key → no-key，且不发请求', async () => {
+  let called = 0
+  const result = await probeLaneChat(GROQ, { apiKey: '', fetchImpl: async () => { called += 1 } })
+  assert.equal(result.kind, 'no-key')
+  assert.equal(called, 0)
+})
+
+await checkAsync('试调：免 key 渠道照样能试（它本来就是匿名可调）', async () => {
+  const result = await probeLaneChat(laneById('pollinations'), {
+    apiKey: '',
+    fetchImpl: async () => ({ status: 200, ok: true, headers: { get: () => null }, text: async () => JSON.stringify({ choices: [{ message: { content: 'hi there' } }] }) }),
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.reply, 'hi there')
+})
+
+await checkAsync('试调：401 与 429 分开报（与目录探测同一套 kind）', async () => {
+  const unauthorized = await probeLaneChat(GROQ, { apiKey: 'k', fetchImpl: async () => ({ status: 401, ok: false, headers: { get: () => null }, text: async () => '{"error":{"message":"Invalid API key"}}' }) })
+  assert.equal(unauthorized.kind, 'invalid-key')
+  const limited = await probeLaneChat(GROQ, { apiKey: 'k', fetchImpl: async () => ({ status: 429, ok: false, headers: { get: () => null }, text: async () => '{}' }) })
+  assert.equal(limited.kind, 'rate-limited')
+})
+
+await checkAsync('试调：403（边缘挡的那种）单独成一档，且提示不是 key 的问题', async () => {
+  const result = await probeLaneChat(GROQ, { apiKey: 'k', fetchImpl: async () => ({ status: 403, ok: false, headers: { get: () => new Map([['server', 'cloudflare']]).get ?? (() => 'cloudflare') }, text: async () => 'Forbidden' }) })
+  assert.equal(result.kind, 'forbidden')
+  assert.ok(result.reason.includes('403'))
+})
+
+await checkAsync('试调：超时归 timeout，并说明 key 未必有问题', async () => {
+  const result = await probeLaneChat(GROQ, {
+    apiKey: 'k',
+    timeoutMs: 5,
+    fetchImpl: async () => { const error = new Error('aborted'); error.name = 'AbortError'; throw error },
+  })
+  assert.equal(result.kind, 'timeout')
+  assert.ok(result.reason.includes('未必'))
+})
+
+await checkAsync('extractReplyText：认 OpenAI 形状与分片 content，认不出返回空串', () => {
+  assert.equal(extractReplyText(JSON.stringify({ choices: [{ message: { content: 'hello  world' } }] })), 'hello world')
+  assert.equal(extractReplyText(JSON.stringify({ choices: [{ message: { content: [{ text: 'a' }, { text: 'b' }] } }] })), 'a b')
+  assert.equal(extractReplyText('not json'), '')
+  assert.equal(extractReplyText('{}'), '')
+})
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：')

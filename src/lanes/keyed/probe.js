@@ -31,6 +31,9 @@
  */
 
 import { PROBE_TIMEOUT_MS } from './keys.js'
+
+/** 真实试调的超时：12 秒（比目录探测宽 —— 这是真在做一次推理）。 */
+export const CHAT_PROBE_TIMEOUT_MS = 12_000
 import { staticModels } from './catalog.js'
 
 /** 网络失败的三档提示（与 `keys.js` 的 PROBE_KINDS 同一份语义）。 */
@@ -272,4 +275,118 @@ function summarizeBody(text) {
   // 遮蔽长 token：连续 20+ 的 base64url/十六进制片段，只留首尾。
   const masked = flattened.replace(/[A-Za-z0-9_\-]{20,}/g, (match) => match.slice(0, 4) + '…' + match.slice(-2))
   return masked.slice(0, 200)
+}
+
+/**
+ * **真发一句话**：这条路才回答「我填的 key 到底能不能用来干活」。
+ *
+ * ## 为什么 /models 不够（2026-10-26 的真实教训）
+ *
+ * 探测打的是 `GET /models`（最便宜、鉴权语义最干净），但它是**目录端点**：
+ *
+ * - 有些渠道的 /models **不要 key 也能读**（本插件目录里有 9 条），通过只证明地址活着；
+ * - 有些渠道在**边缘**就被挡（B 车道实测到 Groq 的 Cloudflare 403：带 key 与不带 key 同一个码）；
+ * - 还有些渠道 key 有效但**模型名过期/无权限**，只有真发一次才看得出来。
+ *
+ * 所以这里补一次**最小真实补全**（`max_tokens` 很小、非流式）：它比 /models 贵一点点，
+ * 但换来的是「能不能干活」这个用户真正要的答案。分类沿用同一套 `kind`，不另起词表。
+ *
+ * @param {object} lane 目录条目
+ * @param {{
+ *   apiKey?: string|null, model?: string, fetchImpl?: Function, timeoutMs?: number,
+ * }} [deps]
+ * @returns {Promise<{ ok: boolean, kind: string, reason: string, ms: number, status?: number,
+ *   model?: string, reply?: string }>}
+ */
+export async function probeLaneChat(lane, deps = {}) {
+  const startedAt = Date.now()
+  const key = typeof deps.apiKey === 'string' ? deps.apiKey.trim() : ''
+  if (lane === null || typeof lane !== 'object') {
+    return { ok: false, kind: 'missing-config', reason: '没有车道描述（lane 为空）', ms: 0 }
+  }
+  if (lane.retired === true) {
+    return { ok: false, kind: 'missing-config', reason: '该渠道已下线，试调没有意义', ms: 0 }
+  }
+  // 免 key 渠道照样能试：它们本来就是匿名可调的。
+  if (lane.kind === 'keyed' && key === '') {
+    return { ok: false, kind: 'no-key', reason: '还没有填写 key：先保存一把 key 再试', ms: 0 }
+  }
+  const model = typeof deps.model === 'string' && deps.model !== '' ? deps.model : (staticModels(lane)[0]?.id ?? '')
+  if (model === '') {
+    return { ok: false, kind: 'missing-config', reason: '目录里这条渠道没有可试的模型（静态表是空的）', ms: 0 }
+  }
+  const fetchImpl = typeof deps.fetchImpl === 'function' ? deps.fetchImpl : globalThis.fetch
+  if (typeof fetchImpl !== 'function') {
+    return { ok: false, kind: 'network', reason: '当前运行环境没有 fetch，无法试调', ms: 0 }
+  }
+  const base = String(lane.baseURL ?? '').replace(/\/+$/, '')
+  const url = base + '/chat/completions'
+  const timeoutMs = Number.isFinite(deps.timeoutMs) ? deps.timeoutMs : CHAT_PROBE_TIMEOUT_MS
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const headers = { 'content-type': 'application/json', accept: 'application/json' }
+  if (key !== '') headers.authorization = 'Bearer ' + key
+  let response
+  let bodyText = ''
+  try {
+    response = await fetchImpl(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 4,
+        stream: false,
+      }),
+      signal: controller.signal,
+    })
+    bodyText = typeof response.text === 'function' ? (await response.text()).slice(0, 4096) : ''
+  } catch (error) {
+    const text = error instanceof Error ? error.message : String(error)
+    const aborted = error?.name === 'AbortError'
+    return {
+      ok: false,
+      kind: aborted ? 'timeout' : (DNS_HINTS.test(text) ? 'dns' : TLS_HINTS.test(text) ? 'tls' : 'network'),
+      reason: aborted
+        ? '试调超时（' + String(Math.round(timeoutMs / 1000)) + ' 秒）：免费层排队时会很慢；key 本身未必有问题'
+        : '请求失败：' + text.slice(0, 200),
+      url,
+      model,
+      ms: Date.now() - startedAt,
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+
+  const classified = classifyProbe({ status: response.status, bodyText, mode: 'chat' })
+  const out = {
+    ok: classified.ok,
+    kind: classified.kind,
+    reason: classified.reason,
+    url,
+    model,
+    status: response.status,
+    ms: Date.now() - startedAt,
+  }
+  if (classified.ok === true) {
+    // 只回**前 80 个字符**的可见文本：这是给用户看「它确实说话了」，不是拿它当答案。
+    const reply = extractReplyText(bodyText)
+    if (reply !== '') out.reply = reply.slice(0, 80)
+  }
+  return out
+}
+
+/** 从非流式补全的响应里抠出可见文本（认不出就返回空串，绝不抛）。 */
+export function extractReplyText(bodyText) {
+  try {
+    const parsed = JSON.parse(bodyText)
+    const content = parsed?.choices?.[0]?.message?.content
+    if (typeof content === 'string') return content.replace(/\s+/g, ' ').trim()
+    if (Array.isArray(content)) {
+      return content.map((part) => (typeof part?.text === 'string' ? part.text : '')).join(' ').replace(/\s+/g, ' ').trim()
+    }
+    return ''
+  } catch {
+    return ''
+  }
 }

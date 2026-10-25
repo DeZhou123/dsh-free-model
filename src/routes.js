@@ -171,6 +171,21 @@ export function createRoutes(deps) {
         const outcome = await manager.probeAllKeys({ onlyConfigured, force })
         return send(200, { ok: true, ...outcome })
       }
+      // ── 真发一句话（0.6.0）：/models 通过 ≠ 能干活 ──────────────────────────
+      //
+      // 探测打的是目录端点，它证明不了「能不能真调」：有的渠道 /models 免 key 可读，
+      // 有的在边缘就被挡（B 车道实测到 Groq 的 Cloudflare 403，带 key 与否同一个码）。
+      // 这条路由真的发一次最小补全（max_tokens=4、非流式），失败仍是 200。
+      if (method === 'POST' && routePath === '/key/try') {
+        const manager = deps.keyed?.manager?.()
+        if (manager === undefined) return fail(503, '自带 key 车道未就绪（插件还没完成装配，或该模块缺失）')
+        if (typeof manager.probeChat !== 'function') return fail(503, '这个版本的管理器没有试调')
+        const body = await readJson(req)
+        const lane = laneIdOf(body)
+        if (lane === '') return fail(400, '缺少 lane')
+        const result = await manager.probeChat(lane, { model: body?.model })
+        return send(200, result)
+      }
       // ── 余额/额度（0.6.0）：这条渠道还剩多少 ────────────────────────────────
       //
       // 与 /key/probe 的分工：那个回答「key 能不能用」，这个回答「还剩多少」。
