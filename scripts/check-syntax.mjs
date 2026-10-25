@@ -14,7 +14,7 @@
  * 失败时不早退：把所有解析失败的文件都列出来（CI 日志里一次能看到全部），最后以 1 退出。
  */
 import { spawnSync } from 'node:child_process';
-import { readdirSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -84,4 +84,27 @@ if (failures.length > 0) {
     `OK  语法门：${files.length} 个文件 node --check 全过` +
       `（产品 ${counts.product} / 测试 ${counts.test} / 脚本 ${counts.scripts}）`,
   );
+}
+// ── 顺带把「会被解析的 JSON」也过一遍 ──────────────────────────────────────────
+//
+// ⚠️ 2026-10-26 的真实事故：往 package.json 的 scripts 里插了一行 `//` 注释（JSON 不允许），
+// 于是 `require('./package.json')` 直接抛 Expected double-quoted property name ——
+// 而**整个测试链都读它**：npm 脚本、测试钩子读版本、smoke 的两条断言全挂。
+// 语法门是任何人第一件跑的事，它就该在这一层拦住这种错，而不是等到跑测试时才发现。
+const JSON_FILES = ['package.json', join('catalog', 'channels.json')]
+let jsonFailed = 0
+for (const relPath of JSON_FILES) {
+  const abs = join(ROOT, relPath)
+  try {
+    JSON.parse(readFileSync(abs, 'utf8'))
+  } catch (error) {
+    console.error(`FAIL ${relPath}: JSON 解析失败 —— ${error.message}`)
+    jsonFailed += 1
+  }
+}
+if (jsonFailed > 0) {
+  console.error(`\nFAIL JSON 门：${jsonFailed}/${JSON_FILES.length} 个文件不是合法 JSON`)
+  process.exitCode = 1
+} else if (failures.length === 0) {
+  console.log(`OK  JSON 门：${JSON_FILES.join(' / ')} 都是合法 JSON`)
 }
