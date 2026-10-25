@@ -121,13 +121,24 @@ const KEYED_CHANNELS_BASE = [
     note: '免费型号随时上下架，静态表只是兜底（运行时以 /models 实时结果为准）；模型 id 里那个 ":free" 后缀是价格档位，忘掉它就会按付费模型计费。',
     evidence: '2026-10-25 GET https://openrouter.ai/api/v1/models → 200；free 三条取自实测 pricing.prompt=0 的行；'
       + '2026-10-26 live chat 200 / cost=0：POST /chat/completions（nvidia/nemotron-3-ultra-550b-a55b:free，max_tokens=8）'
-      + ' → 200 / 1919ms / usage.cost=0（prompt_tokens=22 + completion_tokens=8，其中 reasoning_tokens=9，所以正文被截成半句）',
+      + ' → 200 / 1919ms / usage.cost=0（prompt_tokens=22 + completion_tokens=8，其中 reasoning_tokens=9，所以正文被截成半句）'
+      + '；2026-10-26 补表实测（静态兜底扩容）：GET /api/v1/models → 200，实时 467 条、其中 `:free` 17 条，17 条 pricing.prompt/completion 全为 "0"；'
+      + '静态表从这 17 条里补 5 条（见 models 末五行，字段取实时 context_length / top_provider.max_completion_tokens / architecture.input_modalities / supported_parameters）；'
+      + '这 5 条逐条 POST /chat/completions（max_tokens=16）→ 全部 200 且 usage.cost=0：nemotron-3-ultra-550b-a55b 965ms、nemotron-3.5-lightning 898ms、'
+      + 'dots-3-note-preview 2203ms、north-mini-code 863ms、laguna-s-2.1 2728ms（前四条 finish_reason=length：16 token 全花在 reasoning 上，正文为空，属预期）；'
+      + '同批排除并留证：thinkingmachines/inkling:free 与 inkling-small:free → 403「only available on agentic harnesses」（目录里有、普通 API 调不通），'
+      + 'nvidia/nemotron-3-super-120b-a12b:free → 404 Provider returned error（两次），google/gemma-4-31b-it:free、gemma-4-26b-a4b-it:free、poolside/laguna-xs-2.1:free、liquid/lfm-2.5-2.6b:free → 429 上游暂时限流',
     unknown: true,
     unknownFields: ['freeTier'],
     models: [
       { id: 'recursive/flint-v1.0:free', name: 'Recursive: Flint (free)', contextWindow: 262144, maxTokens: 235929, vision: false, tools: true },
       { id: 'xingchen-agi/xing4.0-29b-a4b:free', name: 'XingChen: Xing4.0 29B A4B (free)', contextWindow: 262144, maxTokens: 235929, vision: false, tools: true },
       { id: 'nvidia/nemotron-3.5-super-vl:free', name: 'NVIDIA: Nemotron 3.5 Super VL (free)', contextWindow: 1000000, maxTokens: 131072, vision: true, tools: true },
+      { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', name: 'NVIDIA: Nemotron 3 Ultra (free)', contextWindow: 1000000, maxTokens: 65536, vision: false, tools: true },
+      { id: 'nvidia/nemotron-3.5-lightning:free', name: 'NVIDIA: Nemotron 3.5 Lightning (free)', contextWindow: 1000000, maxTokens: 65536, vision: false, tools: true },
+      { id: 'dots-studio/dots-3-note-preview:free', name: 'Dots Studio: Dots3-Note Preview (free)', contextWindow: 512000, maxTokens: 460800, vision: true, tools: true },
+      { id: 'cohere/north-mini-code:free', name: 'Cohere: North Mini Code (free)', contextWindow: 256000, maxTokens: 64000, vision: false, tools: true },
+      { id: 'poolside/laguna-s-2.1:free', name: 'Poolside: Laguna S 2.1 (free)', contextWindow: 262144, maxTokens: 32768, vision: false, tools: true },
     ],
   },
   {
