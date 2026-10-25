@@ -529,6 +529,18 @@ await checkAsync('normalizeKeyList：逗号/换行/数组/去重/上限 5', () =
   assert.equal(normalizeKeyList(['1', '2', '3', '4', '5', '6'], undefined).length, 5, '上限必须是 5')
   assert.deepEqual(normalizeKeyList(undefined, ''), [])
 })
+
+await checkAsync('403 归到 SERVER（可重试）而不是 CREDENTIAL —— 它可能只是边缘拦截', () => {
+  // B 车道实测：Groq 回 403 Forbidden（server: cloudflare），带 key 与不带 key 完全同一个响应。
+  // 判成 CREDENTIAL 的连锁反应是健康账本把它记成「永久吊销」，用户于是去换 key —— 而问题不在 key。
+  const forbidden = classifyUpstreamFailure({ status: 403, body: 'Forbidden', lane: laneById('groq') })
+  assert.equal(forbidden.kind, FAILURE_KINDS.SERVER)
+  assert.equal(forbidden.code, 'FORBIDDEN')
+  assert.equal(forbidden.retryable, true)
+  assert.ok(forbidden.advice.includes('不一定'), '处置文案要说清不一定是 key：' + forbidden.advice)
+  // 401 仍然是凭据档。
+  assert.equal(classifyUpstreamFailure({ status: 401, body: '{"error":{"message":"Invalid API key"}}', lane: laneById('groq') }).kind, FAILURE_KINDS.CREDENTIAL)
+})
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：')

@@ -332,8 +332,35 @@ export function classifyUpstreamFailure(input = {}) {
     )
   }
 
-  // ③ 401/403：凭据。⚠️ 403 也可能是「额度/权限」措辞，那时按额度报（处置不同）。
-  if (status === 401 || status === 403) {
+  // ③ 401：凭据。⚠️ 403 **单独**处理（2026-10-26 实测改的）。
+  if (status === 401) {
+    if (quotaWording) {
+      return make(
+        FAILURE_KINDS.QUOTA,
+        'QUOTA',
+        false,
+        `${laneLabel}：这次 401 的正文说的是额度/余额（不是 key 错）：换车道或去 ${signup} 充值。${tail}`,
+      )
+    }
+    return make(
+      FAILURE_KINDS.CREDENTIAL,
+      'INVALID_CREDENTIAL',
+      false,
+      `${laneLabel}：凭据被拒（HTTP 401）：key 写错/已撤销。去 ${signup} 确认，然后更新凭据 ${env}。${tail}`,
+    )
+  }
+
+  /**
+   * ③b 403：**多义**状态码 —— 最常见的两种含义都不是「key 坏了」。
+   *
+   * · **边缘/WAF 拦截**：B 车道实测 Groq 回 `403 Forbidden`（`server: cloudflare`），
+   *   带 key 与不带 key **完全同一个响应**，key 有效性无从判断；
+   * · **权限不足**：key 有效，但这个模型/接口没开通。
+   *
+   * 所以它在适配器层归到 `SERVER`（抖动档、可重试），而不是 `CREDENTIAL`。
+   * 判成 CREDENTIAL 会让健康账本把它记成「永久吊销」，用户于是去换 key —— 而问题不在 key 上。
+   */
+  if (status === 403) {
     if (quotaWording) {
       return make(
         FAILURE_KINDS.QUOTA,
@@ -343,10 +370,10 @@ export function classifyUpstreamFailure(input = {}) {
       )
     }
     return make(
-      FAILURE_KINDS.CREDENTIAL,
-      'INVALID_CREDENTIAL',
-      false,
-      `${laneLabel}：凭据被拒（HTTP ${status}）：key 写错/已撤销，或这把 key 没开通该模型。去 ${signup} 确认，然后更新凭据 ${env}。${tail}`,
+      FAILURE_KINDS.SERVER,
+      'FORBIDDEN',
+      true,
+      `${laneLabel}：上游回 403 —— **不一定是 key 的问题**（可能是边缘/WAF 拦截，或这把 key 没开通该模型）。等一会重试或换模型；若持续如此再去 ${signup} 看权限。${tail}`,
     )
   }
 
