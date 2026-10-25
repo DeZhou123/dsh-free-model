@@ -25,9 +25,11 @@ import { createHealthStore } from '../../src/lanes/health.js'
 
 let passed = 0
 const failures = []
-function check(name, fn) {
+async function check(name, fn) {
   try {
-    fn()
+    // ⚠️ 必须 await：0.6.0 起的用例是 async 的（渠道开关要写盘）。
+    // 不 await 的话断言在汇总行之后才跑，`pass=0 fail=0` 看起来「全过」。
+    await fn()
     passed += 1
   } catch (error) {
     failures.push({ name, message: error instanceof Error ? error.message : String(error) })
@@ -47,14 +49,14 @@ function makeManager() {
   return { manager, health }
 }
 
-check('管理器暴露了 availability / healthSnapshot / resetHealth 三个面', () => {
+await check('管理器暴露了 availability / healthSnapshot / resetHealth 三个面', () => {
   const { manager } = makeManager()
   for (const name of ['availability', 'healthSnapshot', 'resetHealth']) {
     assert.equal(typeof manager[name], 'function', '缺少 ' + name)
   }
 })
 
-check('健康快照形状：generatedAt + lanes，每条带一句人话 text', () => {
+await check('健康快照形状：generatedAt + lanes，每条带一句人话 text', () => {
   const { manager, health } = makeManager()
   health.recordFailure('groq', { kind: 'rate-limited', status: 429 })
   const snapshot = manager.healthSnapshot()
@@ -67,7 +69,7 @@ check('健康快照形状：generatedAt + lanes，每条带一句人话 text', (
   assert.ok(row.text.length > 0, 'text 是空的 —— 页面会显示一个空徽章')
 })
 
-check('availability：没测过的渠道放行（悲观默认会让新渠道永远进不了轮转）', () => {
+await check('availability：没测过的渠道放行（悲观默认会让新渠道永远进不了轮转）', () => {
   const { manager } = makeManager()
   const row = manager.availability('never-tested')
   assert.equal(row.available, true)
@@ -75,7 +77,7 @@ check('availability：没测过的渠道放行（悲观默认会让新渠道永�
   assert.ok(row.reason.includes('还没测过'))
 })
 
-check('availability：吊销的渠道不放行，且原因是可读的一句话', () => {
+await check('availability：吊销的渠道不放行，且原因是可读的一句话', () => {
   const { manager, health } = makeManager()
   health.recordFailure('zai', { kind: 'invalid-key', status: 401, reason: 'bad key' })
   const row = manager.availability('zai')
@@ -84,7 +86,7 @@ check('availability：吊销的渠道不放行，且原因是可读的一句话'
   assert.ok(row.reason.length > 0)
 })
 
-check('resetHealth 清空一条 / 全部', () => {
+await check('resetHealth 清空一条 / 全部', () => {
   const { manager, health } = makeManager()
   health.recordFailure('a', { kind: 'rate-limited' })
   health.recordFailure('b', { kind: 'rate-limited' })
@@ -95,7 +97,7 @@ check('resetHealth 清空一条 / 全部', () => {
   assert.deepEqual(Object.keys(manager.healthSnapshot().lanes), [], '全清失败')
 })
 
-check('词表翻译：六个失败类别各有落点', () => {
+await check('词表翻译：六个失败类别各有落点', () => {
   assert.equal(healthKindOf('credential'), 'invalid-key')
   assert.equal(healthKindOf('quota'), 'quota')
   assert.equal(healthKindOf('rate-limit'), 'rate-limited')
@@ -104,7 +106,7 @@ check('词表翻译：六个失败类别各有落点', () => {
   assert.equal(healthKindOf('upstream'), 'server-error')
 })
 
-check('词表翻译：四个"不是渠道的病"必须返回 null（记了就冻住好渠道）', () => {
+await check('词表翻译：四个"不是渠道的病"必须返回 null（记了就冻住好渠道）', () => {
   for (const kind of ['unknown-model', 'context', 'invalid-request', 'aborted']) {
     assert.equal(healthKindOf(kind), null, kind + ' 不该进健康账本')
   }
@@ -113,7 +115,7 @@ check('词表翻译：四个"不是渠道的病"必须返回 null（记了就冻
   assert.equal(healthKindOf(undefined), null)
 })
 
-check('翻译后的类别在账本里落到正确状态', () => {
+await check('翻译后的类别在账本里落到正确状态', () => {
   const cases = [
     ['invalid-key', 401, 'revoked'],
     ['quota', 402, 'cooldown'],
@@ -129,7 +131,7 @@ check('翻译后的类别在账本里落到正确状态', () => {
   }
 })
 
-check('限流冷却尊重 429 基准（≤ 61 秒），额度冷却等到刷新点（> 1 小时）', () => {
+await check('限流冷却尊重 429 基准（≤ 61 秒），额度冷却等到刷新点（> 1 小时）', () => {
   const health = createHealthStore({ persist: false, now: harness.now })
   health.recordFailure('rl', { kind: 'rate-limited', status: 429 })
   const rl = health.get('rl').until - NOW
@@ -139,7 +141,7 @@ check('限流冷却尊重 429 基准（≤ 61 秒），额度冷却等到刷新�
   assert.ok(qt > 60 * 60 * 1000, '额度冷却不足 1 小时：' + qt)
 })
 
-check('同一失败重复出现时冷却递增（避免每 30 秒撞一次废渠道）', () => {
+await check('同一失败重复出现时冷却递增（避免每 30 秒撞一次废渠道）', () => {
   const clock = { at: NOW }
   const health = createHealthStore({ persist: false, now: () => clock.at })
   health.recordFailure('dup', { kind: 'server-error', status: 500 })
@@ -149,7 +151,7 @@ check('同一失败重复出现时冷却递增（避免每 30 秒撞一次废渠
   assert.ok(second > first, '第二次冷却没有变长：' + first + ' → ' + second)
 })
 
-check('探测结果不泄漏凭据：健康快照里最长的一串不像 key', () => {
+await check('探测结果不泄漏凭据：健康快照里最长的一串不像 key', () => {
   const { manager, health } = makeManager()
   health.recordFailure('x', { kind: 'invalid-key', status: 401, reason: 'Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz012345' })
   const text = JSON.stringify(manager.healthSnapshot())
@@ -157,6 +159,57 @@ check('探测结果不泄漏凭据：健康快照里最长的一串不像 key', 
   assert.ok(text.includes('…'), '疑似凭据没有被遮蔽')
 })
 
+
+// ── 0.6.0：渠道开关（关掉 ≠ 清除凭据）──────────────────────────────────────
+
+await await check('渠道开关：关掉之后 availability 立刻变成不可用并说清原因', async () => {
+  const health = createHealthStore({ persist: false, now: harness.now })
+  const manager = createKeyedManager({ health, readCredential: async () => undefined, register: () => () => {} })
+  assert.equal(manager.availability('groq').available, true, '默认应当放行')
+  await manager.setEnabled('groq', false)
+  const row = manager.availability('groq')
+  assert.equal(row.available, false)
+  assert.equal(row.state, 'disabled')
+  assert.ok(row.reason.includes('关掉'), '原因要说清是被关掉的：' + row.reason)
+  assert.deepEqual(manager.disabledLanes(), ['groq'])
+  await manager.setEnabled('groq', true)
+  assert.equal(manager.availability('groq').available, true, '重新打开后应当恢复')
+  assert.deepEqual(manager.disabledLanes(), [])
+})
+
+await await check('渠道开关落盘：写进文件，换一个管理器能读回来', async () => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'free-model-disabled-'))
+  const file = join(dir, 'disabled-lanes.json')
+  try {
+    const first = createKeyedManager({ readCredential: async () => undefined, register: () => () => {}, disabledFile: file })
+    await first.setEnabled('deepinfra', false)
+    await first.setEnabled('novita', false)
+    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    assert.deepEqual(raw.disabled, ['deepinfra', 'novita'])
+    const second = createKeyedManager({ readCredential: async () => undefined, register: () => () => {}, disabledFile: file })
+    assert.deepEqual(second.disabledLanes().sort(), ['deepinfra', 'novita'], '换一个管理器没读回来')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await await check('渠道开关：文件坏掉时从空集起（不拖垮插件）', async () => {
+  const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'free-model-disabled-bad-'))
+  const file = join(dir, 'disabled-lanes.json')
+  try {
+    writeFileSync(file, '{ not json', 'utf8')
+    const manager = createKeyedManager({ readCredential: async () => undefined, register: () => () => {}, disabledFile: file })
+    assert.deepEqual(manager.disabledLanes(), [])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：')

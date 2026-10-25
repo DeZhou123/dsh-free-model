@@ -284,6 +284,8 @@ window.__ModuleLoader__.load({
       keyedProbing: '测试中…',
       keyedProbeModels: '上游返回 {count} 个模型',
       keyedProbeWait: '上游要求等 {left} 再试',
+      keyedLaneOn: '已启用',
+      keyedLaneOff: '已关闭',
       keyedTry: '试一句话',
       keyedTrying: '试调中…',
       keyedTryOk: '真的通了（{ms} ms）：上游回了「{reply}」',
@@ -544,6 +546,8 @@ window.__ModuleLoader__.load({
       keyedProbing: 'Testing…',
       keyedProbeModels: 'upstream returned {count} models',
       keyedProbeWait: 'upstream asks you to wait {left}',
+      keyedLaneOn: 'enabled',
+      keyedLaneOff: 'disabled',
       keyedTry: 'Send one message',
       keyedTrying: 'Testing…',
       keyedTryOk: 'It really works ({ms} ms): upstream replied "{reply}"',
@@ -1427,7 +1431,7 @@ window.__ModuleLoader__.load({
      * - 回车即保存（粘贴 → Enter 是最短路径），但按钮同时存在（触屏没有回车）。
      */
     function KeyedCard(props) {
-      const { channel, t, keyState, probe, busy, error, onSave, onClear, onProbe, onTry, tried, health, balance, onBalance, suspect } = props
+      const { channel, t, keyState, probe, busy, error, onSave, onClear, onProbe, onTry, tried, health, balance, onBalance, suspect, laneEnabled, onToggleEnabled } = props
       const capability = channel?.capability ?? { tools: null, vision: null }
       const tools = capability.tools ?? null
       const vision = capability.vision ?? null
@@ -1462,6 +1466,20 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'ow-card ow-keyed', 'data-kind': 'keyed' }, [
         h('div', { key: 'head', className: 'ow-cardhead' }, [
           h('strong', { key: 'n' }, safeText(channel?.displayName, 80)),
+          // 渠道开关（0.6.0）：关掉 ≠ 清除凭据。
+          h('label', { key: 'sw', className: 'ow-lanetoggle' }, [
+            h('input', {
+              key: 'i',
+              type: 'checkbox',
+              checked: laneEnabled !== false,
+              disabled: busy === 'toggle',
+              onChange: (event) => {
+                if (typeof onToggleEnabled === 'function') onToggleEnabled()
+                void event
+              },
+            }),
+            h('span', { key: 'l' }, laneEnabled === false ? t('keyedLaneOff') : t('keyedLaneOn')),
+          ]),
           h(Pill, { key: 'cap', tone: capTone }, capText),
           vision === true ? h(Pill, { key: 'vi', tone: 'ok' }, t('capVision')) : null,
           // 记录自己声明「有字段没实证」时标出来，而不是让用户以为这是确证数据。
@@ -1751,6 +1769,8 @@ window.__ModuleLoader__.load({
        * 第二天打开页面就看到「这条还在 6 小时冷却里」，前者刷一次就没了。
        */
       const [health, setHealth] = useState(props.health ?? {})
+      /** 被关掉的渠道 id 列表（0.6.0）。 */
+      const [disabled, setDisabled] = useState(Array.isArray(props.disabledLanes) ? props.disabledLanes : [])
       /** laneId → 静态表与上游目录一个都对不上的怀疑记录（0.6.0）。 */
       const [suspects, setSuspects] = useState(props.modelSuspects ?? {})
       /** laneId → 配了几把 key（>1 时卡片上显示，0.6.0）。 */
@@ -1797,6 +1817,7 @@ window.__ModuleLoader__.load({
           setRejected(Array.isArray(payload.rejected) ? payload.rejected : [])
           if (payload.keyCounts !== undefined && payload.keyCounts !== null) setKeyCounts(payload.keyCounts)
           setSuspects(payload.modelSuspects ?? {})
+          setDisabled(Array.isArray(payload.disabledLanes) ? payload.disabledLanes : [])
         } catch (error) {
           setChannels([])
           setWired(false)
@@ -1930,6 +1951,28 @@ window.__ModuleLoader__.load({
           setBusy((current) => ({ ...current, __all: '' }))
         }
       }, [t])
+      /**
+       * 开关一条渠道（0.6.0）。
+       *
+       * 与「清除 key」刻意分开：用户想的分明是「先别用它」，而不是把配置抹掉重来。
+       * 关掉之后启动时不再挂它，运行时闸门也会拒绝它的请求。
+       */
+      const toggleOf = useCallback(async (id, enable) => {
+        mark(id, 'toggle')
+        setErrorOf(id, '')
+        try {
+          const payload = await call('/channels/toggle', { lane: id, enabled: enable }, 'POST')
+          if (enable === true && payload?.mounted === false && typeof payload.mountReason === 'string' && payload.mountReason !== '') {
+            setErrorOf(id, t('keyedSavedNotMounted') + payload.mountReason)
+          }
+          await reload()
+        } catch (error) {
+          setErrorOf(id, error.message)
+        } finally {
+          mark(id, '')
+        }
+      }, [mark, setErrorOf, reload, t])
+
       /**
        * 真发一句话（0.6.0）。
        *
@@ -2131,6 +2174,8 @@ window.__ModuleLoader__.load({
                       keyState: keyStates?.[channel.id],
                       keyCount: keyCounts?.[channel.id],
                       suspect: suspects?.[channel.id],
+                      laneEnabled: !disabled.includes(channel.id),
+                      onToggleEnabled: () => void toggleOf(channel.id, disabled.includes(channel.id)),
                       probe: probes?.[channel.id],
                       health: health?.[channel.id],
                       balance: balances?.[channel.id],
@@ -3362,6 +3407,14 @@ window.__ModuleLoader__.load({
 .ow-health[data-health="unknown"] { opacity: .72; }
 .ow-healthx { font-size: 10.5px; font-weight: 400; }
 .ow-opencat { font-size: 10.5px; opacity: .85; }
+
+/* 渠道开关：关掉 ≠ 清除凭据（关掉只是停用，凭据留着） */
+.ow-lanetoggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin-left: auto; font-size: 11px; cursor: pointer;
+  color: var(--dsw-alias-text-secondary);
+}
+.ow-lanetoggle input { cursor: pointer; }
 
 /* 被拒的目录记录：贴在卡片列表**之前**，不抢主流程但一定能看见 */
 .ow-rejected {

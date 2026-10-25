@@ -601,6 +601,8 @@ export function apply(ctx, config = {}) {
       // 健康账本落盘：免费渠道的冷却常有 6 小时（额度）甚至永久（key 废了），
       // 只在内存里记等于宿主一重启就把「这条别再打了」忘干净。
       healthFile: join(dshHome, 'free-model', 'health.json'),
+      // 渠道开关（被关掉的车道清单）与健康账本同级：都是本插件的状态，不是别人的。
+      disabledFile: join(dshHome, 'free-model', 'disabled-lanes.json'),
       readCredential,
       writeCredential,
       unsetCredential,

@@ -409,7 +409,9 @@ check('自带 key 卡：恶意 signupURL（javascript:）不渲染链接', () =>
 // ── 6b. 填 key / 测 key（0.4.1 新增的三条动作） ────────────────────────────
 check('自带 key 卡有「填 key」的输入框与保存/显示/清除按钮', () => {
   const tree = KeyedCard({ channel: keyedRow, t, keyState: { configured: false, writable: true, source: 'none', masked: '' } })
-  const inputs = collectElements(tree, (node) => node.type === 'input')
+  // ⚠️ 只数**凭据输入框**（type=password/text）：0.6.0 之后卡片头上多了一个渠道开关的 checkbox，
+  // 用「数所有 input」会让这条断言在功能正确的情况下变红。
+  const inputs = collectElements(tree, (node) => node.type === 'input' && node.props.type !== 'checkbox')
   assert.equal(inputs.length, 1, '应恰好有一个 key 输入框，实际 ' + inputs.length)
   // 明文 key 绝不能是默认的可见类型：浏览器快照/录屏都会带上它。
   assert.equal(inputs[0].props.type, 'password', 'key 输入框默认必须是 password')
@@ -449,13 +451,13 @@ check('凭据只读（来自环境变量）时给出解释，而不是一个禁�
   })
   const text = flat(tree)
   assert.ok(text.includes('keyedKeyReadonly'), '缺少「只读」的解释')
-  const inputs = collectElements(tree, (node) => node.type === 'input')
+  const inputs = collectElements(tree, (node) => node.type === 'input' && node.props.type !== 'checkbox')
   assert.equal(inputs[0].props.disabled, true, '只读时输入框应禁用')
 })
 
 check('免 key 车道不渲染输入框与探测（没有凭据可填）', () => {
   const tree = KeyedCard({ channel: { ...keyedRow, apiKeyEnv: undefined, state: 'ready' }, t })
-  const inputs = collectElements(tree, (node) => node.type === 'input')
+  const inputs = collectElements(tree, (node) => node.type === 'input' && node.props.type !== 'checkbox')
   assert.equal(inputs.length, 0, '免 key 车道不该有 key 输入框')
   const text = flat(tree)
   assert.ok(text.includes('keyedKeylessHint'), '缺少免 key 说明')

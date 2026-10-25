@@ -171,6 +171,20 @@ export function createRoutes(deps) {
         const outcome = await manager.probeAllKeys({ onlyConfigured, force })
         return send(200, { ok: true, ...outcome })
       }
+      // ── 渠道开关（0.6.0）：关掉一条渠道，而不是删掉它的 key ──────────────────
+      //
+      // 「关掉」的语义：启动时不挂它的适配器（模型选择器里干净）+ 运行时闸门拒绝请求。
+      // 与「清除 key」刻意分开：用户想的是「先别用它」，不是「把配置抹掉重来」。
+      if (method === 'POST' && routePath === '/channels/toggle') {
+        const manager = deps.keyed?.manager?.()
+        if (manager === undefined) return fail(503, '自带 key 车道未就绪（插件还没完成装配，或该模块缺失）')
+        if (typeof manager.setEnabled !== 'function') return fail(503, '这个版本的管理器没有渠道开关')
+        const body = await readJson(req)
+        const lane = laneIdOf(body)
+        if (lane === '') return fail(400, '缺少 lane')
+        if (typeof body?.enabled !== 'boolean') return fail(400, '缺 enabled（true/false）')
+        return send(200, await manager.setEnabled(lane, body.enabled))
+      }
       // ── 真发一句话（0.6.0）：/models 通过 ≠ 能干活 ──────────────────────────
       //
       // 探测打的是目录端点，它证明不了「能不能真调」：有的渠道 /models 免 key 可读，
@@ -402,7 +416,9 @@ async function channelsOverview(deps) {
   for (const [laneId, row] of Object.entries(diagnostics)) {
     if (row?.suspect) suspects[laneId] = row.suspect
   }
-  return { wired: true, ...view, keyCounts, modelSuspects: suspects }
+  // 被关掉的渠道（页面渲染开关态）。缺字段时给空数组，页面不必判 null。
+  const disabled = deps.keyed?.manager?.()?.disabledLanes?.() ?? []
+  return { wired: true, ...view, keyCounts, modelSuspects: suspects, disabledLanes: disabled }
 }
 
 /**

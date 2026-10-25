@@ -40,6 +40,8 @@ import { probeLaneChat } from './probe.js'
 import { laneById } from './catalog.js'
 import { resolveApiKey } from './ready.js'
 import { createHealthStore, describeHealth } from '../health.js'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
 
 /** 探测结果的缓存时长：成功 60 秒。面板切页签会重复读，别每次都打上游。 */
 export const PROBE_CACHE_TTL_MS = 60_000
@@ -95,6 +97,18 @@ export function createKeyedManager(deps = {}) {
   let keyStates = Object.freeze({})
   /** laneId → 这条车道配了几把 key（同渠道多账号轮换，0.6.0）。 */
   const keyCounts = {}
+  /**
+   * 被用户**关掉**的车道（0.6.0）。
+   *
+   * ## 为什么需要它
+   *
+   * 30 多条渠道里，用户真正在用的可能就两三条 —— 其余的每次都在模型选择器里占位置。
+   * 「关掉」要的是一个**明确的、可恢复的**状态，而不是把凭据删掉（删了还得重新配）。
+   *
+   * 关掉 = ① 启动时不挂它的适配器（模型选择器里干净）+ ② 运行时闸门拒绝它的请求
+   * （已经挂上的那条，卸载路由要看宿主给不给 disposer，不能假设）。
+   */
+  const disabled = new Set(loadDisabled(deps.disabledFile, logger))
 
   /**
    * 把适配器报回来的真实对话结果记进健康账本。
@@ -190,7 +204,7 @@ export function createKeyedManager(deps = {}) {
     // 健康状态与就绪状态**分开报**：`ready` 说「凭据配好了没」，
     // `health` 说「上一次真打上游的结果是什么」。合成一个字段的话，
     // 「key 填了但刚被 401 判死」和「还没填」会显示成同一件事。
-    const snapshot = { records, ready, keyStates, keyCounts: { ...keyCounts }, health: health.snapshot() }
+    const snapshot = { records, ready, keyStates, keyCounts: { ...keyCounts }, disabled: [...disabled], health: health.snapshot() }
     try {
       deps.onUpdate?.(snapshot)
     } catch (error) {
@@ -233,6 +247,8 @@ export function createKeyedManager(deps = {}) {
     const failed = []
     for (const row of records) {
       if (row.mountable !== true) continue
+      // 被关掉的车道不挂：模型选择器里干净，也是「关掉」这个动作的主要意义。
+      if (disabled.has(row.id)) continue
       const outcome = await ensureMounted(row.id)
       if (outcome.mounted) done.push(row.id)
       else failed.push({ id: row.id, reason: outcome.reason ?? '' })
@@ -395,7 +411,45 @@ export function createKeyedManager(deps = {}) {
 
   /** 这条车道现在还能不能打（页面用它决定按钮是否灰、以及给什么下一步）。 */
   function availability(laneId) {
+    if (disabled.has(String(laneId))) {
+      return { available: false, state: 'disabled', reason: '这条渠道已被你在设置页里关掉（重新打开即可恢复）', until: null, halfOpen: false }
+    }
     return health.isAvailable(laneId)
+  }
+
+  /**
+   * 开关一条渠道：写盘 + 立刻落到运行态。
+   *
+   * - 关：尝试释放路由（宿主给 disposer 就释放），并把它从 mounted 里摘掉；
+   *   释放失败也不报错 —— 闸门（availability）会替我们把请求挡下来，
+   *   所以「关掉」这件事在任何宿主版本上都是成立的。
+   * - 开：按正常路径挂上（未就绪就如实说原因）。
+   */
+  async function setEnabled(laneId, enabled) {
+    const id = String(laneId)
+    if (enabled === true) disabled.delete(id)
+    else disabled.add(id)
+    saveDisabled(deps.disabledFile, disabled, logger)
+    if (enabled !== true) {
+      const live = mounted.get(id)
+      if (live !== undefined) {
+        try {
+          if (typeof live.handle === 'function') live.handle()
+          else if (typeof live.handle?.dispose === 'function') live.handle.dispose()
+        } catch (error) {
+          logger?.warn?.('[dsh-free-model] 释放 ' + id + ' 的路由失败（闸门仍然生效）：' + (error instanceof Error ? error.message : String(error)))
+        }
+        mounted.delete(id)
+      }
+      return { ok: true, enabled: false, disabled: [...disabled] }
+    }
+    const outcome = await ensureMounted(id)
+    return { ok: true, enabled: true, mounted: outcome.mounted, ...(outcome.mounted === false ? { mountReason: outcome.reason ?? '' } : {}) }
+  }
+
+  /** 当前被关掉的渠道（页面渲染开关态用）。 */
+  function disabledLanes() {
+    return [...disabled]
   }
 
   /** 健康账本快照（`GET /health` 的正文）。 */
@@ -493,11 +547,39 @@ export function createKeyedManager(deps = {}) {
     probeAllKeys,
     probeBalance,
     probeChat,
+    setEnabled,
+    disabledLanes,
     catalogDiagnostics,
     snapshot,
     availability,
     healthSnapshot,
     resetHealth,
+  }
+}
+
+/** 读「被关掉的车道」清单（文件坏掉就当空集，warn 一次，绝不抛）。 */
+function loadDisabled(file, logger) {
+  if (typeof file !== 'string' || file === '' || !existsSync(file)) return []
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8'))
+    const list = Array.isArray(parsed?.disabled) ? parsed.disabled : []
+    return list.filter((item) => typeof item === 'string' && item !== '')
+  } catch (error) {
+    logger?.warn?.('[dsh-free-model] 渠道开关文件读不出来：' + (error instanceof Error ? error.message : String(error)))
+    return []
+  }
+}
+
+/** 原子写「被关掉的车道」清单。失败只 warn：开关是增强，不能反过来把页面打死。 */
+function saveDisabled(file, ids, logger) {
+  if (typeof file !== 'string' || file === '') return
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    const tmp = file + '.tmp-' + process.pid
+    writeFileSync(tmp, JSON.stringify({ version: 1, disabled: [...ids].sort() }, null, 2), 'utf8')
+    renameSync(tmp, file)
+  } catch (error) {
+    logger?.warn?.('[dsh-free-model] 渠道开关写盘失败：' + (error instanceof Error ? error.message : String(error)))
   }
 }
 
