@@ -147,7 +147,9 @@ const KEYED_CHANNELS_BASE = [
       + '换网络/等风控解除再试。**探测通过（401）与真实对话（403）可能不一致**，两个结果都要看。',
     evidence: '2026-10-25 GET https://api.groq.com/openai/v1/models → 401 {"error":{"code":"invalid_api_key"}}（端点存在且 OpenAI 形状）；'
       + '2026-10-26 边缘 403 Forbidden，带/不带 key 同码，key 有效性未判定：POST /chat/completions（openai/gpt-oss-120b）→ 403 / 307ms，'
-      + 'server: cloudflare、cf-ray …-SIN，匿名 GET /models 与 POST /chat/completions 同样 403',
+      + 'server: cloudflare、cf-ray …-SIN，匿名 GET /models 与 POST /chat/completions 同样 403。'
+      + ' ⚠️ **同日晚些时候复测已回到 401**（由复核任务独立复现）：那次 403 是**边缘拦截的瞬时态**，不是渠道坏了 ——'
+      + ' 这正好印证了健康账本里「403 判冷却、不判永久吊销」那条改动。',
     unknown: true,
     unknownFields: ['models', 'freeTier'],
     models: [
