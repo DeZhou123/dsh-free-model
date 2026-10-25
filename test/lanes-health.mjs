@@ -446,6 +446,18 @@ await check('reset 是权威动作：清空之后不许被盘上的旧记录合�
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+// ── 0.6.0：403 不是「key 坏了」（B 车道实测 Groq 的 Cloudflare 403）────────────
+await check('403 判冷却而不是永久吊销：它可能是边缘拦截或权限问题，与 key 无关', () => {
+  const byStatus = classifyFailure({ status: 403, kind: 'forbidden' })
+  assert.equal(byStatus.state, 'cooldown', '403 被永久吊销了：' + JSON.stringify(byStatus))
+  assert.ok(Number.isFinite(byStatus.cooldownMs), '403 的冷却时长应当是有限的')
+  assert.ok(byStatus.reason.includes('不一定'), '原因要说清「不一定是 key 的问题」：' + byStatus.reason)
+  // 401 仍然是永久吊销 —— 那条证据是确定的。
+  assert.equal(classifyFailure({ status: 401, kind: 'invalid-key' }).state, 'revoked')
+  // 带 invalid-key 字样的 403 仍按 key 处理（上游自己说了凭据无效）。
+  assert.equal(classifyFailure({ status: 403, kind: 'invalid-key' }).state, 'revoked')
+})
 rmSync(root, { recursive: true, force: true })
 
 console.log('pass=' + passed + ' fail=' + failures.length)

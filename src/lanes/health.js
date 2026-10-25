@@ -102,13 +102,32 @@ export function classifyFailure(input, options) {
     ? Math.floor(Number(source.retryAfterMs))
     : undefined
 
-  // ① key 无效：判死。不会自己恢复，只有换 key 才能救。
-  if (status === 401 || status === 403 || isInvalidKeyKind(kind) || isInvalidKeyCode(code)) {
+  // ① 401 / invalid-key：key 无效 → 判死。不会自己恢复，只有换 key 才能救。
+  //
+  // ⚠️ **403 不在这里**（2026-10-26 实测改的）：403 是个多义状态码，而它最常见的两种含义
+  // 都不是「你的 key 坏了」——
+  //
+  //   · **边缘/WAF 拦截**：B 车道实测到 Groq 回 `403 Forbidden`（`server: cloudflare`），
+  //     带 key 与不带 key **完全同一个响应**；key 有效性根本无从判断；
+  //   · **权限不足**：key 有效，但这个模型/接口没开通。
+  //
+  // 把它判成「永久吊销」的后果是：一条其实能用的渠道被永久钉死，用户看到「换个 key」
+  // 去换了一把新 key —— 而问题根本不在 key 上。所以 403 归到**冷却**（保守的 30 分钟），
+  // 并且在原因里说清「不一定是 key 的问题」。
+  if (status === 401 || isInvalidKeyKind(kind) || isInvalidKeyCode(code)) {
     return {
       state: 'revoked',
       cooldownMs: Infinity,
       reason: 'key 被拒（401/invalid-key），换个 key',
       retryable: false,
+    }
+  }
+  if (status === 403 || kind === 'forbidden') {
+    return {
+      state: 'cooldown',
+      cooldownMs: BASE_TRANSIENT_MS,
+      reason: '上游回 403（不一定是 key 失效：可能是边缘/WAF 拦截，或这个模型没权限）—— 等一会重试，或换模型',
+      retryable: true,
     }
   }
 
