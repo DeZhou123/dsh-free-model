@@ -305,13 +305,33 @@ await check('探测超时 → kind=timeout，并说明「key 本身未必有问�
   assert.match(result.reason, /key 本身未必有问题/)
 })
 
-await check('网络错误 → kind=network，并带上底层原因', async () => {
+await check('DNS 解析失败 → kind=dns（不是笼统的 network）', async () => {
+  // 0.6.0：DNS / TLS / 网络三档分开。合成一档时给的处置是「国内渠道不需要代理」，
+  // 而 DNS 失败该查的是域名拼写与本机 DNS —— 方向不同。
   const result = await probeLaneKey(openrouter, {
     apiKey: FAKE_KEY,
     fetchImpl: async () => { throw new Error('getaddrinfo ENOTFOUND openrouter.ai') },
   })
-  assert.equal(result.kind, 'network')
+  assert.equal(result.kind, 'dns')
   assert.match(result.reason, /ENOTFOUND/)
+  assert.match(result.reason, /DNS/)
+})
+
+await check('TLS 握手失败 → kind=tls（提示查代理与证书链，不误导到 key）', async () => {
+  const result = await probeLaneKey(openrouter, {
+    apiKey: FAKE_KEY,
+    fetchImpl: async () => { throw new Error('unable to verify the first certificate (UNABLE_TO_VERIFY_LEAF_SIGNATURE)') },
+  })
+  assert.equal(result.kind, 'tls')
+  assert.match(result.reason, /证书|代理/)
+})
+
+await check('其他传输失败仍归 kind=network', async () => {
+  const result = await probeLaneKey(openrouter, {
+    apiKey: FAKE_KEY,
+    fetchImpl: async () => { throw new Error('socket hang up') },
+  })
+  assert.equal(result.kind, 'network')
 })
 
 await check('已下线的渠道不探测（retired 说明没有意义）', async () => {

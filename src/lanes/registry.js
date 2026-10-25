@@ -122,41 +122,45 @@ function normalizeAll(records) {
  * }}
  */
 export function buildRegistry(layers = {}) {
-  const shipped = [...nativeAccountRecords(), ...serviceRecords()]
+  // ⚠️ 随包的自带 key 车道**不是**一层，而是**随包层**的一部分。
+  //
+  // 2026-10-26 修（本插件的 P0-2，审计发现）：「加渠道不用发版」这句承诺原来对 keyed 不成立 ——
+  // 远程/本地目录里的 keyed 渠道被吃进 merged 之后，又因为只取
+  // byKind('account') / layers.keyed / byKind('service') 而被**静默丢掉**（连 rejected 都不进），
+  // 于是用户按文档往 channels.local.json 里加一条 keyed 渠道，页面上一片平静。
+  //
+  // 现在的分层：随包的 nativeAccountRecords + serviceRecords + layers.keyed 一起当 **shipped**，
+  // 再让 remote / local 按 id 覆盖它 —— 与 README 里写的三层语义终于一致了。
+  const shipped = [
+    ...nativeAccountRecords(),
+    ...serviceRecords(),
+    ...(Array.isArray(layers.keyed) ? layers.keyed : []),
+  ]
   const merged = mergeCatalogs([
     { layer: 'shipped', channels: shipped },
     { layer: 'remote', channels: layers.remote ?? [] },
     { layer: 'local', channels: layers.local ?? [] },
   ])
 
-  // 自带 key 车道也走一遍同样的校验：它们的字段来自另一个模块（甚至远程目录），
-  // 但**记录形状必须一致**，否则页面又要为「keyed 多一个字段」写分支。
-  const keyed = []
-  const keyedRejected = []
-  for (const raw of Array.isArray(layers.keyed) ? layers.keyed : []) {
-    const result = normalizeChannelRecord(raw, 'shipped')
-    if (result.ok) keyed.push(result.channel)
-    else keyedRejected.push(result.reason)
-  }
-
   const byKind = (kind) => merged.channels.filter((channel) => channel.kind === kind)
   const channels = [
     ...byKind('account'),
-    ...keyed,
+    // keyed 是**合并后**的那一批：随包的 30 条 + 远程/本地新增或覆盖的那些。
+    ...byKind('keyed'),
     ...byKind('service'),
   ]
   const counts = {
     account: byKind('account').length,
-    keyed: keyed.length,
+    keyed: byKind('keyed').length,
     service: byKind('service').length,
     total: channels.length,
   }
   return {
     channels,
-    rejected: [...merged.rejected, ...keyedRejected],
-    byLayer: { ...merged.byLayer, shipped: merged.byLayer.shipped + keyed.length },
-    fingerprint: catalogFingerprint(channels),
+    rejected: merged.rejected,
+    byLayer: merged.byLayer,
     counts,
+    fingerprint: catalogFingerprint(channels),
   }
 }
 
@@ -188,9 +192,24 @@ export function channelById(channels, id) {
  * }} runtime
  */
 export function projectRegistryView(channels, runtime = {}) {
+  /**
+   * 「本插件自己挂了哪些路由」有三种形态，**三种都要认**。
+   *
+   * ⚠️ 2026-10-26 修（本插件自己的 P0，被测试替身掩盖了很久）：
+   * `index.js` 传进来的是一张 **Map**（`channels: Map<route, mounted>`），
+   * 而这里原来只判 `Set` 与数组 —— 两个分支都不命中，于是`mounted` 恒为空集，
+   * 结果 **buddy / workbuddy 在 `/channels` 里永远是"不可用：通道未挂载"**，
+   * 而它们其实挂得好好的。页面显示的是最容易被相信的那种错：一个具体的、
+   * 指向别处（宿主日志）的原因。
+   *
+   * 教训写在这里：**"我传的形状"与"你读的形状"是两处独立事实**，
+   * 只认一种形态的判据迟早会在某次重构后静默变成"什么都读不到"。
+   */
   const mounted = runtime.nativeMounted instanceof Set
     ? runtime.nativeMounted
-    : new Set(Array.isArray(runtime.nativeMounted) ? runtime.nativeMounted : [])
+    : runtime.nativeMounted instanceof Map
+      ? new Set(runtime.nativeMounted.keys())
+      : new Set(Array.isArray(runtime.nativeMounted) ? runtime.nativeMounted : [])
   return channels.map((channel) => {
     const readiness = readinessOf(channel, runtime, mounted)
     return {

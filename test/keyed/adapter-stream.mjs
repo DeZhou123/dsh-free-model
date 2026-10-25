@@ -485,6 +485,43 @@ await checkAsync('baseURL 占位符未替换：stream 直接拒（不发一个�
   assert.match(encodedRun.error.message, /\{ACCOUNT_ID\}/)
 })
 
+
+// ── 0.6.0：断流必须当失败（审计的 P0-3）─────────────────────────────────────
+
+await checkAsync('断流：有内容但没有 [DONE] / finish_reason → finish.kind=error + STREAM_CUT', async () => {
+  // 真实场景：网关在长回答中途掐连接。原来这种情况被判成 kind='stop'，
+  // 页面显示半截回答且**没有任何错误**，健康账本还记成一次成功。
+  const seen = []
+  const adapter = createKeyedAdapter({
+    lane: { ...LANE, id: 'openrouter-free' },
+    apiKey: 'k',
+    timeoutMs: 5_000,
+    fetchImpl: sseFetch([frame(chunkOf({ content: '半句话' }))]),
+    onOutcome: (event) => seen.push(event),
+  })
+  const { chunks, error } = await runStream(adapter)
+  assert.equal(error, undefined, '断流不该抛错（宿主需要 finish 里那条失败说明）：' + error?.message)
+  const finish = chunks.find((piece) => piece.type === 'finish')
+  assert.ok(finish !== undefined, '没有 finish 事件')
+  assert.equal(finish.reason.kind, 'error', '断流被判成正常结束：' + JSON.stringify(finish.reason))
+  assert.equal(finish.reason.failure.code, 'STREAM_CUT')
+  assert.equal(textOf(chunks), '半句话', '已经吐出来的内容不该被吞掉')
+  assert.equal(seen.length, 1, '断流的回执次数不对：' + seen.length)
+  assert.equal(seen[0].ok, false, '断流被回执成成功 —— 健康账本会把它记成 OK')
+})
+
+await checkAsync('正常结束不误伤：[DONE] 与 finish_reason 两种收尾都算说完', async () => {
+  const cases = [
+    ['带 [DONE]', [frame(chunkOf({ content: '好' })), frame('[DONE]')]],
+    ['只有 finish_reason', [frame(chunkOf({ content: '好' })), frame({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })]],
+  ]
+  for (const [label, frames] of cases) {
+    const adapter = createKeyedAdapter({ lane: { ...LANE, id: 'openrouter-free' }, apiKey: 'k', timeoutMs: 5_000, fetchImpl: sseFetch(frames) })
+    const { chunks } = await runStream(adapter)
+    const finish = chunks.find((piece) => piece.type === 'finish')
+    assert.equal(finish?.reason?.kind, 'stop', label + ' 被误判：' + JSON.stringify(finish?.reason))
+  }
+})
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：')

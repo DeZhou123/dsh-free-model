@@ -161,6 +161,16 @@ export function createRoutes(deps) {
         const snapshot = await manager.refresh()
         return send(200, { ok: true, ready: Object.keys(snapshot.ready ?? {}).length })
       }
+      if (method === 'POST' && routePath === '/key/probe-all') {
+        const manager = deps.keyed?.manager?.()
+        if (manager === undefined) return fail(503, '自带 key 车道未就绪（插件还没完成装配，或该模块缺失）')
+        if (typeof manager.probeAllKeys !== 'function') return fail(503, '这个版本的管理器没有批量探测')
+        const body = await readJson(req)
+        const onlyConfigured = body?.onlyConfigured !== false
+        const force = body?.force === true
+        const outcome = await manager.probeAllKeys({ onlyConfigured, force })
+        return send(200, { ok: true, ...outcome })
+      }
       // ── 渠道健康（0.6.0）：上次真打上游的结果 + 冷却到什么时候 ──────────────
       //
       // 与 `/channels` 的分工：那里是**目录与就绪**（有哪些渠道、凭据配了没），

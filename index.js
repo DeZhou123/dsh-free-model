@@ -43,7 +43,7 @@ import {
   nativeAccountRecords,
   projectRegistryView,
 } from './src/lanes/registry.js'
-import { catalogCacheFile, fetchRemoteCatalog } from './src/lanes/remote.js'
+import { catalogCacheFile, fetchRemoteCatalog, parseCatalogBody } from './src/lanes/remote.js'
 import { checkUpdate, updateCacheFile } from './src/lanes/update.js'
 import { SERVICE_PROBE_FAILURE_TTL_MS, decodeCredentialValue, probeAllServiceLanes } from './src/lanes/service.js'
 import { poolView, ensureFallbackPool, resolveDshHome } from './src/pool.js'
@@ -317,17 +317,47 @@ export function apply(ctx, config = {}) {
    */
   const probeServices = async (force = false) => {
     const now = Date.now()
-    const fresh = now - serviceProbes.at < 30_000
-    const backing = now - serviceProbes.failedAt < SERVICE_PROBE_FAILURE_TTL_MS
-    if (!force && fresh && !backing) return serviceProbes.byId
     const lanes = registrySnapshot().channels.filter((channel) => channel.kind === 'service')
-    const byId = await probeAllServiceLanes(lanes, {
-      readCredential,
-      ...(config.serviceProbeFetcher !== undefined ? { fetchImpl: config.serviceProbeFetcher } : {}),
+
+    /**
+     * 每条车道各自的 TTL：**成功的车道路 30 秒，失败的那条按退避重探**。
+     *
+     * ⚠️ 2026-10-26 修（审计的 P1-1，原判据写反了）：
+     * 旧代码是
+     *
+     *     const backing = now - failedAt < FAILURE_TTL
+     *     if (!force && fresh && !backing) return byId
+     *
+     * 而 `failedAt` 在**任何一条**车道不是 ready 时就被设成 now —— 于是 `backing`
+     * 恒为 true，缓存**永不复用**。表现为：opencode 没起的时候，每次打开设置页、
+     * 每次切到本地页、每次 `/channels` 都真打三条本地探针（每条 3 秒超时）。
+     * 注释写的是「失败退避更久」，实际是「失败时完全不退避」——判据与意图相反，
+     * 而它是**静默**的（没有日志、没有断言，只是慢）。
+     *
+     * 现在：成功 30 秒、失败 30 秒（失败那条不重打，但**别的**车道该探还探），
+     * 且逐条合并。附带好处：一次探测只打真正过期的那几条。
+     */
+    const TTL_MS = 30_000
+    const FRESH_MS = Math.min(SERVICE_PROBE_FAILURE_TTL_MS, TTL_MS)
+    const cached = serviceProbes.byId ?? {}
+    const stale = lanes.filter((lane) => {
+      const row = cached[lane.id]
+      if (row === undefined) return true
+      const at = Number.isFinite(row.at) ? row.at : serviceProbes.at
+      const ttl = row.state === 'ready' ? TTL_MS : FRESH_MS
+      return now - at >= ttl
     })
+    if (!force && serviceProbes.at !== 0 && stale.length === 0) return cached
+
+    const byId = { ...cached }
+    if (stale.length > 0) {
+      const fresh = await probeAllServiceLanes(stale, {
+        readCredential,
+        ...(config.serviceProbeFetcher !== undefined ? { fetchImpl: config.serviceProbeFetcher } : {}),
+      })
+      for (const [id, row] of Object.entries(fresh)) byId[id] = { ...row, at: now }
+    }
     serviceProbes.at = now
-    const anyDown = Object.values(byId).some((row) => row.state !== 'ready')
-    serviceProbes.failedAt = anyDown ? now : 0
     serviceProbes.byId = byId
     return byId
   }
@@ -706,13 +736,30 @@ const ALL_LANES = Object.freeze([
 function readLocalCatalog(file, logger) {
   if (!existsSync(file)) return []
   try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8'))
-    const channels = Array.isArray(parsed?.channels) ? parsed.channels : []
-    return channels
+    const text = readFileSync(file, 'utf8')
+    /**
+     * ⚠️ 本地覆盖文件与远程目录必须**过同一把尺子**（2026-10-26 修，审计的 P1-5）。
+     *
+     * 原来这里只做 JSON.parse 然后取 .channels：版本不对、文件几个 GB、
+     * 顶层是个数组 —— 全都能进来。而远程那条路走 parseCatalogBody，
+     * 有 256KB 字节上限与 catalogVersion === 1 的整份拒绝。
+     *
+     * 同一份数据、两条路径、两套判据，迟早出现「远程拒绝、本地接受」的鬼故事；
+     * 更实际的风险是 **apply 阶段同步读一个巨大文件**把事件循环卡住。
+     */
+    const parsed = parseCatalogBody(text)
+    if (parsed.ok !== true) {
+      logger?.warn?.(
+        '[dsh-free-model] 本地渠道覆盖文件不合规，已忽略（' + file + '）：' + parsed.reason
+        + '；插件继续用随包 + 远程目录',
+      )
+      return []
+    }
+    return parsed.channels
   } catch (error) {
     logger?.warn?.(
-      `[dsh-free-model] 本地渠道覆盖文件读不出来（${file}）：`
-      + `${error instanceof Error ? error.message : String(error)}；已忽略，插件继续用随包 + 远程目录`,
+      '[dsh-free-model] 本地渠道覆盖文件读不出来（' + file + '）：'
+      + (error instanceof Error ? error.message : String(error)) + '；已忽略，插件继续用随包 + 远程目录',
     )
     return []
   }

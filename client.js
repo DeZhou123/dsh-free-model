@@ -75,7 +75,7 @@ window.__ModuleLoader__.load({
      * ⚠️ 放在工厂顶部而不是挨着 `probeText`：本文件记载过「const 声明放在组件之后
      * 造成 TDZ 白屏」的教训（见文件头的写法约束），新常量一律先声明再使用。
      */
-    const PROBE_KIND_SUFFIXES = ['Ok', 'NoKey', 'MissingConfig', 'InvalidKey', 'Forbidden', 'RateLimited', 'Quota', 'NotFound', 'BadRequest', 'ServerError', 'Network', 'Timeout']
+    const PROBE_KIND_SUFFIXES = ['Ok', 'NoKey', 'MissingConfig', 'InvalidKey', 'Forbidden', 'RateLimited', 'Quota', 'NotFound', 'BadRequest', 'ServerError', 'Network', 'Timeout', 'Dns', 'Tls']
 
     const NS = 'settings.freeModel'
     /** 页内页签的记忆键（各插件各存一份，互不覆盖）。 */
@@ -293,6 +293,10 @@ window.__ModuleLoader__.load({
       keyedProbeServerError: '上游故障（与 key 无关）',
       keyedProbeNetwork: '连不上上游',
       keyedProbeTimeout: '探测超时',
+      keyedProbeDns: '域名解析不了（DNS）',
+      keyedProbeTls: 'TLS 握手失败（证书/代理）',
+      keyedProbeDns: '域名解析不了（DNS）',
+      keyedProbeTls: 'TLS 握手失败（证书/代理）',
 
       // ── 渠道健康（0.6.0）：与「就绪」分开说 ────────────────────────────────
       keyedHealthOk: '健康',
@@ -303,6 +307,9 @@ window.__ModuleLoader__.load({
       keyedHealthLeft: '还有 {left}',
       keyedHealthJustOk: '冷却刚到期，只会放一次探测',
       keyedResetHealth: '清掉健康状态',
+      keyedProbeAll: '测试全部已配置',
+      keyedProbingAll: '逐条测试中…',
+      keyedProbeAllDone: '已测试 {probed} 条（跳过未配置 {skipped} 条）',
       keyedHealthResetDone: '健康状态已清空（下次探测重新记账）',
       keyedSearch: '搜索渠道 / 凭据名 / 模型',
       keyedFilterAll: '全部',
@@ -518,6 +525,8 @@ window.__ModuleLoader__.load({
       keyedProbeServerError: 'upstream failure (unrelated to the key)',
       keyedProbeNetwork: 'cannot reach the upstream',
       keyedProbeTimeout: 'probe timed out',
+      keyedProbeDns: 'DNS resolution failed',
+      keyedProbeTls: 'TLS handshake failed (certificate/proxy)',
 
       keyedHealthOk: 'Healthy',
       keyedHealthCooldown: 'Cooling down',
@@ -527,6 +536,9 @@ window.__ModuleLoader__.load({
       keyedHealthLeft: '{left} left',
       keyedHealthJustOk: 'Cooldown just expired; only one probe is allowed',
       keyedResetHealth: 'Clear health state',
+      keyedProbeAll: 'Probe all configured',
+      keyedProbingAll: 'Probing one by one…',
+      keyedProbeAllDone: 'Probed {probed} channel(s), skipped {skipped} without a key',
       keyedHealthResetDone: 'Health state cleared (the next probe records again)',
       keyedSearch: 'Search channel / credential / model',
       keyedFilterAll: 'All',
@@ -554,16 +566,40 @@ window.__ModuleLoader__.load({
      * @param {'GET'|'POST'|'DELETE'} [method] 默认「有 body 就 POST，没有就 GET」。
      *        DELETE 必须显式指定：浏览器不会因为「有没有 body」自己换方法，
      *        而 `/key` 的删除语义与保存**完全不同**（一个写凭据、一个删凭据）。
+     * @param {{ timeoutMs?: number }} [options]
+     *
+     * ## 为什么必须有超时（0.6.0 修，审计的 P0-5）
+     *
+     * 后端每条长操作都有自己的超时（探测 8 秒、目录 8 秒、本地服务探针 3 秒），
+     * 而**前端一条都没有**。后端一旦挂住（宿主忙、连接被中间层吃掉），按钮就永远停在
+     * 「保存中…」—— 用户既不知道失败了，也没法重试，只能刷新页面。
+     *
+     * 默认 12 秒：比后端最长的那条（8 秒）留出余量，又短到用户愿意等。
+     * 起服务那条单独给 45 秒（spawn + 首次握手可能很慢，那是**已知**的长操作）。
      */
-    async function call(path, body, method) {
+    async function call(path, body, method, options) {
       const verb = method ?? (body === undefined ? 'GET' : 'POST')
-      const response = await fetch(API + path, {
-        method: verb,
-        headers: body === undefined
-          ? { accept: 'application/json' }
-          : { 'content-type': 'application/json', accept: 'application/json' },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      })
+      const timeoutMs = Number.isFinite(options?.timeoutMs) ? Number(options.timeoutMs) : 12_000
+      // AbortSignal.timeout 在旧 Safari 上没有；没有就退回无超时（不让整页因为缺 API 崩掉）。
+      const makeSignal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+      const signal = makeSignal ? AbortSignal.timeout(timeoutMs) : undefined
+      let response
+      try {
+        response = await fetch(API + path, {
+          method: verb,
+          headers: body === undefined
+            ? { accept: 'application/json' }
+            : { 'content-type': 'application/json', accept: 'application/json' },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          ...(signal === undefined ? {} : { signal }),
+        })
+      } catch (error) {
+        // 超时要给一句**能指导动作**的话，而不是原始的 AbortError。
+        if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
+          throw new Error('本地后端 ' + String(Math.round(timeoutMs / 1000)) + ' 秒未响应（' + path + '）：宿主可能正忙，稍后重试')
+        }
+        throw error
+      }
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`)
       return payload
@@ -1581,6 +1617,8 @@ window.__ModuleLoader__.load({
        * 第二天打开页面就看到「这条还在 6 小时冷却里」，前者刷一次就没了。
        */
       const [health, setHealth] = useState(props.health ?? {})
+      /** 工具条的整页提示（批量探测的「探了 N 条、跳了 M 条」）。 */
+      const [note, setNote] = useState('')
       /** 搜索框内容（渠道名 / 凭据名 / 模型 id 都能匹配）。 */
       const [query, setQuery] = useState('')
       /**
@@ -1702,6 +1740,36 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
+      /**
+       * 批量探测「已配置凭据」的渠道。
+       *
+       * 串行 + 走缓存（后端决定）：免费额度按账号/IP 限流，并发只会把结论搅乱。
+       * 页面上要如实报「探了几条、跳了几条」—— 只显示一个转圈会让用户以为全探过了。
+       */
+      const probeAllOf = useCallback(async () => {
+        setBusy((current) => ({ ...current, __all: 'probe' }))
+        setNote('')
+        try {
+          const payload = await call('/key/probe-all', { onlyConfigured: true })
+          const results = Array.isArray(payload?.results) ? payload.results : []
+          setProbes((current) => {
+            const next = { ...current }
+            for (const row of results) next[row.lane] = row
+            return next
+          })
+          setNote(t('keyedProbeAllDone')
+            .replace('{probed}', String(payload?.probed ?? results.length))
+            .replace('{skipped}', String(payload?.skipped ?? 0)))
+          try {
+            const snapshot = await call('/health')
+            setHealth(snapshot?.lanes ?? {})
+          } catch { /* 健康层未接线 */ }
+        } catch (error) {
+          setNote(t('error') + ': ' + error.message)
+        } finally {
+          setBusy((current) => ({ ...current, __all: '' }))
+        }
+      }, [t])
       const probeKeyOf = useCallback(async (id) => {
         mark(id, 'probe')
         setErrorOf(id, '')
@@ -1805,10 +1873,18 @@ window.__ModuleLoader__.load({
                   onClick: () => setFilter(id),
                 }, filterLabel(id, t), h('span', { key: 'n', className: 'ow-chipnum' }, String(counts[id] ?? 0))))),
               h(Button, {
+                key: 'all',
+                kind: 'primary',
+                disabled: busy?.__all === 'probe',
+                onClick: () => void probeAllOf(),
+              }, busy?.__all === 'probe' ? t('keyedProbingAll') : t('keyedProbeAll')),
+              h(Button, {
                 key: 'rst',
                 onClick: () => void resetHealthOf(),
               }, t('keyedResetHealth')),
             ]),
+
+        note !== '' ? h('p', { key: 'note', className: 'ow-note ok' }, note) : null,
 
         channels === undefined
           ? h('p', { key: 'wait', className: 'ow-dim' }, t('busy'))
@@ -2357,7 +2433,9 @@ window.__ModuleLoader__.load({
         setNote(undefined)
         try {
           if (action === 'start') {
-            const started = await call('/opencode/start')
+            // 起服务是**已知**的长操作（spawn + 首次握手 2–5 秒，机器忙时更久）：
+            // 单独放宽超时，别让调用的默认截止时间把一次正常启动报成失败。
+            const started = await call('/opencode/start', undefined, 'POST', { timeoutMs: 45_000 })
             setNote({
               kind: started.ok ? 'ok' : 'error',
               text: started.ok
@@ -2512,7 +2590,7 @@ window.__ModuleLoader__.load({
         try {
           // 只有 opencode 走这条：别的服务车道的 `startable` 都是 false，
           // 页面上根本不会出现这个按钮（见 ServiceLaneCard）。
-          const started = await call('/opencode/start')
+          const started = await call('/opencode/start', undefined, 'POST', { timeoutMs: 45_000 })
           setNote({
             kind: started.ok ? 'ok' : 'error',
             text: started.ok ? t('opencodeRunning') + ' · :' + started.port : String(started.error ?? id),
@@ -3046,6 +3124,9 @@ window.__ModuleLoader__.load({
 .ow-probeerr[data-kind="invalid-key"],
 .ow-probeerr[data-kind="forbidden"],
 .ow-probeerr[data-kind="quota"] { color: var(--dsw-alias-state-error-primary); }
+/* DNS/TLS 与「网络不通」不同色：这两种要查的是配置与证书，不是"等一会"。 */
+.ow-probeerr[data-kind="dns"],
+.ow-probeerr[data-kind="tls"] { color: var(--dsw-alias-state-warning-primary, #f0a441); }
 .ow-servicemodels { margin: 0; font-size: 10.5px; overflow-wrap: anywhere; }
 
 /* ── 渠道健康徽章（0.6.0）：与「就绪」并排，四档必须分得开 ─────────────────── */

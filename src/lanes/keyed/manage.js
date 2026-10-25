@@ -351,6 +351,45 @@ export function createKeyedManager(deps = {}) {
     }
   }
 
+  /**
+   * 批量探测「已配置凭据」的车道。
+   *
+   * ## 为什么并发必须是 1（串行）
+   *
+   * 免费渠道的限流几乎全是**按 IP / 按账号**的，而这里探的又是同一个账号名下的多条渠道。
+   * 并发探测在页面上只会表现为「一半渠道莫名其妙被限流」—— 结论是错的，而且会**真的**
+   * 把额度窗口推远。30 条渠道 × 平均 1 秒 = 半分钟，用户等得起。
+   *
+   * ## 为什么跳过 `force`
+   *
+   * 批量按钮走**缓存**（成功 60 秒 / 失败 20 秒）：用户连点两次不该把上游打两轮。
+   * 想强刷就逐条点探测（那条才是 `force: true`）。
+   *
+   * @param {{ onlyConfigured?: boolean, force?: boolean }} [options]
+   * @returns {Promise<{ results: object[], probed: number, skipped: number }>}
+   */
+  async function probeAllKeys(options = {}) {
+    const onlyConfigured = options.onlyConfigured !== false
+    const force = options.force === true
+    const results = []
+    let skipped = 0
+    for (const row of records) {
+      if (row.kind !== 'keyed') continue
+      if (onlyConfigured) {
+        const state = keyStates[row.id]
+        // 免 key 渠道（没有 keystate）照样探：它们也有端点活着/死掉的区别。
+        const keyless = row.apiKeyEnv === null || row.apiKeyEnv === undefined
+        if (keyless === false && state?.configured !== true) { skipped += 1; continue }
+      }
+      try {
+        const result = await probeKey(row.id, { force })
+        results.push({ lane: row.id, ...result })
+      } catch (error) {
+        results.push({ lane: row.id, ok: false, kind: 'network', ms: 0, reason: text(error) })
+      }
+    }
+    return { results, probed: results.length, skipped }
+  }
   return {
     refresh,
     ensureMounted,
@@ -358,6 +397,7 @@ export function createKeyedManager(deps = {}) {
     saveKey,
     clearKey,
     probeKey,
+    probeAllKeys,
     snapshot,
     availability,
     healthSnapshot,

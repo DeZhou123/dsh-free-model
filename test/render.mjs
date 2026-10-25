@@ -818,6 +818,7 @@ check('KeyedPage 有搜索框、五个筛选胶囊、清健康按钮、底部汇
   assert.equal(chips.length, 5, '筛选胶囊应为 5 个，实际 ' + chips.length)
   const text = flat(tree)
   assert.ok(text.includes('keyedResetHealth'), '缺少「清掉健康状态」按钮')
+  assert.ok(text.includes('keyedProbeAll'), '缺少「测试全部已配置」按钮')
   assert.ok(text.includes('keyedSummary'), '缺少底部汇总行')
   assert.ok(text.includes('OpenRouter 免费模型'), '默认视图应渲染出渠道卡')
 })

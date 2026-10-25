@@ -350,5 +350,64 @@ await checkAsync('本地覆盖文件：不存在不报错、坏文件不拖垮�
 assert.equal(CATALOG_FORMAT_VERSION, 1)
 assert.ok(MAX_REMOTE_CATALOG_BYTES > 0)
 
+// ── 0.6.0 修的两个 P0（审计发现，且**都被测试替身掩盖过**）────────────────────
+
+check('P0-1：nativeMounted 传 Map 也要认（buddy/workbuddy 曾永远「未挂载」）', () => {
+  // 这条断言的价值在于**替身形状**：审计发现生产传的是 Map，而测试一直传数组，
+  // 于是「通道未挂载」这个错误结论在 24 条断言全绿的情况下活了下来。
+  const registry = buildRegistry()
+  const mountedMap = new Map([['buddy', {}], ['workbuddy', {}]])
+  const rows = projectRegistryView(registry.channels, { nativeMounted: mountedMap })
+  const buddy = rows.find((row) => row.id === 'buddy')
+  const workbuddy = rows.find((row) => row.id === 'workbuddy')
+  assert.equal(buddy.state, 'ready', 'Map 形态下 buddy 仍被判未挂载')
+  assert.equal(workbuddy.state, 'ready', 'Map 形态下 workbuddy 仍被判未挂载')
+  // 另外两种形态必须继续成立（三种形状都认，不是换一种丢一种）。
+  const asSet = projectRegistryView(registry.channels, { nativeMounted: new Set(['buddy', 'workbuddy']) })
+  assert.equal(asSet.find((row) => row.id === 'buddy').state, 'ready')
+  const asArray = projectRegistryView(registry.channels, { nativeMounted: ['buddy', 'workbuddy'] })
+  assert.equal(asArray.find((row) => row.id === 'buddy').state, 'ready')
+  // 真的没挂时仍然报不可用（别把这条修成「永远 ready」）。
+  const none = projectRegistryView(registry.channels, { nativeMounted: new Map() })
+  assert.equal(none.find((row) => row.id === 'buddy').state, 'unavailable')
+})
+
+check('P0-2：远程/本地目录里的 keyed 渠道必须进表（「加渠道不用发版」靠它）', () => {
+  const remoteKeyed = {
+    id: 'my-keyed-gateway',
+    displayName: '自建 keyed 网关',
+    kind: 'keyed',
+    baseURL: 'https://gateway.example.com/v1',
+    apiKeyEnv: 'MY_GATEWAY_KEY',
+    models: [{ id: 'gpt-x', name: 'GPT X' }],
+  }
+  const withRemote = buildRegistry({ keyed: [KEYED_SAMPLE], remote: [remoteKeyed] })
+  const row = withRemote.channels.find((channel) => channel.id === 'my-keyed-gateway')
+  assert.ok(row !== undefined, '远程 keyed 渠道被静默丢弃')
+  assert.equal(row.kind, 'keyed')
+  assert.equal(withRemote.counts.keyed, 2, 'counts.keyed 没把远程那条算进去：' + withRemote.counts.keyed)
+  // remote 覆盖随包：同 id 时 remote 的 displayName 生效。
+  const override = buildRegistry({
+    keyed: [KEYED_SAMPLE],
+    remote: [{ ...KEYED_SAMPLE, displayName: '被远程改名的随包车道' }],
+  })
+  const renamed = override.channels.find((channel) => channel.id === KEYED_SAMPLE.id)
+  assert.equal(renamed.displayName, '被远程改名的随包车道', '远程没能覆盖随包那条')
+  assert.equal(override.counts.keyed, 1, '覆盖不该变成两条')
+  // 本地层优先级最高。
+  const local = buildRegistry({
+    keyed: [],
+    remote: [{ ...remoteKeyed, displayName: '远程名' }],
+    local: [{ ...remoteKeyed, displayName: '本地名' }],
+  })
+  assert.equal(local.channels.find((c) => c.id === 'my-keyed-gateway').displayName, '本地名', '本地层没赢')
+})
+
+check('P0-2 反向：不合规的远程 keyed 记录要进 rejected，而不是悄悄消失', () => {
+  const bad = { id: 'bad keyed', displayName: 'x', kind: 'keyed', baseURL: 'https://x.example/v1', models: [] }
+  const registry = buildRegistry({ remote: [bad] })
+  assert.equal(registry.channels.some((c) => c.id === 'bad-keyed'), false)
+  assert.ok(registry.rejected.some((line) => line.includes('bad keyed')), '被拒的远程记录没有进 rejected：' + JSON.stringify(registry.rejected))
+})
 console.log(`通过 ${passed} 项`)
 console.log('全部通过')

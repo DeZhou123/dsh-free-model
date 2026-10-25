@@ -437,6 +437,21 @@ await checkAsync('回执：回执回调自己抛错不会把失败请求变成�
   // 这里要断言的是「回执抛错没有改变原来那个码」，具体码值由分类层负责。
   assert.equal(caught?.code, 'INVALID_CREDENTIAL', '原始失败码被回执的异常替换了：' + caught?.code)
 })
+await checkAsync('重试策略：串行限速渠道不自己重试，其余最多 1 次（上界可算）', () => {
+  const { createKeyedAdapter: mk } = { createKeyedAdapter }
+  const normal = mk({ lane: { ...laneById('groq'), id: 'groq' }, apiKey: 'k' })
+  const policy = normal.providerRetryPolicy()
+  assert.equal(policy.mode, 'normal')
+  assert.equal(policy.maxRetries, 1, '普通渠道的重试上限必须是 1（默认 5 次会刷穿免费额度）')
+  assert.ok(policy.backoff.initialDelayMs >= 1_000, '退避起点太短')
+  assert.ok(policy.backoff.maxDelayMs <= 30_000)
+  assert.ok(Array.isArray(policy.retryableCodes) && policy.retryableCodes.includes('RATE_LIMIT'))
+  // pollinations 是「同一 IP 间隔 ≥30 秒」的串行限速渠道：重试只会把窗口推远。
+  const serial = mk({ lane: { ...laneById('pollinations'), serialRateLimit: true }, apiKey: null })
+  const serialPolicy = serial.providerRetryPolicy()
+  assert.equal(serialPolicy.maxRetries, 0, '串行限速渠道不该自己重试')
+  assert.deepEqual(serialPolicy.retryableCodes, [])
+})
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：')

@@ -555,6 +555,8 @@ export const KEYLESS_CHANNELS = [
     evidence: '2026-10-25 GET https://text.pollinations.ai/models → 200，返回 [{"name":"openai-fast","tier":"anonymous","tools":true,...}]；官方 APIDOCS.md 原文确认 "POST https://text.pollinations.ai/openai (or /v1/chat/completions)" 且 "Free · no signup · rate-limited"',
     supportsModelList: false,
     modelsURL: 'https://text.pollinations.ai/models',
+    // 串行限速（同一 IP 间隔 ≥30 秒）：适配器据此**不做自己的重试**，只尊重 Retry-After。
+    serialRateLimit: true,
     unknown: true,
     unknownFields: ['models'],
     models: [

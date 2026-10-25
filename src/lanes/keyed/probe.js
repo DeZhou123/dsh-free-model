@@ -33,8 +33,19 @@
 import { PROBE_TIMEOUT_MS } from './keys.js'
 import { staticModels } from './catalog.js'
 
-/** 探测结果里允许出现的 `kind`（与 `keys.js` 的 PROBE_KINDS 同一份语义）。 */
+/** 网络失败的三档提示（与 `keys.js` 的 PROBE_KINDS 同一份语义）。 */
 const NETWORK_HINTS = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ECONNRESET|EPROTO|certificate|CERT_/i
+/** DNS 解析失败：地址根本不存在（域名字写错 / 本地 DNS 挂了）。 */
+const DNS_HINTS = /ENOTFOUND|EAI_AGAIN|getaddrinfo/i
+/**
+ * TLS/证书失败。
+ *
+ * ⚠️ 2026-10-26 补（审计的 P1-6）：原来它与 DNS 一起被压成 \'network\'，
+ * 给出的处置文案是「国内直连渠道一般不需要代理」—— 对证书错误是**方向错**的建议：
+ * 证书错多半是企业代理做了 MITM、系统时间不对、或代理自己签发了一张链不完整的证书，
+ * 这时候该查的是代理与证书链，跟'要不要代理'是两件事。
+ */
+const TLS_HINTS = /certificate|CERT_|self[- ]signed|UNABLE_TO_VERIFY|ERR_TLS|SSL/i
 
 /**
  * 挑这次探测要打哪个地址。
@@ -189,10 +200,18 @@ export async function probeLaneKey(lane, deps = {}) {
         ms: Date.now() - startedAt,
       }
     }
+    // 三档分开报：DNS 是「这个名字不存在」、TLS 是「握手不信任」、其余是「连得上但没通」。
+    // 合成一个 kind 会让用户拿着错误的下一步去折腾（见上面的 TLS_HINTS 注释）。
+    const kind = DNS_HINTS.test(text) ? 'dns' : TLS_HINTS.test(text) ? 'tls' : 'network'
+    const lead = kind === 'dns'
+      ? '域名解析不了（DNS）：检查拼写与本机 DNS'
+      : kind === 'tls'
+        ? 'TLS 握手失败（证书/代理）：检查代理与证书链，不是 key 的问题'
+        : (NETWORK_HINTS.test(text) ? '连不上上游' : '请求失败')
     return {
       ok: false,
-      kind: 'network',
-      reason: (NETWORK_HINTS.test(text) ? '连不上上游' : '请求失败') + '：' + text.slice(0, 200),
+      kind,
+      reason: lead + '：' + text.slice(0, 200),
       url: target.url,
       mode: target.mode,
       ms: Date.now() - startedAt,

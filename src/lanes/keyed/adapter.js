@@ -822,9 +822,40 @@ export class KeyedAdapter extends LlmAdapter {
     return { id, name: this.lane.displayName ?? this.lane.id }
   }
 
-  /** 超时/限流的重试策略交给宿主的默认表（RATE_LIMIT / SERVER / TIMEOUT / TRANSPORT 可重试）。 */
+  /**
+   * 本车道自己的重试策略。
+   *
+   * ## 为什么不再返回 undefined（0.6.0 修，审计的 P1-2）
+   *
+   * 返回 undefined 等于交给宿主的默认表：**maxRetries=5、初始 500ms、翻倍到 10s**。
+   * 对一般渠道这没问题；对**按 IP 串行限速**的免费渠道是灾难 ——
+   * pollinations 的规则是「同一 IP 两次请求间隔 ≥30 秒，快了就回 402 + Retry-After」，
+   * 而宿主的退避会在 500ms→1s→2s→4s→8s 内连打 5 次，正好把配额刷穿，
+   * 还让上游把这台机器的窗口推得更远。
+   *
+   * 两条判据：
+   * 1. `lane.serialRateLimit === true`（目录里显式声明的串行限速渠道）→ **不重试**，
+   *    完全交给上游的 Retry-After（宿主会优先采用我们带出的 `providerRetryAfterMs`）；
+   * 2. 其余渠道 → 最多 1 次重试，起点 2 秒、上限 30 秒。
+   *    「1 次」是刻意的：免费渠道重试到第三次基本都在撞同一堵墙，而用户能感觉到卡。
+   *
+   * 上界是**可算的**：最坏 1 次重试 + 2 秒等待，不会出现"一个请求在后台默默重试十几次"。
+   */
   providerRetryPolicy() {
-    return undefined
+    if (this.lane.serialRateLimit === true) {
+      return {
+        mode: 'normal',
+        maxRetries: 0,
+        retryableCodes: [],
+        backoff: { initialDelayMs: 1_000, maxDelayMs: 1_000, jitterRatio: 0 },
+      }
+    }
+    return {
+      mode: 'normal',
+      maxRetries: 1,
+      retryableCodes: ['RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT'],
+      backoff: { initialDelayMs: 2_000, maxDelayMs: 30_000, jitterRatio: 0.2 },
+    }
   }
 
   /** 本车道不上报图片计费口径（免费渠道没有可用的视觉 token 计价表）。 */
@@ -974,6 +1005,16 @@ export class KeyedAdapter extends LlmAdapter {
     let usage
     let finishReason
     let badFrames = 0
+    /**
+     * 上游是否**明确表示说完了**（收到 `[DONE]`，或收到带了 finish_reason 的帧）。
+     *
+     * ⚠️ 2026-10-26 修（审计发现的 P0-3）：原来只看 blockCount，于是
+     * 「上游断在半句话上」被判成 `finish.kind='stop'` —— 页面显示半截回答、
+     * 没有任何错误，而且 `#notify(true)` 还把这个渠道记成健康 OK。
+     * 免费渠道的流被网关掐断是**常态**（尤其是长回答与大工具调用），
+     * 把中断当成功会让用户以为模型就这水平。
+     */
+    let sawDone = false
     /** OpenAI 的 tool_calls[].index → 本适配器分配的块信息。 */
     const toolCalls = new Map()
 
@@ -1039,7 +1080,7 @@ export class KeyedAdapter extends LlmAdapter {
       }
 
       for await (const payload of this.#frames(response, abort.signal)) {
-        if (payload === '[DONE]') break
+        if (payload === '[DONE]') { sawDone = true; break }
         let chunk
         try {
           chunk = JSON.parse(payload)
@@ -1133,6 +1174,9 @@ export class KeyedAdapter extends LlmAdapter {
         }
         if (choice !== undefined && choice.finish_reason !== undefined && choice.finish_reason !== null) {
           finishReason = String(choice.finish_reason)
+          // 带了 finish_reason 就等于上游说「这一轮我说完了」——即使没有 [DONE]。
+          // 有些网关（以及部分自建代理）只发 finish_reason 不发 [DONE]。
+          sawDone = true
         }
       }
     } catch (error) {
@@ -1198,6 +1242,22 @@ export class KeyedAdapter extends LlmAdapter {
         kind: 'error',
         failure: { message: `${lane.id}: 上游返回了空响应（没有文本也没有工具调用）`, code: 'EMPTY_RESPONSE' },
       }
+    } else if (sawDone !== true && finishReason === undefined) {
+      // 断流：既没有 [DONE]，也没有 finish_reason，却已经有内容 —— 这是**上游掐断**，
+      // 不是模型说完。必须当失败报（并且按抖动记一次冷却）。
+      const classified = {
+        kind: FAILURE_KINDS.CONNECTION,
+        code: 'STREAM_CUT',
+        retryable: true,
+        advice: lane.id + '：上游把流掐断了（收到内容但没有结束标记）。这一般是网关/免费层超时或过载，重试一次通常能恢复。',
+        detail: '收到 ' + String(blockCount) + ' 个内容块后流终止，无 [DONE] 也无 finish_reason',
+      }
+      this.failure = { ...classified, at: new Date().toISOString(), model: modelKey }
+      this.#notify(false, classified)
+      reason = {
+        kind: 'error',
+        failure: { message: classified.advice, code: 'STREAM_CUT' },
+      }
     } else if (finishReason === 'length') {
       reason = { kind: 'max-tokens' }
     } else if (usableCalls > 0) {
@@ -1209,7 +1269,7 @@ export class KeyedAdapter extends LlmAdapter {
     }
     // 只有「真的产出了内容」才算一次成功。空响应 / 被内容过滤 / 纯思考都不回执：
     // 前者是上游抖动（该进冷却），后两者是**模型的输出选择**，不是渠道健康问题。
-    if (blockCount > 0 && finishReason !== 'content_filter') this.#notify(true)
+    if (reason.kind !== 'error' && blockCount > 0 && finishReason !== 'content_filter') this.#notify(true)
     yield { type: 'finish', reason }
   }
 

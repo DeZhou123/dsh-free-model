@@ -45,6 +45,9 @@ export const PROBE_KINDS = Object.freeze([
   'server-error',
   'network',
   'timeout',
+  // DNS / TLS 单独两档（0.6.0）：处置与「网络不通」不同，合成一个会让用户查错方向。
+  'dns',
+  'tls',
 ])
 
 /**
