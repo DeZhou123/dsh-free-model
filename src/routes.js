@@ -380,7 +380,14 @@ async function channelsOverview(deps) {
   }
   // 每条车道配了几把 key（0.6.0）：免费额度的实际倍数，页面上直接显示。
   const keyCounts = deps.keyed?.keyCounts?.() ?? {}
-  return { wired: true, ...view, keyCounts }
+  // 目录诊断：哪条车道的静态模型表与上游实时目录**一个都对不上**（0.6.0）。
+  // 页面据此在卡片上挂一句「上游已经没有这些模型了，点测试 key 刷新目录」。
+  const diagnostics = deps.keyed?.manager?.()?.catalogDiagnostics?.() ?? {}
+  const suspects = {}
+  for (const [laneId, row] of Object.entries(diagnostics)) {
+    if (row?.suspect) suspects[laneId] = row.suspect
+  }
+  return { wired: true, ...view, keyCounts, modelSuspects: suspects }
 }
 
 /**

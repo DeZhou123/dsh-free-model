@@ -804,6 +804,14 @@ export class KeyedAdapter extends LlmAdapter {
     this.catalogSource = 'static'
     this.catalogAt = 0
     this.catalogFailureAt = 0
+    /**
+     * 实时目录与静态表的**交集为空**时的怀疑标记（0.6.0）。
+     *
+     * 场景：上游把某条渠道的模型全改名了（或者这条渠道已经停掉、只剩边缘 200）。
+     * 此时实时目录里的 id 与静态表**一个都对不上**，用户照着静态表选模型会一个个 404。
+     * 记下来，页面就能说一句「上游目录里已经没有这条渠道的静态模型了」。
+     */
+    this.catalogSuspect = null
     /** 上游是否接受 `stream_options`（400 之后记住，不再问第二次）。 */
     this.streamUsageSupported = this.lane.streamUsage !== false
     /** 最近一次分类后的失败（页面渲染「这次为什么不能用」）。 */
@@ -1398,6 +1406,7 @@ export class KeyedAdapter extends LlmAdapter {
       this.catalogSource = 'live'
       this.catalogAt = now
       this.catalogFailureAt = 0
+      this.#noteCatalogDiff(rows)
       return rows
     } catch (error) {
       this.catalogFailureAt = now
@@ -1428,6 +1437,48 @@ export class KeyedAdapter extends LlmAdapter {
   /** 这条车道一共配了几把 key（页面/诊断用）。 */
   keyCount() {
     return this.apiKeys.length
+  }
+
+  /**
+   * 把「实时目录 vs 静态表」的差异记成一枚怀疑标记（0.6.0，审计的 P1-7）。
+   *
+   * ## 为什么值得记
+   *
+   * 静态表是**快照**。上游把模型改名/下架之后，静态表里的 id 会一个个失效，
+   * 而页面（在实时目录拉不到时）仍会照旧列出它们 —— 用户选一个、报一个 404，
+   * 逐个试过去才会意识到「这张表过期了」。
+   *
+   * 只记「**一个都对不上**」这一种情况：部分对不上是正常的（上游天天加新模型），
+   * 那种情况不需要提醒；而全军覆没基本只有一个解释 —— 这条渠道换了人间。
+   */
+  #noteCatalogDiff(liveRows) {
+    const staticRows = staticModels(this.lane)
+    if (staticRows.length === 0 || liveRows.length === 0) {
+      this.catalogSuspect = null
+      return
+    }
+    const liveIds = new Set(liveRows.map((row) => String(row.id).toLowerCase()))
+    const overlap = staticRows.filter((row) => liveIds.has(String(row.id).toLowerCase()))
+    this.catalogSuspect = overlap.length === 0
+      ? {
+          kind: 'renamed-or-retired',
+          liveCount: liveRows.length,
+          staticCount: staticRows.length,
+          // 只留前 3 个 id：页面要能说「比如 xxx 已经不在上游目录里了」。
+          staticSample: staticRows.slice(0, 3).map((row) => row.id),
+        }
+      : null
+  }
+
+  /** 目录诊断（页面用：来源、条数、怀疑标记）。不抛。 */
+  catalogDiagnostics() {
+    return {
+      source: this.catalogSource,
+      at: this.catalogAt,
+      liveCount: this.catalogSource === 'live' ? (this.catalogModels?.length ?? 0) : 0,
+      staticCount: staticModels(this.lane).length,
+      suspect: this.catalogSuspect,
+    }
   }
 
   /**

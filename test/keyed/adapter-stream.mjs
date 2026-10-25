@@ -32,6 +32,11 @@ async function checkAsync(name, fn) {
 
 const LANE = laneById('openrouter-free')
 
+/** 静态表里的第一个模型 id（用来造「部分交集」的实时目录）。 */
+function staticFirstId(lane) {
+  return lane.models[0].id
+}
+
 /** 造一个"只吐给定字节"的 fetch 替身（模拟 SSE 连接）。 */
 function sseFetch(chunks, { status = 200, headers = {} } = {}) {
   const encoder = new TextEncoder()
@@ -521,6 +526,39 @@ await checkAsync('正常结束不误伤：[DONE] 与 finish_reason 两种收尾�
     const finish = chunks.find((piece) => piece.type === 'finish')
     assert.equal(finish?.reason?.kind, 'stop', label + ' 被误判：' + JSON.stringify(finish?.reason))
   }
+})
+
+// ── 0.6.0：静态表与上游目录「零交集」时的怀疑标记（审计 P1-7）──────────────
+
+await checkAsync('目录零交集：标记 renamed-or-retired，并在诊断里给出两边条数', async () => {
+  const live = JSON.stringify({ data: [{ id: 'totally-new-model' }, { id: 'another-new-one' }] })
+  const adapter = createKeyedAdapter({
+    lane: { ...LANE, id: 'openrouter-free' },
+    apiKey: 'k',
+    timeoutMs: 5_000,
+    fetchImpl: async () => ({ status: 200, ok: true, headers: { get: () => null }, json: async () => JSON.parse(live), text: async () => live, body: null }),
+  })
+  await adapter.listModels('openrouter-free')
+  const diagnostics = adapter.catalogDiagnostics()
+  assert.equal(diagnostics.source, 'live')
+  assert.ok(diagnostics.suspect !== null, '零交集却没有标记：' + JSON.stringify(diagnostics))
+  assert.equal(diagnostics.suspect.kind, 'renamed-or-retired')
+  assert.equal(diagnostics.suspect.liveCount, 2)
+  assert.ok(diagnostics.suspect.staticCount >= 1)
+  assert.ok(Array.isArray(diagnostics.suspect.staticSample) && diagnostics.suspect.staticSample.length > 0)
+})
+
+await checkAsync('部分交集不误报（上游天天加模型，那不该是告警）', async () => {
+  const known = staticFirstId(LANE)
+  const live = JSON.stringify({ data: [{ id: known }, { id: 'brand-new-model' }] })
+  const adapter = createKeyedAdapter({
+    lane: { ...LANE, id: 'openrouter-free' },
+    apiKey: 'k',
+    timeoutMs: 5_000,
+    fetchImpl: async () => ({ status: 200, ok: true, headers: { get: () => null }, json: async () => JSON.parse(live), text: async () => live, body: null }),
+  })
+  await adapter.listModels('openrouter-free')
+  assert.equal(adapter.catalogDiagnostics().suspect, null, '部分交集被误报成零交集')
 })
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {

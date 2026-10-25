@@ -260,6 +260,7 @@ window.__ModuleLoader__.load({
       keyedModelSample: '模型样例',
       keyedOpenCatalogHint: '注意：这条渠道的模型目录**不要 key 也能读**，所以「通过」只证明地址活着；能不能真调还要看额度与鉴权。',
       keyedRejected: '有 {count} 条渠道记录没通过校验（已忽略，不影响其它渠道）：',
+      keyedSuspect: '⚠️ 上游目录里没有这条渠道的静态模型了（实时 {live} 个 vs 静态 {static} 个，零交集）：多半被改名或下架，点「测试 key」刷新目录',
       // ── 填 key / 测 key（0.4.1）─────────────────────────────────────────────
       keyedConfigured: '已配 {count}',
       keyedKeyState: 'key',
@@ -512,6 +513,7 @@ window.__ModuleLoader__.load({
       keyedModelSample: 'Sample models',
       keyedOpenCatalogHint: 'Note: this channel serves its model list without a key, so a passing probe only proves the address is alive — quota and auth are separate.',
       keyedRejected: '{count} channel record(s) failed validation (ignored; other channels are unaffected):',
+      keyedSuspect: '⚠️ None of this channel\'s static models appear in the upstream catalog (live {live} vs static {static}, no overlap): likely renamed or retired — press "Probe" to refresh the catalog',
       keyedConfigured: '{count} configured',
       keyedKeyState: 'key',
       keyedKeySet: 'set',
@@ -1409,7 +1411,7 @@ window.__ModuleLoader__.load({
      * - 回车即保存（粘贴 → Enter 是最短路径），但按钮同时存在（触屏没有回车）。
      */
     function KeyedCard(props) {
-      const { channel, t, keyState, probe, busy, error, onSave, onClear, onProbe, health, balance, onBalance } = props
+      const { channel, t, keyState, probe, busy, error, onSave, onClear, onProbe, health, balance, onBalance, suspect } = props
       const capability = channel?.capability ?? { tools: null, vision: null }
       const tools = capability.tools ?? null
       const vision = capability.vision ?? null
@@ -1570,7 +1572,18 @@ window.__ModuleLoader__.load({
                     'data-kind': String(probe.kind ?? ''),
                   }, probeText(probe, t))
                 : null,
-              // 目录免 key 可读的渠道：探测通过**不代表**你有额度。
+              // 上游目录与静态表一个都对不上：这条渠道多半换了人间（改名/停服）。
+        // 这句话必须显眼：用户照静态表选模型会一个个 404，而 404 会被读成"插件坏了"。
+        suspect
+          ? h('p', { key: 'susp', className: 'ow-statuserr', role: 'status' },
+              t('keyedSuspect')
+                .replace('{live}', String(suspect.liveCount ?? 0))
+                .replace('{static}', String(suspect.staticCount ?? 0))
+                + (Array.isArray(suspect.staticSample) && suspect.staticSample.length > 0
+                  ? '（例如 ' + suspect.staticSample.slice(0, 2).join('、') + '）'
+                  : ''))
+          : null,
+        // 目录免 key 可读的渠道：探测通过**不代表**你有额度。
               // 这句必须紧跟在探测结果下面（而不是卡片顶部），因为误读恰好发生在"看到通过"之后。
               channel?.openCatalog === true && probe?.ok === true
                 ? h('p', { key: 'oc', className: 'ow-hint ow-opencat' }, t('keyedOpenCatalogHint'))
@@ -1700,6 +1713,8 @@ window.__ModuleLoader__.load({
        * 第二天打开页面就看到「这条还在 6 小时冷却里」，前者刷一次就没了。
        */
       const [health, setHealth] = useState(props.health ?? {})
+      /** laneId → 静态表与上游目录一个都对不上的怀疑记录（0.6.0）。 */
+      const [suspects, setSuspects] = useState(props.modelSuspects ?? {})
       /** laneId → 配了几把 key（>1 时卡片上显示，0.6.0）。 */
       const [keyCounts, setKeyCounts] = useState(props.keyCounts ?? {})
       /** 余额查询结果（laneId → { ok, kind, amount, currency, reason }）。 */
@@ -1734,6 +1749,7 @@ window.__ModuleLoader__.load({
           if (payload.keyStates !== undefined && payload.keyStates !== null) setKeyStates(payload.keyStates)
           setRejected(Array.isArray(payload.rejected) ? payload.rejected : [])
           if (payload.keyCounts !== undefined && payload.keyCounts !== null) setKeyCounts(payload.keyCounts)
+          setSuspects(payload.modelSuspects ?? {})
         } catch (error) {
           setChannels([])
           setWired(false)
@@ -2032,6 +2048,7 @@ window.__ModuleLoader__.load({
                       t,
                       keyState: keyStates?.[channel.id],
                       keyCount: keyCounts?.[channel.id],
+                      suspect: suspects?.[channel.id],
                       probe: probes?.[channel.id],
                       health: health?.[channel.id],
                       balance: balances?.[channel.id],

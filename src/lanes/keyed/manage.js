@@ -379,6 +379,24 @@ export function createKeyedManager(deps = {}) {
     return healthSnapshot()
   }
 
+  /**
+   * 各条已挂载车道的**目录诊断**（含「静态表与上游目录一个都对不上」的怀疑标记）。
+   *
+   * 只问已挂载的：未挂载的车道没有适配器实例，也就没有实时目录可比较。
+   */
+  function catalogDiagnostics() {
+    const result = {}
+    for (const [laneId, entry] of mounted) {
+      try {
+        const diagnostics = entry.adapter?.catalogDiagnostics?.()
+        if (diagnostics !== undefined) result[laneId] = diagnostics
+      } catch {
+        // 单条诊断失败不该影响整页
+      }
+    }
+    return result
+  }
+
   /** 页面渲染用的同步快照（不发网络）。 */
   function snapshot() {
     return {
@@ -438,6 +456,7 @@ export function createKeyedManager(deps = {}) {
     probeKey,
     probeAllKeys,
     probeBalance,
+    catalogDiagnostics,
     snapshot,
     availability,
     healthSnapshot,
