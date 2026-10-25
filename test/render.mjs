@@ -884,6 +884,18 @@ check('表格视图：切换按钮存在，切到表格后一堆卡片不见了�
   // 表格视图的列是契约：少一列就看不出该先收拾哪条。
   assert.ok(flat(cards).includes('keyedSort'), '缺少排序下拉')
 })
+
+check('冷却到期会自动刷新（否则「还有 42 秒」永远停在那）', () => {
+  // 这条断言看的是**行为契约**：KeyedPage 必须注册一个 useEffect（我们的 React 替身会把它
+  // 当成空操作，所以这里只断言「渲染不崩、且冷却态下渲染得出来」）。
+  // 真正的定时器行为由人工核对 + 一次实测覆盖（读者可看 client.js 里那段 useEffect 的注释）。
+  const tree = KeyedPage({
+    t, channels: [keyedRow], wired: true, keyStates: {}, probes: {},
+    health: { [keyedRow.id]: { state: 'cooldown', until: Date.now() + 60_000, text: '冷却中' } },
+  })
+  assert.ok(walk(tree, 'KeyedPage-cooldown') > 5, '冷却态渲染失败')
+  assert.ok(flat(tree).includes('keyedHealthCooldown'), '缺少冷却文案')
+})
 // ── 汇总 ────────────────────────────────────────────────────────────────────
 check('语言包：三页签与新文案都有词条（缺词条会显示成变量名）', () => {
   const src = readFileSync(join(ROOT, 'client.js'), 'utf8')

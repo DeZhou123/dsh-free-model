@@ -1904,6 +1904,33 @@ window.__ModuleLoader__.load({
         void reload()
       }, [injected, reload])
 
+      /**
+       * 冷却到期时自动刷新一次（0.6.0）。
+       *
+       * ## 为什么值得做
+       *
+       * 冷却是有**到期时刻**的状态，而页面只是某一刻的快照：用户盯着「冷却中，还有 42 秒」
+       * 看一分钟，那行字不会自己变 —— 他会以为插件卡了，于是去点「清掉健康状态」（把一条
+       * 正常冷却的结论抹掉），或者干脆换个渠道。自动刷新把「等」这件事变得可见。
+       *
+       * 只在**最近的一个**到期时刻上挂一个定时器（不是 N 个），且最多等 5 分钟一次 ——
+       * 太远的未来的冷却没必要占用定时器（用户可能早就关页面了）。
+       */
+      useEffect(() => {
+        const now = Date.now()
+        let soonest = Infinity
+        for (const record of Object.values(health ?? {})) {
+          if (record?.state !== 'cooldown') continue
+          const until = Number(record.until)
+          if (!Number.isFinite(until) || until <= now) continue
+          soonest = Math.min(soonest, until)
+        }
+        if (soonest === Infinity) return undefined
+        const delay = Math.min(soonest - now + 1_000, 5 * 60 * 1000)
+        const timer = setTimeout(() => { void reload() }, delay)
+        return () => clearTimeout(timer)
+      }, [health, reload])
+
       const reportMeta = props.onMeta
       useEffect(() => {
         if (channels === undefined || reportMeta === undefined) return
