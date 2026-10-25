@@ -852,6 +852,28 @@ check('被拒的目录记录会渲染出来（否则本地覆盖文件写错时�
   })
   assert.ok(!flat(tree).includes('keyedRejected'), '没有被拒记录时不该显示这一行')
 })
+
+check('余额偏低用警告色（绿色 0.3 会让人以为一切正常）', () => {
+  const { lowBalance } = module.__test
+  assert.equal(typeof lowBalance, 'function', 'lowBalance 未导出')
+  assert.equal(lowBalance('0.3'), true)
+  assert.equal(lowBalance('0'), true)
+  assert.equal(lowBalance('12.5'), false)
+  // 读不出数字时**不报警**：误报会让人去充值一个其实够用的账号。
+  assert.equal(lowBalance('很多'), false)
+  assert.equal(lowBalance(''), false)
+  assert.equal(lowBalance(undefined), false)
+})
+
+check('卡片显示「上次实测」时刻（否则三天前的 401 与五分钟前的一样）', () => {
+  const withTime = KeyedCard({
+    channel: keyedRow, t,
+    health: { state: 'ok', lastOkAt: Date.now() - 60_000, halfOpen: false },
+  })
+  assert.ok(flat(withTime).includes('keyedLastAt'), '缺「上次实测」那一行')
+  const withoutTime = KeyedCard({ channel: keyedRow, t, health: { state: 'unknown' } })
+  assert.ok(!flat(withoutTime).includes('keyedLastAt'), '没测过时不该编一个时刻')
+})
 // ── 汇总 ────────────────────────────────────────────────────────────────────
 check('语言包：三页签与新文案都有词条（缺词条会显示成变量名）', () => {
   const src = readFileSync(join(ROOT, 'client.js'), 'utf8')

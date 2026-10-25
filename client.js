@@ -286,6 +286,7 @@ window.__ModuleLoader__.load({
       keyedProbeWait: '上游要求等 {left} 再试',
       keyedLaneOn: '已启用',
       keyedLaneOff: '已关闭',
+      keyedLastAt: '上次实测：{time}',
       keyedTry: '试一句话',
       keyedTrying: '试调中…',
       keyedTryOk: '真的通了（{ms} ms）：上游回了「{reply}」',
@@ -548,6 +549,7 @@ window.__ModuleLoader__.load({
       keyedProbeWait: 'upstream asks you to wait {left}',
       keyedLaneOn: 'enabled',
       keyedLaneOff: 'disabled',
+      keyedLastAt: 'Last test: {time}',
       keyedTry: 'Send one message',
       keyedTrying: 'Testing…',
       keyedTryOk: 'It really works ({ms} ms): upstream replied "{reply}"',
@@ -1504,6 +1506,12 @@ window.__ModuleLoader__.load({
               t('keyedModelSample') + '：' + channel.modelSample.slice(0, 5).join(' · ')
               + (channel.modelCount > 5 ? ' …' : ''))
           : null,
+        // 上一次真打上游的时刻（健康账本给的）：用来判断「这条结论有多新」。
+        // 没有它的话，一条三天前的 401 与五分钟前的 401 看起来一模一样。
+        (health?.lastOkAt || health?.lastFailureAt)
+          ? h('p', { key: 'at', className: 'ow-hint ow-probeat' },
+              t('keyedLastAt').replace('{time}', formatStamp(health.lastOkAt ?? health.lastFailureAt)))
+          : null,
         // 就绪/未就绪的**原文原因**（后端算的，页面不重算）。
         typeof channel?.reason === 'string' && channel.reason !== ''
           ? h('p', { key: 'why', className: 'ow-statuserr', role: 'status' }, t('reasonLabel') + '：' + safeText(channel.reason, 300))
@@ -1613,7 +1621,11 @@ window.__ModuleLoader__.load({
                     balance !== undefined && balance !== null
                       ? h('span', {
                           key: 'v',
-                          className: balance.ok === true ? 'ow-probeok' : 'ow-probeerr',
+                          // 余额偏低（< 1 单位）用警告色：这是「该充值/该换渠道了」的信号，
+                          // 而绿色的 0.3 会让人以为一切正常（市场横评里的「阈值预警」）。
+                          className: balance.ok === true
+                            ? (lowBalance(balance.amount) ? 'ow-probeerr' : 'ow-probeok')
+                            : 'ow-probeerr',
                           role: 'status',
                           'data-kind': String(balance.kind ?? ''),
                         }, balanceText(balance, t))
@@ -1682,6 +1694,22 @@ window.__ModuleLoader__.load({
       const title = known.includes(kind) ? t('keyedBalance' + probeKindSuffix(kind)) : kind
       const why = typeof balance.reason === 'string' && balance.reason !== '' ? '：' + safeText(balance.reason, 200) : ''
       return title + why
+    }
+
+    /**
+     * 余额是不是「快用完了」。
+     *
+     * 判据刻意保守：只认**能当数字读**且小于 1 的（大多数平台以美元/元计价，
+     * 1 是自然的分界）。读不出数字（"很多"/"$1,000.00" 这种）一律**不报警** ——
+     * 误报会让人去充值一个其实够用的账号，那比不报更烦。
+     */
+    function lowBalance(amount) {
+      const digits = String(amount ?? '').replace(/[^0-9.-]/g, '')
+      // ⚠️ 必须先判「剥完还有没有东西」：Number('') === 0，而 0 < 1 ——
+      // 不判的话，任何读不出数字的文案（"很多"）都会被报成「余额不足」。
+      if (digits === '' || digits === '.' || digits === '-') return false
+      const value = Number(digits)
+      return Number.isFinite(value) && value < 1
     }
 
     /** 凭据来源的人话（与后端 `describeSource` 同一套词汇）。 */
@@ -3407,6 +3435,7 @@ window.__ModuleLoader__.load({
 .ow-health[data-health="unknown"] { opacity: .72; }
 .ow-healthx { font-size: 10.5px; font-weight: 400; }
 .ow-opencat { font-size: 10.5px; opacity: .85; }
+.ow-probeat { font-size: 10.5px; }
 
 /* 渠道开关：关掉 ≠ 清除凭据（关掉只是停用，凭据留着） */
 .ow-lanetoggle {
@@ -3504,7 +3533,7 @@ window.__ModuleLoader__.load({
         // 0.4.1：探测结果 → 文案的两个纯函数（离线可断言，不需要 DOM）
         probeText, probeKindSuffix, describeKeySource,
         // 0.6.0：健康徽章 + 筛选胶囊（同样是纯函数 → 文案，离线可断言）
-        HealthPill, healthLabel, healthExtra, filterLabel, formatDuration, FILTERS,
+        HealthPill, healthLabel, healthExtra, filterLabel, formatDuration, FILTERS, lowBalance, balanceText,
       },
       inject: ['slots', 'locale'],
       apply(ctx) {
