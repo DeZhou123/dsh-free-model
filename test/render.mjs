@@ -965,6 +965,15 @@ check('状态条显示「上次装配」时刻（apply-ok 是「跑的是不是�
   })
   assert.ok(!flat(withoutApplied).includes('上次装配'), '没有 apply-ok 时不该有这一行')
 })
+
+check('凭据名旁边有「复制」按钮（手抄大写下划线名容易错一个字符）', () => {
+  const tree = KeyedCard({ channel: keyedRow, t })
+  const body = flat(tree)
+  assert.ok(body.includes('keyedCopyEnv'), '缺少「复制」按钮文案')
+  const copyButtons = collectElements(tree, (node) => typeof node.props?.title === 'string' && node.props.title === 'keyedCopyEnvHint')
+  assert.equal(copyButtons.length, 1, '复制按钮应当恰好一个（实际 ' + copyButtons.length + '）')
+  assert.equal(copyButtons[0].props.type, 'button', '复制⃒不要用 <a>（它不是导航）')
+})
 // ── 汇总 ────────────────────────────────────────────────────────────────────
 check('语言包：三页签与新文案都有词条（缺词条会显示成变量名）', () => {
   const src = readFileSync(join(ROOT, 'client.js'), 'utf8')

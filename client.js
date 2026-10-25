@@ -257,6 +257,9 @@ window.__ModuleLoader__.load({
       keyedEmpty: '暂无自带 key 渠道（渠道目录里可以随时加）',
       keyedEmptyHint: '渠道目录是三层叠加的：随包 / 远程 / 本地覆盖文件。点上面的「检查目录」拉一次远程目录，或往本地覆盖文件里加一条。',
       keyedEnv: '凭据名',
+      keyedCopyEnv: '复制',
+      keyedCopyEnvHint: '复制这个凭据名（去别处配变量时用）',
+      keyedCopied: '已复制',
       keyedGetKey: '去拿 key',
       keyedDocs: '文档',
       keyedFree: '免费额度',
@@ -530,6 +533,9 @@ window.__ModuleLoader__.load({
       keyedEmpty: 'No own-key channels yet (the channel catalog can add them any time)',
       keyedEmptyHint: 'The catalog stacks three layers: shipped / remote / local override file. Press “Check catalog” above to pull the remote layer, or add a record to the local file.',
       keyedEnv: 'Credential name',
+      keyedCopyEnv: 'Copy',
+      keyedCopyEnvHint: 'Copy this credential name (for configuring it elsewhere)',
+      keyedCopied: 'Copied',
       keyedGetKey: 'Get a key',
       keyedDocs: 'Docs',
       keyedFree: 'Free tier',
@@ -1549,6 +1555,20 @@ window.__ModuleLoader__.load({
       const [draft, setDraft] = useState('')
       const [reveal, setReveal] = useState(false)
       const configured = keyState?.configured === true
+      /**
+       * 复制凭据名。剪贴板不可用时**不报错**：那个名字就在旁边的 `<code>` 里，
+       * 用户手动选中即可 —— 为一个「顺手」的动作弹错误只会打断他。
+       */
+      const copyEnv = async (name) => {
+        try {
+          await navigator.clipboard.writeText(name)
+          setCopied(name)
+        } catch {
+          setCopied('')
+        }
+      }
+      /** 刚复制过的凭据名（用来把按钮文案换成「已复制」）。 */
+      const [copied, setCopied] = useState('')
       /** 这条车道配了几把 key（>1 时页面显示「N 把」并解释轮换）。 */
       const keyCount = Number.isFinite(props.keyCount) ? Number(props.keyCount) : null
       const masked = safeText(keyState?.masked, 48)
@@ -1622,6 +1642,15 @@ window.__ModuleLoader__.load({
           ? h('p', { key: 'env', className: 'ow-keyenv' }, [
               h('span', { key: 'l', className: 'ow-dim' }, t('keyedEnv') + '：'),
               h('code', { key: 'c', className: 'ow-mono' }, env),
+              // 「复制凭据名」按钮（市场横评里提到的一条小交互）：用户下一步通常是
+              // 去别的地方配这个变量，手抄大写下划线名容易错一个字符。
+              h('button', {
+                key: 'cp',
+                type: 'button',
+                className: 'ow-chip',
+                title: t('keyedCopyEnvHint'),
+                onClick: () => void copyEnv(env),
+              }, copied === env ? t('keyedCopied') : t('keyedCopyEnv')),
             ])
           : null,
         // ── 凭据面：已配置 / 从哪来 / 脱敏值 ─────────────────────────────────
