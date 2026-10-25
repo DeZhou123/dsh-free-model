@@ -158,9 +158,11 @@ export function createKeyedManager(deps = {}) {
   const callDeps = () => ({
     readCredential: deps.readCredential,
     onOutcome,
-    // 闸门与 availability 同一个实现：页面显示的「不可用」与发请求时被拒必须是同一套判据，
-    // 否则会出现「卡片说冷却中、点下去却真的发出去了」这种自相矛盾。
-    beforeRequest: (laneId) => health.isAvailable(laneId),
+    // 闸门必须与页面显示的 availability 是**同一个函数**（0.6.0 自审发现的不一致）：
+    // 原来这里直接调 health.isAvailable，于是**渠道开关被绕过** —— 用户在设置页里把一条
+    // 渠道关掉，如果它的适配器还挂着（宿主没给 disposer 的情况），请求照样发得出去。
+    // 「关掉」与「冷却中」都是「不该发请求」，那就必须走同一个判据。
+    beforeRequest: (laneId) => availability(laneId),
     logger,
     ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
     ...(deps.readImage !== undefined ? { readImage: deps.readImage } : {}),

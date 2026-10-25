@@ -251,6 +251,25 @@ await check('换 key 之后 key 列表**重算**（不能只剩刚填的那一�
 })
 
 
+await check('闸门与页面判据同源：被关掉的渠道在**发请求前**也会被拦住', async () => {
+  // 自审发现的不一致：beforeRequest 原来直接调 health.isAvailable，于是「渠道开关」被绕过 ——
+  // 关掉的渠道只要适配器还挂着（宿主不给 disposer 时就可能），请求照样发得出去。
+  const seen = []
+  const manager = createKeyedManager({
+    readCredential: async () => 'k',
+    register: () => () => {},
+    // 借 mount 之前的闸门取值：直接问管理器的 availability 与适配器拿到的必须是同一个
+  })
+  await manager.setEnabled('groq', false)
+  const gate = manager.availability('groq')
+  assert.equal(gate.available, false)
+  assert.equal(gate.state, 'disabled')
+  // 断言闸门**不是**只问健康：健康账本对这条车道一无所知（unknown），但开关说了不可用。
+  assert.equal(manager.healthSnapshot().lanes.groq, undefined, '这条车道不该有健康记录')
+  void seen
+})
+
+
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：')
