@@ -167,9 +167,9 @@
 src/lanes/registry.js     唯一事实来源：三类渠道 → 同一种记录形状 → 就绪四态投影
   ├── src/lanes/service.js    6 条服务车道 + HTTP 探针（逐条 TTL：成功 30 秒、失败 30 秒）
   │     └── opencode / freellmapi / ollama / LM Studio / vLLM / llama.cpp
-  ├── src/lanes/keyed/**      30 条自带 key / 1 条免 key 车道
+  ├── src/lanes/keyed/**      34 条自带 key / 1 条免 key 车道（第一批 20 + 第二批 14）
   │     ├── catalog.js         目录（每条带 evidence 与未确证标注）
-  │     ├── catalog-more.js    第二批 10 条（0.6.0，含被否掉的 9 个候选与理由）
+  │     ├── catalog-more.js    第二批 14 条（0.6.0，含被否掉的 9 个候选与理由）
   │     ├── ready.js           就绪判定 + 三种凭据形态解码
   │     ├── adapter.js         OpenAI 兼容适配器（SSE / 工具 / 图片 / 错误分类）
   │     ├── index.js           descriptors() / mount() / mountAll()
@@ -465,7 +465,7 @@ src/lanes/catalog.js     渠道记录校验 + 三层目录叠加（shipped / rem
 src/lanes/remote.js      远程渠道目录：拉取 / 校验 / 原子缓存 / 失败降级
 src/lanes/service.js     服务型车道（opencode / FreeLLMAPI 网关 / Ollama）+ HTTP 探针
 src/lanes/update.js      插件自身的版本检查（semver 比较 + 6 小时缓存 + 失败静默）
-src/lanes/keyed/catalog.js  21 条自带 key / 免 key 车道的目录（每条带 evidence 与未确证标注）
+src/lanes/keyed/catalog.js  自带 key / 免 key 车道的目录（每条带 evidence 与未确证标注）
 src/lanes/keyed/ready.js    就绪判定：三种凭据形态 / 环境变量优先 / ref: 解引用
 src/lanes/keyed/adapter.js  OpenAI 兼容适配器（SSE + 工具调用 + 图片 + 错误分类）
 src/lanes/keyed/index.js    descriptors() / mount() / mountAll()（只出描述符，注册留给上层）
@@ -545,7 +545,7 @@ provider —— 但**只有 `/config/providers` 里出现过的才真能调用**
 ## 测试
 
 ```powershell
-# 主套件：52 项协议/路由断言 + 客户端离线渲染（不需要宿主、不发网络）
+# 主套件：十余个离线套件、500+ 断言（协议/路由/健康账本/余额/渲染，不需要宿主、不发网络）
 npm test
 
 # 用真实宿主包验证契约（临时 link dsh-llm / dsh-credentials，跑完删掉）
