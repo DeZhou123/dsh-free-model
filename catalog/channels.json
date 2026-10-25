@@ -1498,7 +1498,7 @@
         "claim": false
       },
       "unknown": true,
-      "note": "⚠️ 套餐专用端点：拿按量的 moonshot key 来调它会 401。它回答「套餐还剩多少」用的是另一个路径（/coding/v1/usages），本插件暂不消费它。",
+      "note": "⚠️ 套餐专用端点：拿按量的 moonshot key 来调它会 401。它回答「套餐还剩多少」用的是另一个路径（`/coding/v1/usages`）—— 2026-10-26 实测该端点存在且要鉴权（401），但本插件**暂不消费**它（套餐窗口的形状未验证，编一个解析出来会给错数）。",
       "freeTier": "**订阅套餐**：5 小时窗 + 7 天窗双层限额（不按 token 计费），超了等窗口滚动。与 moonshot（按量）是两套计费，key 也不同。",
       "docsURL": "https://platform.moonshot.cn/docs/api/chat",
       "signupURL": "https://platform.moonshot.cn/console/api-keys",

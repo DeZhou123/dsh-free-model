@@ -271,7 +271,8 @@ export const MORE_KEYED_CHANNELS = [
       + '与 moonshot（按量）是两套计费，key 也不同。',
     region: 'cn',
     note: '⚠️ 套餐专用端点：拿按量的 moonshot key 来调它会 401。'
-      + '它回答「套餐还剩多少」用的是另一个路径（/coding/v1/usages），本插件暂不消费它。',
+      + '它回答「套餐还剩多少」用的是另一个路径（`/coding/v1/usages`）—— 2026-10-26 实测该端点存在且要鉴权（401），'
+      + '但本插件**暂不消费**它（套餐窗口的形状未验证，编一个解析出来会给错数）。',
     evidence: '2026-10-26 GET https://api.kimi.com/coding/v1/models → 401 '
       + '{"error":{"type":"invalid_authentication_error","message":"Invalid Authentication"}}（端点活着且已鉴权）',
     unknown: true,
