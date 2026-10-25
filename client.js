@@ -355,6 +355,7 @@ window.__ModuleLoader__.load({
       keyedFilterPending: '待配置',
       keyedFilterCooldown: '冷却中',
       keyedFilterRevoked: '已吊销',
+      keyedFilterDisabled: '已关闭',
       keyedNoMatch: '没有匹配的渠道：换个关键词，或把筛选切回「全部」。',
       keyedSummary: '共 {total} 条 · 就绪 {ready} · 待配置 {pending} · 冷却 {cool} · 吊销 {revoked}',
 
@@ -620,6 +621,7 @@ window.__ModuleLoader__.load({
       keyedFilterPending: 'Needs key',
       keyedFilterCooldown: 'Cooling',
       keyedFilterRevoked: 'Revoked',
+      keyedFilterDisabled: 'Disabled',
       keyedNoMatch: 'No channel matches: change the keyword, or switch the filter back to All.',
       keyedSummary: '{total} channels · ready {ready} · needs key {pending} · cooling {cool} · revoked {revoked}',
 
@@ -1785,7 +1787,9 @@ window.__ModuleLoader__.load({
     }
 
     /** 筛选档位（顺序 = 胶囊顺序：全部 → 能用 → 待配 → 冷却 → 吊销）。 */
-    const FILTERS = ['all', 'ready', 'pending', 'cooldown', 'revoked']
+    // 第六档是 0.6.0 加的：渠道开关让「被我关掉的」成为一类需要能筛出来的状态 ——
+    // 否则用户在表格里看不出哪几条是自己关的（关掉的渠道看起来和正常的一模一样）。
+    const FILTERS = ['all', 'ready', 'pending', 'cooldown', 'revoked', 'disabled']
 
     /**
      * 一条渠道属于哪一档（筛选与排序共用）。
@@ -1793,7 +1797,9 @@ window.__ModuleLoader__.load({
      * 判据顺序刻意是 **健康优先**：一条渠道刚被 401 判死时，它的「就绪」仍是 true
      * （凭据确实填着），把 ready 放在前面会让「已吊销」永远筛不出来。
      */
-    function bucketOfChannel(row, keyStates, health) {
+    function bucketOfChannel(row, keyStates, health, disabledLanes) {
+      // 关掉的渠道单独一档：它既不是「就绪」也不是「坏了」—— 是用户自己的选择。
+      if (Array.isArray(disabledLanes) && disabledLanes.includes(row.id)) return 'disabled'
       const state = health?.[row.id]?.state
       if (state === 'revoked') return 'revoked'
       if (state === 'cooldown') return 'cooldown'
@@ -1824,7 +1830,7 @@ window.__ModuleLoader__.load({
 
     /** 排序函数表（导出给测试；`recommended` = 目录顺序，即不排）。 */
     function sortersFor(bucketOf) {
-      const rank = { ready: 0, cooldown: 1, pending: 2, revoked: 3 }
+      const rank = { ready: 0, cooldown: 1, pending: 2, revoked: 3, disabled: 4 }
       return {
         recommended: null,
         name: (left, right) => String(left.displayName).localeCompare(String(right.displayName), 'zh-Hans-CN'),
@@ -1840,6 +1846,7 @@ window.__ModuleLoader__.load({
       if (id === 'pending') return t('keyedFilterPending')
       if (id === 'cooldown') return t('keyedFilterCooldown')
       if (id === 'revoked') return t('keyedFilterRevoked')
+      if (id === 'disabled') return t('keyedFilterDisabled')
       return id
     }
 
@@ -2165,8 +2172,8 @@ window.__ModuleLoader__.load({
 
       // 判据抽成纯函数（`bucketOfChannel` / `matchesQuery` / `sortersFor`）：它们是这一页
       // 最容易出错、也最该被测的部分，而内联在组件里就只能靠渲染测试间接覆盖。
-      const bucketOf = (row) => bucketOfChannel(row, keyStates, health)
-      const counts = { all: keyedAll.length, ready: 0, pending: 0, cooldown: 0, revoked: 0 }
+      const bucketOf = (row) => bucketOfChannel(row, keyStates, health, disabled)
+      const counts = { all: keyedAll.length, ready: 0, pending: 0, cooldown: 0, revoked: 0, disabled: 0 }
       for (const row of keyedAll) counts[bucketOf(row)] += 1
 
       const keyed = keyedAll
@@ -2289,7 +2296,9 @@ window.__ModuleLoader__.load({
                           const at = healthRow?.lastOkAt ?? healthRow?.lastFailureAt
                           return h('tr', { key: channel.id, 'data-lane': channel.id }, [
                             h('td', { key: 'n' }, safeText(channel.displayName, 60)),
-                            h('td', { key: 's' }, h(StatePill, { state: channel.state, t })),
+                            h('td', { key: 's' }, disabled.includes(channel.id)
+                              ? h('span', { className: 'ow-pill strong ow-disabledpill' }, t('keyedLaneOff'))
+                              : h(StatePill, { state: channel.state, t })),
                             h('td', { key: 'h' }, h(HealthPill, { health: healthRow, t })),
                             h('td', { key: 'k' }, keyState?.configured === true
                               ? (Number.isFinite(keyCounts?.[channel.id]) && keyCounts[channel.id] > 1
@@ -3615,6 +3624,7 @@ window.__ModuleLoader__.load({
   background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent);
 }
 .ow-sort { flex: 0 0 auto; }
+.ow-disabledpill { opacity: .7; }
 
 /* 表格视图：30+ 条渠道时「一眼扫完」 */
 .ow-tablewrap { overflow-x: auto; }

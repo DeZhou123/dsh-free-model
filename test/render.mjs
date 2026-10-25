@@ -765,7 +765,7 @@ check('0.6.0 导出了健康徽章与筛选工具（缺一个就会在页面上�
     assert.equal(typeof value, 'function', '__test.' + name + ' 未导出')
   }
   assert.ok(Array.isArray(FILTERS), 'FILTERS 必须是数组')
-  assert.deepEqual([...FILTERS], ['all', 'ready', 'pending', 'cooldown', 'revoked'], '筛选档位顺序是契约')
+  assert.deepEqual([...FILTERS], ['all', 'ready', 'pending', 'cooldown', 'revoked', 'disabled'], '筛选档位顺序是契约（已关闭排在最后）')
 })
 
 check('健康徽章四档：data-health 与文案各不相同（灰不能画成红）', () => {
@@ -812,12 +812,13 @@ check('筛选胶囊文案五档各不相同', () => {
   assert.equal(new Set(texts).size, FILTERS.length, '筛选文案有重复：' + texts.join(' / '))
 })
 
-check('KeyedPage 有搜索框、五个筛选胶囊、清健康按钮、底部汇总', () => {
+check('KeyedPage 有搜索框、**六个**筛选胶囊、排序、视图切换、清健康按钮、底部汇总', () => {
   const tree = KeyedPage({ t, channels: [keyedRow], wired: true, keyStates: {}, probes: {}, health: {} })
   const inputs = collectElements(tree, (node) => node.type === 'input' && node.props.type === 'search')
   assert.equal(inputs.length, 1, '缺一个搜索框，实际 ' + inputs.length)
   const chips = collectElements(tree, (node) => typeof node.props?.['data-filter'] === 'string')
-  assert.equal(chips.length, 5, '筛选胶囊应为 5 个，实际 ' + chips.length)
+  // 六个：全部 / 就绪 / 待配置 / 冷却中 / 已吊销 / **已关闭**（0.6.0 加的第六档）。
+  assert.equal(chips.length, 6, '筛选胶囊应为 6 个，实际 ' + chips.length)
   const text = flat(tree)
   assert.ok(text.includes('keyedResetHealth'), '缺少「清掉健康状态」按钮')
   // 排序控件（0.6.0）：30+ 条渠道时，目录顺序回答不了「哪条模型最多 / 哪条健康」。
@@ -826,6 +827,7 @@ check('KeyedPage 有搜索框、五个筛选胶囊、清健康按钮、底部汇
   const options = collectElements(selects[0], (node) => node.type === 'option')
   assert.equal(options.length, 4, '排序档位应为 4 个，实际 ' + options.length)
   assert.ok(text.includes('keyedProbeAll'), '缺少「测试全部已配置」按钮')
+  assert.ok(text.includes('keyedFilterDisabled'), '缺少「已关闭」这一档筛选')
   assert.ok(text.includes('keyedSummary'), '缺少底部汇总行')
   assert.ok(text.includes('OpenRouter 免费模型'), '默认视图应渲染出渠道卡')
 })
@@ -907,6 +909,9 @@ check('bucketOfChannel：健康优先于就绪（刚被 401 判死的渠道不�
   assert.equal(bucketOfChannel({ id: 'lane', state: 'ready' }, keyStates, { lane: { state: 'cooldown' } }), 'cooldown')
   // 没配 key 且没判死 → 待配置
   assert.equal(bucketOfChannel({ id: 'other', state: 'needs-action' }, {}, {}), 'pending')
+  // 关掉的渠道**优先于一切**：它不是「坏了」，是用户自己的选择（第六档）。
+  assert.equal(bucketOfChannel({ id: 'lane', state: 'ready' }, keyStates, {}, ['lane']), 'disabled')
+  assert.equal(bucketOfChannel({ id: 'lane', state: 'ready' }, keyStates, { lane: { state: 'revoked' } }, ['lane']), 'disabled')
 })
 
 check('matchesQuery：渠道名 / 凭据名 / 端点 / 模型样例都能命中，空查询放行', () => {
@@ -931,7 +936,7 @@ check('sortersFor：health 档按 就绪→冷却→待配→吊销 排，models
     { id: 'b', displayName: 'A名', modelCount: 9 },
     { id: 'c', displayName: 'C名', modelCount: 5 },
   ]
-  const buckets = { a: 'revoked', b: 'ready', c: 'cooldown' }
+  const buckets = { a: 'revoked', b: 'ready', c: 'cooldown' }  // 关掉的排在最后（rank 4）
   const bucketOf = (row) => buckets[row.id]
   const sorters = sortersFor(bucketOf)
   assert.equal(sorters.recommended, null, '推荐顺序 = 目录顺序（不排）')
