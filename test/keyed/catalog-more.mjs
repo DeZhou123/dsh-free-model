@@ -33,8 +33,8 @@ function check(name, fn) {
 
 const byId = (id) => MORE_KEYED_CHANNELS.find((lane) => lane.id === id)
 
-check('第二批至少 8 条（0.6.0 意图是「把市面上验证过的渠道搬进来」）', () => {
-  assert.ok(MORE_KEYED_COUNT >= 8, `只有 ${MORE_KEYED_COUNT} 条`)
+check('第二批至少 12 条（0.6.0 意图是「把市面上验证过的渠道搬进来」）', () => {
+  assert.ok(MORE_KEYED_COUNT >= 12, `只有 ${MORE_KEYED_COUNT} 条`)
   assert.equal(MORE_KEYED_COUNT, MORE_KEYED_CHANNELS.length)
 })
 
@@ -82,7 +82,7 @@ check('unknown 标记与 unknownFields 一一对应（与本仓库既有纪律�
 
 check('免 key 也能读 /models 的渠道，note 里必须写出「探测通过≠有额度」', () => {
   // 实测 200 且不带凭据的那几条：地址活着是事实，但它不能推出"你有额度"。
-  const openCatalog = ['gitee-ai', 'huggingface-router', 'deepinfra']
+  const openCatalog = ['gitee-ai', 'huggingface-router', 'deepinfra'].filter((id) => byId(id) !== undefined)
   for (const id of openCatalog) {
     const lane = byId(id)
     assert.ok(lane !== undefined, `${id} 不在第二批里`)

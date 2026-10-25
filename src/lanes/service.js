@@ -101,6 +101,69 @@ export const SERVICE_LANES = Object.freeze([
     }),
     startable: false,
   }),
+  // ── 本机其它常见的 OpenAI 兼容推理服务（0.6.0）─────────────────────────────
+  //
+  // ## 为什么列它们（本机此刻一条都没跑）
+  //
+  // 「我到底有没有本地推理能力」是这类插件最该回答的问题之一，而本机现状是：
+  // Ollama 只装了向量模型、opencode 要另装。把 LM Studio / vLLM / llama.cpp
+  // 这三条**最常被用来跑本地模型**的端点列出来，用户装完其中一个就能在页面上看到它，
+  // 而不是「插件不认识我的本地服务」。
+  //
+  // ⚠️ 它们与 ollama 一样是 backend: 'gateway'：本插件**只观测、不挂路由**。
+  // 理由与 freellmapi 那条相同 —— 这几家的路由该由「本地推理」那类插件去注册
+  //（它们要考虑模型驻留、显存、进程生命周期），本插件的职责是**说清它在不在**。
+  Object.freeze({
+    id: 'lmstudio',
+    displayName: 'LM Studio 本机',
+    kind: 'service',
+    backend: 'gateway',
+    endpoint: 'http://127.0.0.1:1234',
+    category: '本地',
+    capability: Object.freeze({ tools: null, vision: null }),
+    credits: Object.freeze({ balance: false, claim: false }),
+    note: 'LM Studio 的 OpenAI 兼容端口（默认 1234）。要在 LM Studio 里开启 Local Server 才会监听；能不能调工具取决于你加载的模型（页面上不猜）。',
+    probe: Object.freeze({
+      url: 'http://127.0.0.1:1234/v1/models',
+      method: 'GET',
+      okStatus: [200],
+    }),
+    startable: false,
+  }),
+  Object.freeze({
+    id: 'vllm',
+    displayName: 'vLLM 本机',
+    kind: 'service',
+    backend: 'gateway',
+    endpoint: 'http://127.0.0.1:8000',
+    category: '本地',
+    capability: Object.freeze({ tools: null, vision: null }),
+    credits: Object.freeze({ balance: false, claim: false }),
+    note: 'vLLM 的 OpenAI 兼容端口（默认 8000）。自己起的 vLLM 服务才会计入；换了端口就改本地覆盖文件。',
+    probe: Object.freeze({
+      url: 'http://127.0.0.1:8000/v1/models',
+      method: 'GET',
+      okStatus: [200],
+    }),
+    startable: false,
+  }),
+  Object.freeze({
+    id: 'llamacpp',
+    displayName: 'llama.cpp server 本机',
+    kind: 'service',
+    backend: 'gateway',
+    endpoint: 'http://127.0.0.1:8080',
+    category: '本地',
+    capability: Object.freeze({ tools: null, vision: null }),
+    credits: Object.freeze({ balance: false, claim: false }),
+    note: 'llama.cpp 的 llama-server（默认 8080）自带 OpenAI 兼容端点。GGUF 直跑，机器够强时最省资源。',
+    probe: Object.freeze({
+      url: 'http://127.0.0.1:8080/v1/models',
+      method: 'GET',
+      okStatus: [200],
+    }),
+    startable: false,
+  }),
 ])
 
 /**

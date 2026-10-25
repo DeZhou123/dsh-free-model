@@ -6,8 +6,8 @@
 | 类 | 条数 | 路由 | 能力 | 需要什么 | 页内页签 |
 |---|---|---|---|---|---|
 | **账号渠道**（本插件自己挂） | 2 | `buddy/*`、`workbuddy/*` | 完整：工具调用、看图 | 一个账号（浏览器登录） | 账号渠道 |
-| **服务渠道**（本机进程） | 3 | `opencode/*` | **无工具**：能看图、不能调工具 | 本机 `opencode serve`（插件可代起） | 本地与网关 |
-| **自带 key / 免 key 渠道** | 30（+1 免 key） | `<渠道 id>/*` | 取决于上游声明 | 去上游拿免费 key（免 key 渠道零配置） | 自带 key |
+| **服务渠道**（本机进程） | 6 | `opencode/*` | **无工具**：能看图、不能调工具 | 本机 `opencode serve`（插件可代起） | 本地与网关 |
+| **自带 key / 免 key 渠道** | 34（+1 免 key） | `<渠道 id>/*` | 取决于上游声明 | 去上游拿免费 key（免 key 渠道零配置） | 自带 key |
 
 **它要回答的问题是**：我到底有哪些免费模型、它们现在能不能用、不能用的话下一步做什么。
 所以每条渠道都带**就绪状态**（`就绪 / 需动作 / 不可用 / 未知`）与**一条能指导动作的原因**
@@ -23,7 +23,7 @@
 
 合并成一句「渠道不可用」会让用户乱试方向，所以本插件宁可多写三个分支。
 
-## 0.6.0：渠道从 21 条到 30 条，并且记住了「上次真打上游的结果」
+## 0.6.0：渠道从 21 条到 34 条，并且记住了「上次真打上游的结果」
 
 两件事一起做，因为它们互相依赖：渠道一多，「全都绿」这个信号就失效了 —— 光看
 「key 填了没」看不出哪条刚被 401 判死、哪条额度用尽要等六小时。
@@ -42,6 +42,10 @@
 | `xiaomi-mimo` | `api.xiaomimimo.com/v1` | 401 | 小米 MiMo 直连 |
 | `kimi-coding` | `api.kimi.com/coding/v1` | 401 | **订阅套餐车道**（5h+7d 窗） |
 | `zai-coding-cn` | `api.z.ai/api/coding/paas/v4` | 401 | **订阅套餐车道**（5h+7d 窗） |
+| `fireworks` | `api.fireworks.ai/inference/v1` | 401 | 按量；模型 id 形如 `accounts/fireworks/models/…` |
+| `hyperbolic` | `api.hyperbolic.xyz/v1` | 401 | 便宜的开源大模型托管 |
+| `upstage` | `api.upstage.ai/v1` | 401 | 自家 Solar 小模型 |
+| `reka` | `api.reka.ai/v1` | 401 | 多模态（看图/视频） |
 
 同一轮实测**否掉**了 9 个候选，理由写在 `src/lanes/keyed/catalog-more.js` 文件头
 （kluster / lambda 连不上、ai21 目录为空、cohere 回 HTML、sensenova 404、
@@ -116,7 +120,8 @@
 
 ```
 src/lanes/registry.js     唯一事实来源：三类渠道 → 同一种记录形状 → 就绪四态投影
-  ├── src/lanes/service.js    3 条服务车道 + HTTP 探针（双 TTL 缓存，失败退避 30 秒）
+  ├── src/lanes/service.js    6 条服务车道 + HTTP 探针（逐条 TTL：成功 30 秒、失败 30 秒）
+  │     └── opencode / freellmapi / ollama / LM Studio / vLLM / llama.cpp
   ├── src/lanes/keyed/**      30 条自带 key / 1 条免 key 车道
   │     ├── catalog.js         目录（每条带 evidence 与未确证标注）
   │     ├── catalog-more.js    第二批 10 条（0.6.0，含被否掉的 9 个候选与理由）

@@ -1540,6 +1540,182 @@
       }
     },
     {
+      "id": "fireworks",
+      "displayName": "Fireworks AI",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.fireworks.ai/inference/v1",
+      "apiKeyEnv": "FIREWORKS_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "按量计费；模型 id 形如 accounts/fireworks/models/<名>（很长，别手打）。",
+      "freeTier": "注册赠小额试用额度，之后按 token 计费。**不是免费层渠道**。",
+      "docsURL": "https://docs.fireworks.ai/api-reference/introduction",
+      "signupURL": "https://fireworks.ai/account/api-keys",
+      "models": [
+        {
+          "id": "accounts/fireworks/models/llama-v3p3-70b-instruct",
+          "name": "Llama 3.3 70B Instruct",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "accounts/fireworks/models/deepseek-v3p2",
+          "name": "DeepSeek V3.2",
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-26 GET https://api.fireworks.ai/inference/v1/models → 401 “You must provide an API key”（端点活着且已鉴权）",
+        "unknownFields": [
+          "freeTier",
+          "models"
+        ]
+      }
+    },
+    {
+      "id": "hyperbolic",
+      "displayName": "Hyperbolic",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.hyperbolic.xyz/v1",
+      "apiKeyEnv": "HYPERBOLIC_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "卖点是便宜的开源大模型托管；对话端点走标准 OpenAI 兼容，不提供匿名目录。",
+      "freeTier": "注册赠少量试用额度，之后按量。**不是免费层渠道**。",
+      "docsURL": "https://docs.hyperbolic.xyz/docs/getting-started",
+      "signupURL": "https://app.hyperbolic.xyz/settings",
+      "models": [
+        {
+          "id": "meta-llama/Llama-3.3-70B-Instruct",
+          "name": "Llama 3.3 70B Instruct",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "Qwen/Qwen2.5-72B-Instruct",
+          "name": "Qwen2.5 72B Instruct",
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-26 GET https://api.hyperbolic.xyz/v1/models → 401 {\"detail\":\"Not authenticated\"}（端点活着且已鉴权）",
+        "unknownFields": [
+          "freeTier",
+          "models"
+        ]
+      }
+    },
+    {
+      "id": "upstage",
+      "displayName": "Upstage Solar",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.upstage.ai/v1",
+      "apiKeyEnv": "UPSTAGE_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "韩国团队，卖点是自家 Solar 小模型（便宜、快）；也代理别家的开源模型。",
+      "freeTier": "Solar 系列有免费额度（限额随账号档），用尽转按量。",
+      "docsURL": "https://developers.upstage.ai/docs/getting-started/chat",
+      "signupURL": "https://console.upstage.ai/api-keys",
+      "models": [
+        {
+          "id": "solar-pro2",
+          "name": "Solar Pro 2",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "solar-mini",
+          "name": "Solar Mini",
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-26 GET https://api.upstage.ai/v1/models → 401 “Your API key is invalid…”（端点活着且已鉴权）",
+        "unknownFields": [
+          "freeTier",
+          "models"
+        ]
+      }
+    },
+    {
+      "id": "reka",
+      "displayName": "Reka AI",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.reka.ai/v1",
+      "apiKeyEnv": "REKA_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "多模态方向（看图/视频）；模型清单不在匿名 /models 里给全，页面以运行时目录为准。",
+      "freeTier": "有免费试用额度（数值未确证），之后按量。",
+      "docsURL": "https://docs.reka.ai/chat-api",
+      "signupURL": "https://platform.reka.ai/apikeys",
+      "models": [
+        {
+          "id": "reka-flash",
+          "name": "Reka Flash",
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "reka-core",
+          "name": "Reka Core",
+          "vision": true,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-26 GET https://api.reka.ai/v1/models → 401 {\"error\":{\"code\":\"missing_api_key\"}}（端点活着且已鉴权）",
+        "unknownFields": [
+          "freeTier",
+          "models"
+        ]
+      }
+    },
+    {
       "id": "pollinations",
       "displayName": "Pollinations (免 key 直连)",
       "kind": "keyed",
@@ -1573,6 +1749,7 @@
         "evidence": "2026-10-25 GET https://text.pollinations.ai/models → 200，返回 [{\"name\":\"openai-fast\",\"tier\":\"anonymous\",\"tools\":true,...}]；官方 APIDOCS.md 原文确认 \"POST https://text.pollinations.ai/openai (or /v1/chat/completions)\" 且 \"Free · no signup · rate-limited\"",
         "supportsModelList": false,
         "modelsURL": "https://text.pollinations.ai/models",
+        "serialRateLimit": true,
         "unknownFields": [
           "models"
         ]
@@ -1661,6 +1838,81 @@
         "modelListPath": "models"
       },
       "note": "本机 Ollama。注意：它当前只装了向量模型（nomic-embed-text），**没有对话模型** —— 故不是一条可用的对话车道，列出来是为了让这件事一眼可见。",
+      "models": []
+    },
+    {
+      "id": "lmstudio",
+      "displayName": "LM Studio 本机",
+      "kind": "service",
+      "backend": "gateway",
+      "endpoint": "http://127.0.0.1:1234",
+      "category": "本地",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "probe": {
+        "url": "http://127.0.0.1:1234/v1/models",
+        "method": "GET",
+        "okStatus": [
+          200
+        ]
+      },
+      "note": "LM Studio 的 OpenAI 兼容端口（默认 1234）。要在 LM Studio 里开启 Local Server 才会监听；能不能调工具取决于你加载的模型（页面上不猜）。",
+      "models": []
+    },
+    {
+      "id": "vllm",
+      "displayName": "vLLM 本机",
+      "kind": "service",
+      "backend": "gateway",
+      "endpoint": "http://127.0.0.1:8000",
+      "category": "本地",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "probe": {
+        "url": "http://127.0.0.1:8000/v1/models",
+        "method": "GET",
+        "okStatus": [
+          200
+        ]
+      },
+      "note": "vLLM 的 OpenAI 兼容端口（默认 8000）。自己起的 vLLM 服务才会计入；换了端口就改本地覆盖文件。",
+      "models": []
+    },
+    {
+      "id": "llamacpp",
+      "displayName": "llama.cpp server 本机",
+      "kind": "service",
+      "backend": "gateway",
+      "endpoint": "http://127.0.0.1:8080",
+      "category": "本地",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "probe": {
+        "url": "http://127.0.0.1:8080/v1/models",
+        "method": "GET",
+        "okStatus": [
+          200
+        ]
+      },
+      "note": "llama.cpp 的 llama-server（默认 8080）自带 OpenAI 兼容端点。GGUF 直跑，机器够强时最省资源。",
       "models": []
     }
   ]

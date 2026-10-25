@@ -14,6 +14,7 @@
 import assert from 'node:assert/strict'
 import { createRoutes } from '../src/routes.js'
 import { buildRegistry, projectRegistryView } from '../src/lanes/registry.js'
+import { SERVICE_LANES } from '../src/lanes/service.js'
 
 let passed = 0
 async function check(label, fn) {
@@ -103,6 +104,11 @@ await check('/channels 列出三类渠道，并把服务探针结果并进每一
         opencode: { state: 'unavailable', reason: '连不上 127.0.0.1:4096' },
         freellmapi: { state: 'ready', reason: '3 个模型' },
         ollama: { state: 'needs-action', reason: '没有对话模型' },
+        // 0.6.0 新增的三条本地推理服务（LM Studio / vLLM / llama.cpp）：
+        // 本机此刻一条都没跑，所以是 unavailable —— 这正是要断言的那种「如实说不在」。
+        lmstudio: { state: 'unavailable', reason: '连不上 127.0.0.1:1234' },
+        vllm: { state: 'unavailable', reason: '连不上 127.0.0.1:8000' },
+        llamacpp: { state: 'unavailable', reason: '连不上 127.0.0.1:8080' },
       }),
     },
   }))
@@ -110,7 +116,9 @@ await check('/channels 列出三类渠道，并把服务探针结果并进每一
   assert.equal(payload.wired, true)
   // 账号渠道恰好是本插件自己挂的两条：注册表里不存在第二条后端。
   assert.equal(payload.counts.account, 2, '账号渠道就是本插件自己挂的 buddy / workbuddy')
-  assert.equal(payload.counts.service, 3)
+  // 条数取 SERVICE_LANES（而不是写死 3）：加一条本地服务车道不该改断言，
+  // 但**必须**确认它进了注册表 —— 这里断言的是「随包的服务车道一条不落」。
+  assert.equal(payload.counts.service, SERVICE_LANES.length)
   // keyed 层由 `index.js` 单独注入（`buildRegistry({ keyed })`）；这个桩不传它，
   // 所以此处只要求「字段存在且是数字」，条数断言在 `test/lanes.mjs` 与 keys-flow 里做。
   assert.equal(typeof payload.counts.keyed, 'number')
