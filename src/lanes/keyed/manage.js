@@ -271,6 +271,43 @@ export function createKeyedManager(deps = {}) {
   }
 
   /**
+   * 还没挂上、但**现在**就该挂上的车道（就绪 + 没被关掉）。
+   *
+   * 为什么要单独问这一句：挂载只在两个时机发生 —— 装配时（`mountAllReady`）与保存 key 时。
+   * 于是「装配那一刻凭据还读不到」会留下一个**静默的坏状态**：车道其实是就绪的，
+   * 但它永远不挂上，页面上表现为「我明明配了 key，模型选择器里还是没有它」。
+   * 2026-10-26 实测到过这个状态（宿主重启后 `apply-ok.json` 的 keyedMounted 只剩免 key 那条，
+   * 而凭据文件里两条 ref 都还在）—— 用户当时的做法是「再保存一次 key」，那不该是唯一出路。
+   */
+  function pendingMounts() {
+    return records
+      .filter((row) => row.mountable === true && mounted.has(row.id) === false && disabled.has(row.id) === false)
+      .map((row) => row.id)
+  }
+
+  /**
+   * 自愈式补挂（0.6.0）：把「现在就该挂上、却还没挂」的车道补上。
+   *
+   * **幂等**而且**便宜**：没有待补的就只是一次 `refresh()`；有待补的才真的注册。
+   * 调用方有两处：装配时的定时器（60 秒一次）与 `/channels`（打开页面时顺手补一次）。
+   * 后者带 5 秒冷却 —— 页面会周期刷新，不该每次刷新都去问一遍凭据服务。
+   */
+  let lastHealAt = 0
+  async function healMounts(options = {}) {
+    const at = Date.now()
+    if (options.force !== true && at - lastHealAt < 5_000) return { attempted: false, mounted: [], pending: pendingMounts().length }
+    lastHealAt = at
+    await refresh()
+    const pending = pendingMounts()
+    const mountedNow = []
+    for (const id of pending) {
+      const outcome = await ensureMounted(id)
+      if (outcome.mounted === true) mountedNow.push(id)
+    }
+    return { attempted: true, mounted: mountedNow, pending: pending.length }
+  }
+
+  /**
    * 保存一把 key。
    *
    * 顺序刻意是「**先写凭据、再动适配器**」：写失败时运行中的状态一点都不变，
@@ -602,6 +639,8 @@ export function createKeyedManager(deps = {}) {
     refresh,
     ensureMounted,
     mountAllReady,
+    pendingMounts,
+    healMounts,
     saveKey,
     clearKey,
     probeKey,

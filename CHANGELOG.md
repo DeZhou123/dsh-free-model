@@ -255,6 +255,37 @@
 六种失败分档 + 成功路径**不含 key**）；`test/routes-channels.mjs` 增 2 条（路由走 manager.probeWindows 且
 缺 lane 400 / 未接线 503；`/channels` 投影只暴露 `hasWindows` 布尔，**不下发端点地址**）；
 `test/render.mjs` 增 1 条（按钮只在声明了端点的渠道上出现）。全量 `npm test` 13 套 `fail=0`。
+
+### 补记 7（同一夜，07:10：自愈式补挂 —— 「我明明配了 key，选择器里还是没有它」）
+
+**实测到的坏状态**：宿主重启后 `~/.dsh/free-model/apply-ok.json` 的 `keyedMounted` 只剩免 key
+那一条（`pollinations`），而凭据文件里 `OPENROUTER_API_KEY` / `GROQ_API_KEY` 两条 ref 都还在。
+用户当时的出路是「再保存一次 key」—— 保存确实会重挂，但那不该是唯一出路。
+
+根因是**挂载只有两个时机**：装配时（`mountAllReady`）与保存 key 时。装配那一刻凭据服务还没热
+（`readServiceOrUndefined` 拿不到 → `resolve()` 返回 undefined → 判定未就绪 → 不挂），这个状态
+就永远停在那里了。
+
+现在有两个自愈时机：
+
+| 时机 | 位置 | 节奏 |
+|---|---|---|
+| 定时补挂 | `index.js` 的 `ctx.effect(setInterval)` | 60 秒一次；幂等、无待补时只做一次 `refresh()` |
+| 打开页面顺手补 | `/channels` 处理器 | 管理器内部 5 秒冷却（页面会周期刷新，不该每次刷新都问凭据服务） |
+
+判据写在管理器里（`pendingMounts()` = 就绪 + 没挂 + **没被关掉**）：关掉是用户的选择，自愈**不许**
+把被关掉的车道偷偷挂回来。定时器在 `ctx.effect` 的清理函数里 `clearInterval` —— 不清会随每次
+热重载叠一个（页面表现是 CPU 慢慢涨）。
+
+**证据**：`node --import ./test/hooks.mjs test/keyed/remount.mjs` → `pass=4 fail=0`
+（凭据晚到时 `healMounts` 能补挂 / 被关掉的不被挂回来 / 冷却生效 / 免 key 车道本来就该挂上）。
+
+**⚠️ 加这个定时器当场踩了一个坑（值得记）**：第一版忘了 `unref()`，于是「apply 之后不 dispose」的
+离线 smoke 套件被它撑住事件循环，`npm test` 从 2 分钟变成跑不完。修法是 `timer.unref?.()` ——
+定时器只该在别的活等着时才跑，不该自己把进程留住（同文件里预热定时器早已这么写）。
+顺带记下一条**替身契约**：`readCredential` 返回的必须是**已解码的字符串**（`index.js` 的包装会剥
+`ref:` 并把宿主 `resolve()` 的 `{ value, source }` 解成字符串）；替身直接返回 `{ value, source }`
+会造出「keyStates 说 configured、就绪判定说未配置」的假象 —— 这条写进测试文件头，免得下次再查一遍。
 ### 未实测 / 边界
 
 - **新渠道的真实对话未在本轮跑**：10 条新增里 8 条需要 key（本机没有），

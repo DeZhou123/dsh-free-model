@@ -457,6 +457,14 @@ function safeCall(fn) {
  * - `/channels`：**渠道的全景**（一共几条、各自什么状态、其中哪条是远程目录刚加进来的）。
  */
 async function channelsOverview(deps) {
+  // 打开页面时顺手补挂一次（0.6.0）：**这是自愈的第二条时机**。
+  //
+  // 为什么要在这里补：如果装配那一刻凭据还读不到（宿主刚重启、凭据服务还没热），
+  // 车道就会停在「就绪但没挂上」——页面上表现为「我明明配了 key，模型选择器里还是没有它」。
+  // 用户当时的出路是自己再保存一次 key；现在打开页面就会补。
+  // 不 await：它可能去问宿主的凭据服务，而这一跳是纯读接口，不该被它拖慢。
+  // 管理器内部有 5 秒冷却，所以页面周期刷新不会反复触发。
+  void deps.keyed?.manager?.()?.healMounts?.().catch?.(() => {})
   const view = deps.registry?.()
   if (view === undefined || view === null) {
     return { wired: false, reason: '渠道注册表未接线', channels: [] }

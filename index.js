@@ -629,6 +629,34 @@ export function apply(ctx, config = {}) {
       ...(makeReadImage(scoped) !== undefined ? { readImage: makeReadImage(scoped) } : {}),
       ...(makeReadImageRequest(scoped) !== undefined ? { readImageRequest: makeReadImageRequest(scoped) } : {}),
     })
+    /**
+     * 自愈式补挂（0.6.0，60 秒一次）。
+     *
+     * 挂载只有两个时机（装配、保存 key），于是「装配那一刻凭据还读不到」会留下一个
+     * **静默的坏状态**：车道其实是就绪的，却永远不挂上 —— 页面表现为「我明明配了 key，
+     * 模型选择器里还是没有它」，而用户唯一的出路是自己再保存一次 key。
+     *
+     * 实测到过这个状态（宿主重启后 apply-ok 的 keyedMounted 只剩免 key 那条，凭据文件里
+     * 两条 ref 都还在）。这个定时器把它变成自愈：一旦凭据可读，最迟 60 秒后就挂上。
+     * 幂等且便宜：没有待补的就只是一次 refresh()。
+     */
+    ctx.effect(() => {
+      const timer = setInterval(() => {
+        void keyedManager.healMounts?.().then((result) => {
+          if (result !== undefined && result.mounted.length > 0) {
+            logger?.info?.(`dsh-free-model: 补挂了 ${result.mounted.length} 条自带 key 车道（${result.mounted.join(', ')}）`)
+            writeApplyMarker({ phase: 'full', keyedMounted: [...mountedRoutes].filter((route) => route !== 'buddy' && route !== 'workbuddy') })
+          }
+        }).catch(() => {})
+      }, 60_000)
+      // 定时器必须 **unref**：它只该在别的活等着时才跑，不该自己把事件循环撑住 ——
+      // 否则任何「apply 之后不 dispose」的场景（离线 smoke 套件就是）会挂在那儿不退出。
+      // 这一条是实测出来的：加完这个定时器，npm test 从 2 分钟变成跑不完。
+      timer.unref?.()
+      // 定时器必须在插件卸载时清掉：不清会随每次热重载叠一个（页面表现是 CPU 慢慢涨）。
+      return () => clearInterval(timer)
+    })
+
     void keyedManager.mountAllReady().then((summary) => {
       // keyed 挂完之后重写自证：这是**最后一份**记录，谁挂了、挂了几条一目了然。
       // （写在 `.then` 而不是模块内部，是因为模块只管挂载、不该知道自证文件的存在。）
