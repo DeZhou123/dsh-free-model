@@ -471,6 +471,35 @@ await check('/channels 投影暴露 hasWindows，同样**不**暴露端点地址
   assert.equal(row.hasBalance, undefined, '不该顺手标上 hasBalance')
   assert.equal(JSON.stringify(row).includes('x.example/usages'), false, '端点地址被下发到页面了')
 })
+
+await check('/channels 顺手触发一次自愈补挂：不阻塞、manager 没有该方法时也不炸', async () => {
+  // 0.6.0：打开页面是**自愈的第二个时机** —— 装配那一刻凭据服务还没热时，车道会停在
+  // 「就绪但没挂上」（用户看到「我明明配了 key，选择器里还是没有它」）。这条断言钉两件事：
+  // ① 读 /channels 会去调 healMounts（而不是只读状态）；② 它是 fire-and-forget ——
+  //   healMounts 哪怕永不 resolve，/channels 也必须**立刻**返回（否则打开页面会被它拖住）。
+  let healCalls = 0
+  const slowManager = {
+    healMounts: () => { healCalls += 1; return new Promise(() => {}) }, // 永不 resolve
+  }
+  const handlerWithHeal = createRoutes(makeDeps({
+    registry: registryStub,
+    keyed: { manager: () => slowManager, keyStates: () => ({}), keyCounts: () => ({}) },
+  }))
+  const res = await call(handlerWithHeal, 'GET', '/api/free-model/channels')
+  assert.equal(res.status, 200, '/channels 被 healMounts 拖住了：' + res.status)
+  assert.equal(healCalls, 1, 'healMounts 没被调用（自愈的第二个时机丢了）：' + healCalls)
+
+  // 旧版本管理器没有 healMounts：读 /channels 不能因此报错。
+  const handlerWithoutHeal = createRoutes(makeDeps({
+    registry: registryStub,
+    keyed: { manager: () => ({ probeKey: async () => ({}) }), keyStates: () => ({}), keyCounts: () => ({}) },
+  }))
+  assert.equal((await call(handlerWithoutHeal, 'GET', '/api/free-model/channels')).status, 200)
+
+  // 完全没有 keyed 层（注册表未接线那类环境）也不能炸。
+  assert.equal((await call(createRoutes(makeDeps({ registry: registryStub })), 'GET', '/api/free-model/channels')).status, 200)
+})
+
 await check('未知路由仍是 404（新端点的加入不许把兜底打掉）', async () => {
   const res = await call(createRoutes(makeDeps()), 'GET', '/api/free-model/nope')
   assert.equal(res.status, 404)

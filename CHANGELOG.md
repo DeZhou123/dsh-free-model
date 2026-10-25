@@ -286,6 +286,13 @@
 顺带记下一条**替身契约**：`readCredential` 返回的必须是**已解码的字符串**（`index.js` 的包装会剥
 `ref:` 并把宿主 `resolve()` 的 `{ value, source }` 解成字符串）；替身直接返回 `{ value, source }`
 会造出「keyStates 说 configured、就绪判定说未配置」的假象 —— 这条写进测试文件头，免得下次再查一遍。
+
+**补一条离线断言**（收尾）：`/channels` 会顺手触发一次自愈补挂，而且**不阻塞**。
+判据两条：① 读 `/channels` 必须真的去调 `healMounts`（否则「打开页面自愈」这条时机是空的）；
+② 桩函数返回一个**永不 resolve** 的 Promise 时，`/channels` 仍须立刻 200（否则打开页面会被它拖住）。
+另断言旧管理器没有 `healMounts`、以及完全没有 keyed 层时都不炸。
+`test/routes-channels.mjs` 20 → **23 项**。
+
 ### 未实测 / 边界
 
 - **新渠道的真实对话未在本轮跑**：10 条新增里 8 条需要 key（本机没有），
