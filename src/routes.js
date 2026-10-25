@@ -254,6 +254,19 @@ export function createRoutes(deps) {
         const result = await manager.probeChat(lane, { model: body?.model })
         return send(200, result)
       }
+      // ── 套餐窗口（0.6.0）：订阅型车道还剩多少（5h / 7d 两层）──────────────────
+      //
+      // 与 /key/balance 同一形状：失败仍是 200（那是结论不是请求错误）。认不出上游形状时
+      // 返回 kind='unparsed' 并列出看到的字段名 —— 「读不懂」比编一个数字好。
+      if (method === 'POST' && routePath === '/key/windows') {
+        const manager = deps.keyed?.manager?.()
+        if (manager === undefined) return fail(503, '自带 key 车道未就绪（插件还没完成装配，或该模块缺失）')
+        if (typeof manager.probeWindows !== 'function') return fail(503, '这个版本的管理器没有套餐窗口查询')
+        const body = await readJson(req)
+        const lane = laneIdOf(body)
+        if (lane === '') return fail(400, '缺少 lane')
+        return send(200, await manager.probeWindows(lane, { force: body?.force === true }))
+      }
       // ── 余额/额度（0.6.0）：这条渠道还剩多少 ────────────────────────────────
       //
       // 与 /key/probe 的分工：那个回答「key 能不能用」，这个回答「还剩多少」。

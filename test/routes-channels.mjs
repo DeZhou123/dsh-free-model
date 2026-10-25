@@ -429,6 +429,48 @@ await check('/diagnose：返回纯文本诊断快照，且**不含任何凭据�
   assert.equal(/sk-[A-Za-z0-9]{6}/.test(body), false, '诊断文本里出现了像 key 的串')
 })
 
+
+await check('/key/windows：走 manager.probeWindows（缺 lane 400、未接线 503、成功 200）', async () => {
+  const calls = []
+  const handler = createRoutes(makeDeps({
+    registry: registryStub,
+    keyed: {
+      manager: () => ({
+        probeWindows: async (lane, options) => {
+          calls.push({ lane, force: options?.force === true })
+          return { ok: true, kind: 'ok', reason: '5 小时窗：已用 1/4', windows: [{ label: '5 小时窗', used: 1, limit: 4 }], ms: 9 }
+        },
+      }),
+      keyStates: () => ({}),
+      keyCounts: () => ({}),
+    },
+  }))
+  const ok = await makeCallWithBody(handler, 'POST', '/api/free-model/key/windows', { lane: 'kimi-coding', force: true })
+  assert.equal(ok.status, 200)
+  assert.equal(ok.json().windows.length, 1)
+  assert.deepEqual(calls, [{ lane: 'kimi-coding', force: true }])
+  assert.equal((await makeCallWithBody(handler, 'POST', '/api/free-model/key/windows', {})).status, 400)
+  const off = await makeCallWithBody(createRoutes(makeDeps({ registry: registryStub })), 'POST', '/api/free-model/key/windows', { lane: 'x' })
+  assert.equal(off.status, 503)
+})
+
+await check('/channels 投影暴露 hasWindows，同样**不**暴露端点地址', async () => {
+  const rows = projectRegistryView(buildRegistry({
+    keyed: [{
+      id: 'with-windows',
+      displayName: '有套餐窗口的渠道',
+      kind: 'keyed',
+      baseURL: 'https://x.example/v1',
+      apiKeyEnv: 'X_KEY',
+      windows: { url: 'https://x.example/usages' },
+      models: [{ id: 'm', name: 'm' }],
+    }],
+  }).channels, {})
+  const row = rows.find((item) => item.id === 'with-windows')
+  assert.equal(row.hasWindows, true, '带套餐窗口端点的渠道没标 hasWindows')
+  assert.equal(row.hasBalance, undefined, '不该顺手标上 hasBalance')
+  assert.equal(JSON.stringify(row).includes('x.example/usages'), false, '端点地址被下发到页面了')
+})
 await check('未知路由仍是 404（新端点的加入不许把兜底打掉）', async () => {
   const res = await call(createRoutes(makeDeps()), 'GET', '/api/free-model/nope')
   assert.equal(res.status, 404)

@@ -76,6 +76,9 @@ export async function descriptors(deps = {}, filter = {}) {
     // 不写在这里的字段到不了注册表，于是页面上「查额度」按钮不出现、免 key 提示也不出现。
     // 这一条是被 host-keyed.mjs 的真实装配断言抓出来的（离线套件用的是自己造的记录，看不出来）。
     ...(lane.balance !== undefined ? { balance: lane.balance } : {}),
+    // ⚠️ 白名单式映射：不写在这里，注册表拿不到 windows，页面上「查套餐窗口」就不会出现
+    //（同 balance / openCatalog —— 这条注释是上一次被 host 套件抓出来的教训）。
+    ...(lane.windows !== undefined ? { windows: lane.windows } : {}),
     ...(lane.openCatalog === true ? { openCatalog: true } : {}),
     ...(lane.serialRateLimit === true ? { serialRateLimit: true } : {}),
     unknown: lane.unknown === true,

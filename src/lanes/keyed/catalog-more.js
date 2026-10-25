@@ -265,14 +265,17 @@ export const MORE_KEYED_CHANNELS = [
     protocol: 'openai',
     baseURL: 'https://api.kimi.com/coding/v1',
     apiKeyEnv: 'KIMI_CODING_API_KEY',
+    // 套餐窗口端点（2026-10-26 实测活着且要鉴权：GET → 401）。形状未实测，见 note。
+    windows: { url: 'https://api.kimi.com/coding/v1/usages' },
     docsURL: 'https://platform.moonshot.cn/docs/api/chat',
     signupURL: 'https://platform.moonshot.cn/console/api-keys',
     freeTier: '**订阅套餐**：5 小时窗 + 7 天窗双层限额（不按 token 计费），超了等窗口滚动。'
       + '与 moonshot（按量）是两套计费，key 也不同。',
     region: 'cn',
     note: '⚠️ 套餐专用端点：拿按量的 moonshot key 来调它会 401。'
-      + '它回答「套餐还剩多少」用的是另一个路径（`/coding/v1/usages`）—— 2026-10-26 实测该端点存在且要鉴权（401），'
-      + '但本插件**暂不消费**它（套餐窗口的形状未验证，编一个解析出来会给错数）。',
+      + '它回答「套餐还剩多少」用的是另一个路径（`/coding/v1/usages`）—— 2026-10-26 实测该端点存在且要鉴权（401）。'
+      + '本插件的「查套餐窗口」按钮走的就是它：形状**未实测**，所以解析只在认得出 5h/7d 字段时给数字，'
+      + '认不出时如实说「读不懂」并列出看到的字段名（不猜一个数出来）。',
     evidence: '2026-10-26 GET https://api.kimi.com/coding/v1/models → 401 '
       + '{"error":{"type":"invalid_authentication_error","message":"Invalid Authentication"}}（端点活着且已鉴权）',
     unknown: true,
@@ -289,6 +292,8 @@ export const MORE_KEYED_CHANNELS = [
     protocol: 'openai',
     baseURL: 'https://api.z.ai/api/coding/paas/v4',
     apiKeyEnv: 'ZAI_CODING_API_KEY',
+    // 套餐窗口端点（2026-10-26 实测活着且要鉴权：GET → 200 + 鉴权错）。形状未实测。
+    windows: { url: 'https://api.z.ai/api/monitor/usage/quota/limit' },
     docsURL: 'https://docs.z.ai/scenario-example/develop-tools/claude',
     signupURL: 'https://z.ai/subscribe',
     freeTier: '**订阅套餐**：5 小时窗 + 7 天窗双层限额，不按 token 计费。与 zai（按量）是两把 key。',

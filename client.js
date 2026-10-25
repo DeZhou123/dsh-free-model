@@ -301,6 +301,20 @@ window.__ModuleLoader__.load({
       keyedTryOk: '真的通了（{ms} ms）：上游回了「{reply}」',
       // ── 查额度（0.6.0）───────────────────────────────────────────────────
       keyedBalance: '查额度',
+      // ── 套餐窗口（0.6.0，订阅型车道）─────────────────────────────────────
+      keyedWindows: '查套餐窗口',
+      keyedWindowsChecking: '查询中…',
+      keyedWindowsOk: '套餐窗口',
+      keyedWindowsNoKey: '还没填 key（套餐窗口要用套餐专用 key 去问）',
+      keyedWindowsMissingConfig: '这条渠道没有套餐窗口端点',
+      keyedWindowsInvalidKey: 'key 被上游拒绝（套餐端点通常只认套餐专用 key）',
+      keyedWindowsRateLimited: '查询被限流，等一会',
+      keyedWindowsNotFound: '窗口端点 404（目录里的地址可能过期）',
+      keyedWindowsServerError: '上游故障（与 key 无关）',
+      keyedWindowsNetwork: '连不上上游',
+      keyedWindowsTimeout: '查询超时',
+      keyedWindowsBadRequest: '响应读不了（多半是网关页）',
+      keyedWindowsUnparsed: '拿到了响应但读不出窗口（形状未实测）',
       keyedBalanceChecking: '查询中…',
       keyedBalanceOk: '余额',
       keyedBalanceNoKey: '还没填 key',
@@ -575,6 +589,18 @@ window.__ModuleLoader__.load({
       keyedTrying: 'Testing…',
       keyedTryOk: 'It really works ({ms} ms): upstream replied "{reply}"',
       keyedBalance: 'Check balance',
+      keyedWindows: 'Check plan windows',
+      keyedWindowsChecking: 'Checking…',
+      keyedWindowsNoKey: 'no key yet (plan windows need the plan key)',
+      keyedWindowsMissingConfig: 'this channel declares no plan-window endpoint',
+      keyedWindowsInvalidKey: 'the upstream rejected this key (plan endpoints usually want the plan key)',
+      keyedWindowsRateLimited: 'rate limited, try again later',
+      keyedWindowsNotFound: 'plan-window endpoint returned 404 (the catalog URL may be stale)',
+      keyedWindowsServerError: 'upstream error (unrelated to the key)',
+      keyedWindowsNetwork: 'cannot reach the upstream',
+      keyedWindowsTimeout: 'plan-window query timed out',
+      keyedWindowsBadRequest: 'the response could not be read (likely a gateway page)',
+      keyedWindowsUnparsed: 'got a response but could not read windows (shape not verified)',
       keyedBalanceChecking: 'Checking…',
       keyedBalanceOk: 'Balance',
       keyedBalanceNoKey: 'no key yet',
@@ -1541,7 +1567,7 @@ window.__ModuleLoader__.load({
      * - 回车即保存（粘贴 → Enter 是最短路径），但按钮同时存在（触屏没有回车）。
      */
     function KeyedCard(props) {
-      const { channel, t, keyState, probe, busy, error, onSave, onClear, onProbe, onTry, tried, health, balance, onBalance, suspect, laneEnabled, onToggleEnabled } = props
+      const { channel, t, keyState, probe, busy, error, onSave, onClear, onProbe, onTry, tried, health, balance, onBalance, windows, onWindows, suspect, laneEnabled, onToggleEnabled } = props
       const capability = channel?.capability ?? { tools: null, vision: null }
       const tools = capability.tools ?? null
       const vision = capability.vision ?? null
@@ -1740,6 +1766,25 @@ window.__ModuleLoader__.load({
                   onClick: () => { if (typeof onProbe === 'function') onProbe() },
                 }, busyProbe ? t('keyedProbing') : t('keyedProbe')),
               ]),
+              // 查套餐窗口：只在**目录声明了 windows 端点**的渠道上出现（订阅型车道：5h / 7d）。
+              // 形状未实测，所以结果可能是 unparsed —— 那也是一条结论，页面照实显示。
+              channel?.hasWindows === true
+                ? h('div', { key: 'winrow', className: 'ow-actions' }, [
+                    h(Button, {
+                      key: 'w',
+                      disabled: busy === 'windows' || canWrite === false,
+                      onClick: () => { if (typeof onWindows === 'function') onWindows() },
+                    }, busy === 'windows' ? t('keyedWindowsChecking') : t('keyedWindows')),
+                    windows !== undefined && windows !== null
+                      ? h('span', {
+                          key: 'v',
+                          className: windows.ok === true ? 'ow-probeok' : 'ow-probeerr',
+                          role: 'status',
+                          'data-kind': String(windows.kind ?? ''),
+                        }, windows.ok === true ? safeText(windows.reason, 240) : windowsText(windows, t))
+                      : null,
+                  ])
+                : null,
               // 查额度：只在**目录声明了 balance 端点**的渠道上出现 —— 没声明的点了也只会
               // 得到「没有余额端点」，那不如不给按钮（0.6.0）。
               channel?.hasBalance === true
@@ -1814,6 +1859,20 @@ window.__ModuleLoader__.load({
      * 金额是**字符串原样显示**（后端保证不经过浮点）：各家精度不同，
      * 前端再转一次数字就会把 `0.30000000000000004` 这种事造出来。
      */
+    /**
+     * 套餐窗口结果 → 一行文字。
+     *
+     * 与余额同一个套路：能读到就给「5 小时窗：已用 3/10 · 重置于 …」，
+     * 读不到就把**后端给的原因原文**摆出来（它里面已经包含 unparsed 时看到的字段名）。
+     */
+    function windowsText(windows, t) {
+      const kind = String(windows?.kind ?? '')
+      const known = ['no-key', 'missing-config', 'invalid-key', 'rate-limited', 'not-found', 'server-error', 'network', 'timeout', 'bad-request', 'unparsed']
+      const title = known.includes(kind) ? t('keyedWindows' + probeKindSuffix(kind)) : kind
+      const why = typeof windows?.reason === 'string' && windows.reason !== '' ? '：' + safeText(windows.reason, 240) : ''
+      return title + why
+    }
+
     function balanceText(balance, t) {
       if (balance.ok === true) {
         const amount = safeText(balance.amount, 32)
@@ -1985,6 +2044,8 @@ window.__ModuleLoader__.load({
       const [suspects, setSuspects] = useState(props.modelSuspects ?? {})
       /** laneId → 配了几把 key（>1 时卡片上显示，0.6.0）。 */
       const [keyCounts, setKeyCounts] = useState(props.keyCounts ?? {})
+      /** 套餐窗口结果（laneId → { ok, kind, windows, reason }）。 */
+      const [windows, setWindows] = useState(props.windows ?? {})
       /** 试调结果（laneId → { ok, kind, ms, reply, reason }）。 */
       const [tries, setTries] = useState(props.tries ?? {})
       /** 余额查询结果（laneId → { ok, kind, amount, currency, reason }）。 */
@@ -2234,6 +2295,24 @@ window.__ModuleLoader__.load({
         }
       }, [mark])
 
+      /**
+       * 查一条车道的套餐窗口（0.6.0，订阅型车道）。
+       *
+       * 结果**可能与余额不同**：窗口端点的形状未实测，可能是 unparsed ——
+       * 那也是一条要显示出来的结论（用户据此知道「不是插件坏了，是它读不懂上游」）。
+       */
+      const windowsOf = useCallback(async (id) => {
+        mark(id, 'windows')
+        try {
+          const payload = await call('/key/windows', { lane: id, force: true })
+          setWindows((current) => ({ ...current, [id]: payload }))
+        } catch (error) {
+          setWindows((current) => ({ ...current, [id]: { ok: false, kind: 'network', reason: error.message } }))
+        } finally {
+          mark(id, '')
+        }
+      }, [mark])
+
       /** 查一条车道的余额（0.6.0）。失败也只显示一句原因，不影响其它任何状态。 */
       const balanceOf = useCallback(async (id) => {
         mark(id, 'balance')
@@ -2423,6 +2502,8 @@ window.__ModuleLoader__.load({
                       probe: probes?.[channel.id],
                       health: health?.[channel.id],
                       balance: balances?.[channel.id],
+                      windows: windows?.[channel.id],
+                      onWindows: () => void windowsOf(channel.id),
                       tried: tries?.[channel.id],
                       onTry: () => void tryOf(channel.id),
                       onBalance: () => void balanceOf(channel.id),

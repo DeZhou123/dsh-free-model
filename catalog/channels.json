@@ -1538,7 +1538,10 @@
         "claim": false
       },
       "unknown": true,
-      "note": "⚠️ 套餐专用端点：拿按量的 moonshot key 来调它会 401。它回答「套餐还剩多少」用的是另一个路径（`/coding/v1/usages`）—— 2026-10-26 实测该端点存在且要鉴权（401），但本插件**暂不消费**它（套餐窗口的形状未验证，编一个解析出来会给错数）。",
+      "windows": {
+        "url": "https://api.kimi.com/coding/v1/usages"
+      },
+      "note": "⚠️ 套餐专用端点：拿按量的 moonshot key 来调它会 401。它回答「套餐还剩多少」用的是另一个路径（`/coding/v1/usages`）—— 2026-10-26 实测该端点存在且要鉴权（401）。本插件的「查套餐窗口」按钮走的就是它：形状**未实测**，所以解析只在认得出 5h/7d 字段时给数字，认不出时如实说「读不懂」并列出看到的字段名（不猜一个数出来）。",
       "freeTier": "**订阅套餐**：5 小时窗 + 7 天窗双层限额（不按 token 计费），超了等窗口滚动。与 moonshot（按量）是两套计费，key 也不同。",
       "docsURL": "https://platform.moonshot.cn/docs/api/chat",
       "signupURL": "https://platform.moonshot.cn/console/api-keys",
@@ -1584,6 +1587,9 @@
         "claim": false
       },
       "unknown": true,
+      "windows": {
+        "url": "https://api.z.ai/api/monitor/usage/quota/limit"
+      },
       "note": "路径里多一段 /coding —— 拿按量 key 调它会 401。这条车道在中文攻略里常被写成\"Claude Code 兼容端点\"；它确实能吃 Anthropic 形态的请求，但这里按 OpenAI 兼容注册。",
       "freeTier": "**订阅套餐**：5 小时窗 + 7 天窗双层限额，不按 token 计费。与 zai（按量）是两把 key。",
       "docsURL": "https://docs.z.ai/scenario-example/develop-tools/claude",

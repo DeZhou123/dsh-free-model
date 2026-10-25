@@ -37,6 +37,7 @@ import { keyRefOf, laneKeyState, saveLaneKey, clearLaneKey, maskKey } from './ke
 import { probeLaneKey } from './probe.js'
 import { probeLaneBalance, BALANCE_TIMEOUT_MS } from './balance.js'
 import { probeLaneChat } from './probe.js'
+import { probeLaneWindows, WINDOWS_TIMEOUT_MS } from './windows.js'
 import { laneById } from './catalog.js'
 import { resolveApiKey, resolveApiKeys } from './ready.js'
 import { createHealthStore, describeHealth } from '../health.js'
@@ -352,6 +353,35 @@ export function createKeyedManager(deps = {}) {
     })
   }
 
+  /** 套餐窗口缓存：60 秒（窗口以分钟计变化，没必要每点一次都打上游）。 */
+  const windowCache = new Map()
+
+  /**
+   * 查一条车道的套餐窗口（0.6.0，订阅型车道）。
+   *
+   * 与余额查询同一形状、同一个纪律：失败不抛、结果说的是「能不能读到」而不是「渠道坏没坏」；
+   * 认不出形状时返回 unparsed + 看到的字段名（**不猜数字**）。
+   */
+  async function probeWindows(laneId, options = {}) {
+    const lane = laneById(laneId)
+    if (lane === undefined) {
+      return { ok: false, kind: 'missing-config', reason: '未知的 keyed 车道：' + String(laneId), ms: 0 }
+    }
+    const cached = windowCache.get(laneId)
+    if (cached !== undefined && options.force !== true && Date.now() - cached.at < 60_000) {
+      return { ...cached.result, cached: true }
+    }
+    const resolved = await resolveApiKey(lane, { readCredential: deps.readCredential })
+    const result = await probeLaneWindows(lane, {
+      apiKey: resolved.key ?? '',
+      ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
+      timeoutMs: WINDOWS_TIMEOUT_MS,
+      logger,
+    })
+    windowCache.set(laneId, { result, at: Date.now() })
+    return result
+  }
+
   /** 余额查询缓存：成功 60 秒（余额变化以分钟计，没必要每点一次都打上游）。 */
   const balances = new Map()
 
@@ -577,6 +607,7 @@ export function createKeyedManager(deps = {}) {
     probeKey,
     probeAllKeys,
     probeBalance,
+    probeWindows,
     probeChat,
     setEnabled,
     disabledLanes,

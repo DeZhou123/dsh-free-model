@@ -974,6 +974,13 @@ check('凭据名旁边有「复制」按钮（手抄大写下划线名容易错�
   assert.equal(copyButtons.length, 1, '复制按钮应当恰好一个（实际 ' + copyButtons.length + '）')
   assert.equal(copyButtons[0].props.type, 'button', '复制⃒不要用 <a>（它不是导航）')
 })
+
+check('套餐窗口按钮只在声明了 windows 端点的渠道上出现（订阅型车道）', () => {
+  const withWin = KeyedCard({ channel: { ...keyedRow, hasWindows: true }, t })
+  assert.ok(flat(withWin).includes('keyedWindows'), '声明了 windows 却没给按钮')
+  const withoutWin = KeyedCard({ channel: keyedRow, t })
+  assert.equal(flat(withoutWin).includes('keyedWindows'), false, '没声明 windows 却给了按钮（点了必然说没有端点）')
+})
 // ── 汇总 ────────────────────────────────────────────────────────────────────
 check('语言包：三页签与新文案都有词条（缺词条会显示成变量名）', () => {
   const src = readFileSync(join(ROOT, 'client.js'), 'utf8')

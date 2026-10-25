@@ -235,6 +235,8 @@ export function projectRegistryView(channels, runtime = {}) {
       // 这条渠道能不能查余额（0.6.0）：**只暴露布尔**，不把端点交给页面 ——
       // 页面拿不到端点就没人能拼一个「带 key 去打任意地址」的请求。
       ...(channel.balance !== undefined ? { hasBalance: true } : {}),
+      // 这条渠道能不能查套餐窗口（0.6.0）：同样只暴露布尔，端点不下发到页面。
+      ...(channel.windows !== undefined ? { hasWindows: true } : {}),
       ...(channel.native === true ? { native: true } : {}),
       ...(channel.unknown === true ? { unknown: true } : {}),
       ...(channel.extra !== undefined ? { extra: channel.extra } : {}),

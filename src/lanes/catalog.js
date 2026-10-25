@@ -177,6 +177,9 @@ export function normalizeChannelRecord(raw, origin, options = {}) {
     // 这一点比渠道本体的 baseURL 更要紧 —— 余额端点是**带着 key 去 GET** 的，
     // 一个能被远程目录改成任意地址的探针就是一台「把你的 key 送到我这」的机器。
     ...(kind === 'keyed' ? normalizeBalance(raw.balance) : {}),
+    // windows：套餐车道的「5h / 7d 窗口」查询端点（0.6.0）。
+    // 与 balance 同一套纪律：只接受数据、URL 过同一个 cleanUrl —— 它也是**带着 key 去 GET** 的。
+    ...(kind === 'keyed' ? normalizeWindows(raw.windows) : {}),
     // 探针**只留给服务型车道**：它是唯一会去访问这个 URL 的地方（见 `./service.js` 的
     // `probeServiceLane`），别的类型带上它只是多一条没人用的攻击面描述。
     ...(kind === 'service' ? normalizeProbe(raw.probe) : {}),
@@ -396,6 +399,20 @@ function normalizeCredits(value) {
  * 与探针同一条纪律：**只接受数据**，URL 过 cleanUrl，rowKind 只认白名单。
  * 认不出来就整条丢掉 —— 少一个「查额度」按钮，比多一个能往任意地址发 key 的按钮好。
  */
+/**
+ * 套餐窗口端点描述（只有订阅型车道需要）。
+ *
+ * 只认一个字段：url。窗口的**形状**由 probe 层按常见字段名容错解析，
+ * 认不出来时如实说「读不懂」并列出看到的字段名（见 src/lanes/keyed/windows.js 的说明）——
+ * 所以这里不需要（也不该）声明形状。
+ */
+function normalizeWindows(value) {
+  if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) return {}
+  const url = cleanUrl(value.url)
+  if (url.value === undefined) return {}
+  return { windows: Object.freeze({ url: url.value }) }
+}
+
 function normalizeBalance(value) {
   if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) return {}
   const url = cleanUrl(value.url)

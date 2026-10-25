@@ -231,6 +231,30 @@
 | `probeKey` 不再 ReferenceError | 起一个 manager（桩凭据 + 桩 fetch 回 401），`probeKey('groq', {force:true})` → `{ok:false, kind:'invalid-key'}` |
 | 粘滞规则 / halfOpen 语义 | `node test/lanes-health.mjs` → `pass=40 fail=0`（+3 条：吊销粘滞、冷却不缩短、halfOpen 被下一次结果消费） |
 | 全量门 | `npm run check`（83 文件）✓ · `npm test` 12 套 `fail=0` ✓ · `npm run test:host` 27 项 ✓ |
+
+### 补记 6（同一夜，07:00：套餐窗口探针 —— 订阅型车道的最后一格空白）
+
+0.6.0 把两类**订阅套餐**车道装进了目录（`kimi-coding`、`zai-coding-cn`）：它们不按 token 计费，
+而是「**5 小时窗 + 7 天窗**」两层限额。装进来却不说还剩多少，等于把这类车道最要紧的那条信息
+藏起来了 —— 用户可以连撞几十次 429 而不知道自己在等哪一层窗口。
+
+新增 `src/lanes/keyed/windows.js` + `POST /key/windows` + 卡片上的「查套餐窗口」按钮
+（只在目录声明了 `windows.url` 的渠道上出现，与「查额度」同一条纪律）。
+
+**⚠️ 形状未实测，所以「读不出来」被当成一条正经结果**：两个端点本机都实测过活着且要鉴权
+（`/coding/v1/usages` → 401；`/api/monitor/usage/quota/limit` → 200 + 鉴权错），但没有这两家的
+订阅 key，返回体形状**无实证**。于是解析只认明确的形状（窗口数组 / `five_hour`·`seven_day` 键名 /
+`used`·`limit`·`remaining`·`percentage` 字段族），认不出时返回 `kind: 'unparsed'` 并**列出看到的
+字段名**（截断 16 个）—— 既是给用户的结论（拿到了，但读不懂），也是取证线索：下一个人拿着真 key
+跑一次就能把形状补进解析表。**绝不编一个数字出来。**
+
+失败分档与「测试 key」/「查额度」同一套词表：`no-key` / `invalid-key`（并提示套餐端点通常只认
+套餐专用 key，按量 key 会 401）/ `rate-limited` / `not-found` / `server-error` / `network` / `timeout` / `bad-request`。
+
+**证据**：`node test/keyed/windows.mjs` → `pass=12 fail=0`（三种形状各钉一遍 + 认不出时列出字段名 +
+六种失败分档 + 成功路径**不含 key**）；`test/routes-channels.mjs` 增 2 条（路由走 manager.probeWindows 且
+缺 lane 400 / 未接线 503；`/channels` 投影只暴露 `hasWindows` 布尔，**不下发端点地址**）；
+`test/render.mjs` 增 1 条（按钮只在声明了端点的渠道上出现）。全量 `npm test` 13 套 `fail=0`。
 ### 未实测 / 边界
 
 - **新渠道的真实对话未在本轮跑**：10 条新增里 8 条需要 key（本机没有），
