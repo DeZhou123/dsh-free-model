@@ -755,6 +755,88 @@ check('OpenCode 服务卡：运行中 / 已停止 / 挂载但没跑，三态都�
   }), 'ServiceCard-warn') > 3, 'warn 态渲染节点过少')
 })
 
+// ── 7. 0.6.0：渠道健康徽章 + 搜索/筛选工具条 ────────────────────────────────
+const { HealthPill, healthLabel, healthExtra, filterLabel, FILTERS, formatDuration } = module.__test
+
+check('0.6.0 导出了健康徽章与筛选工具（缺一个就会在页面上静默少一块）', () => {
+  for (const [name, value] of Object.entries({ HealthPill, healthLabel, healthExtra, filterLabel, formatDuration })) {
+    assert.equal(typeof value, 'function', '__test.' + name + ' 未导出')
+  }
+  assert.ok(Array.isArray(FILTERS), 'FILTERS 必须是数组')
+  assert.deepEqual([...FILTERS], ['all', 'ready', 'pending', 'cooldown', 'revoked'], '筛选档位顺序是契约')
+})
+
+check('健康徽章四档：data-health 与文案各不相同（灰不能画成红）', () => {
+  const seen = new Set()
+  for (const state of ['ok', 'cooldown', 'revoked', 'unknown']) {
+    const tree = HealthPill({ health: { state, until: null, text: 'x' }, t })
+    const nodes = collectElements(tree, (node) => node.props?.['data-health'] !== undefined)
+    assert.equal(nodes.length, 1, state + ' 没有渲染出 data-health')
+    assert.equal(nodes[0].props['data-health'], state)
+    const text = collectStrings(tree).join('')
+    assert.ok(!seen.has(text), '四档文案重复：' + state + ' → ' + text)
+    seen.add(text)
+  }
+  assert.equal(seen.size, 4)
+  // 未来版本新增的状态名不该以内部键名露出页面。
+  assert.equal(healthLabel('some-future-state', t), 'keyedHealthUnknown')
+})
+
+check('冷却中的徽章带剩余时间；已到期说「只放一次探测」', () => {
+  // 需要**会替换占位符**的翻译器：identity 的 t 会把 {left} 一起变成键名，断言就失效。
+  const tD = (key) => ({ keyedHealthLeft: '还有 {left}' }[key] ?? key)
+  const future = Date.now() + 90 * 60 * 1000
+  const cooling = healthExtra({ state: 'cooldown', until: future }, tD)
+  assert.ok(cooling.includes('还有'), '缺少「还有 {left}」')
+  // 90 分钟必须念成「1 小时 30 分钟」，不能四舍五入成「2 小时」（会让人以为等更久）。
+  assert.equal(cooling, '还有 1 小时 30 分钟', '剩余时长的换算不对：' + cooling)
+  assert.ok(!cooling.includes('{left}'), '占位符没有被替换：' + cooling)
+  const expired = healthExtra({ state: 'cooldown', until: Date.now() - 1000 }, t)
+  assert.equal(expired, 'keyedHealthJustOk', '到期后应提示「只放一次探测」')
+  assert.equal(healthExtra({ state: 'ok', halfOpen: true }, t), 'keyedHealthJustOk')
+  assert.equal(healthExtra({ state: 'ok' }, t), '', 'ok 状态不该有补充文字')
+  assert.equal(healthExtra(undefined, t), '', '没有健康数据时不该编文字')
+})
+
+check('formatDuration 三档口径（秒/分钟/小时）', () => {
+  assert.equal(formatDuration(30 * 1000), '30 秒')
+  assert.equal(formatDuration(5 * 60 * 1000), '5 分钟')
+  assert.equal(formatDuration(3 * 3600 * 1000), '3 小时')
+  assert.equal(formatDuration(-5000), '0 秒', '负数必须归零')
+})
+
+check('筛选胶囊文案五档各不相同', () => {
+  const texts = FILTERS.map((id) => filterLabel(id, t))
+  assert.equal(new Set(texts).size, FILTERS.length, '筛选文案有重复：' + texts.join(' / '))
+})
+
+check('KeyedPage 有搜索框、五个筛选胶囊、清健康按钮、底部汇总', () => {
+  const tree = KeyedPage({ t, channels: [keyedRow], wired: true, keyStates: {}, probes: {}, health: {} })
+  const inputs = collectElements(tree, (node) => node.type === 'input' && node.props.type === 'search')
+  assert.equal(inputs.length, 1, '缺一个搜索框，实际 ' + inputs.length)
+  const chips = collectElements(tree, (node) => typeof node.props?.['data-filter'] === 'string')
+  assert.equal(chips.length, 5, '筛选胶囊应为 5 个，实际 ' + chips.length)
+  const text = flat(tree)
+  assert.ok(text.includes('keyedResetHealth'), '缺少「清掉健康状态」按钮')
+  assert.ok(text.includes('keyedSummary'), '缺少底部汇总行')
+  assert.ok(text.includes('OpenRouter 免费模型'), '默认视图应渲染出渠道卡')
+})
+
+check('真的没有渠道时说「暂无渠道」；被筛空时说「换个关键词」（两句不能混）', () => {
+  const none = KeyedPage({ t, channels: [], wired: true, keyStates: {}, probes: {}, health: {} })
+  assert.ok(flat(none).includes('keyedEmpty'), '没有渠道时应说「暂无渠道」')
+  // 渠道存在但被判成 revoked，而筛选停在 ready → 空集走 nomatch 分支。
+  const revoked = { ...keyedRow, id: 'zai', displayName: 'Z.ai' }
+  const filtered = KeyedPage({
+    t, channels: [revoked], wired: true,
+    keyStates: { zai: { configured: true, writable: true, source: 'file', masked: 'sk-1…abcd' } },
+    probes: {}, health: { zai: { state: 'revoked', until: null } },
+  })
+  const text = flat(filtered)
+  assert.ok(!text.includes('keyedNoMatch'), '默认 all 筛选下不该说「没有匹配」')
+  assert.ok(collectElements(filtered, (node) => node.props?.['data-health'] === 'revoked').length === 1,
+    'revoked 渠道应渲染出红色健康徽章')
+})
 // ── 汇总 ────────────────────────────────────────────────────────────────────
 check('语言包：三页签与新文案都有词条（缺词条会显示成变量名）', () => {
   const src = readFileSync(join(ROOT, 'client.js'), 'utf8')

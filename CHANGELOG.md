@@ -3,6 +3,87 @@
 格式：`## [版本] · 日期` → `### 新增 / 改动 / 修复 / 证据`。
 写下来的规矩：**每条都要能被验证**（命令、文件、实测输出），做不到就标 `未实测`。
 
+## [0.6.0] · 2026-10-26
+
+> 主题：**渠道从 21 条扩到 30 条**（每条带本轮实测证据），并给每条渠道加上
+> **跨重启的健康与冷却记账** —— 因为渠道一多，"全都绿"这个信号就失效了。
+
+### 新增
+
+- **`src/lanes/keyed/catalog-more.js`（第二批 10 条车道）**：gitee-ai / qwen-intl /
+  huggingface-router / chutes / novita / deepinfra / zai / xiaomi-mimo / kimi-coding /
+  zai-coding-cn。文件头同时记下同一轮实测**否掉的 9 个候选**与理由（kluster、lambda 连不上；
+  ai21 目录为空；cohere 回 HTML；sensenova 404；**lingyiwanwu 410 已停服**；puter 无兼容目录；
+  openai / deepseek-official 是按量不是免费）。`catalog.js` 的 `KEYED_CHANNELS` 改为
+  `[...第一批, ...第二批]` 的拼装，两批数据的实测日期与判据因此各自可读、可单独回滚。
+  其中 `kimi-coding` / `zai-coding-cn` 是本插件第一次有**订阅套餐车道**（5h+7d 双层窗，
+  与按量 key 不通用），`note` 里把这件事写死了。
+- **`src/lanes/health.js`（健康账本）**：纯函数 `classifyFailure` + `createHealthStore`。
+  判据表写在模块头：401/403 → **吊销**（永不自动恢复）；402/quota → 冷却到「下一整点 + 6h」；
+  429 → 60 秒基准并尊重 `Retry-After`（封顶 30 分钟）；5xx/超时/网络 → 30 秒基准**指数退避**；
+  404 → 6 小时长冷却且不参与退避；**400 / 模型名错 / 上下文超限 / 用户主动停止 → 不记**。
+  半开不是第五个状态，而是 `halfOpen:true` 标记（到期只放一次探测）。
+  落盘 `$DSH_HOME/free-model/health.json`，原子写（.tmp → rename），文件损坏从空状态起（warn 一次不抛）。
+  记录结构里**结构上就没有凭据的位置**（只存 laneId + 分类字段；错误文本 200 字符截断 + 长串遮蔽）。
+- **健康记账的两个入口**：
+  ① `POST /key/probe`（用户点「测试 key」）——`no-key` / `missing-config` **不记**
+  （那是本插件自己的配置问题，记成渠道故障会让"还没填 key"显示成"冷却中"）；
+  ② **真实对话**（`adapter` 新增 `onOutcome` 回执）—— 全部 5 处失败抛出点收敛到 `#fail()`，
+  成功在 `finish` 前回执（空响应 / 内容过滤**不**回执：那是输出选择，不是渠道健康问题；
+  用户主动 abort **不**回执）。
+- **`healthKindOf()`（词表翻译表，导出）**：适配器的 `FAILURE_KINDS` 到账本分类的显式映射。
+  两层回答的是不同问题（一层管"这次请求怎么办"，一层管"这条渠道还要不要用"），所以做翻译而不是透传；
+  `unknown-model` / `context` / `invalid-request` / `aborted` 一律 `null`（不记）。
+- **HTTP 面**：`GET /health`（账本快照，每条带一句人话 `text`）、`POST /health/reset`（`{lane?}` 单条或全清）。
+- **页面（自带 key 页）**：
+  - 每张卡多一颗 **健康徽章**（`HealthPill`，绿/黄/红/灰四色，带剩余时间或"只放一次探测"）；
+    灰 ≠ 红：灰是"还没测"，不是"坏了"。
+  - 页头多**搜索框**（渠道名 / 凭据名 / 端点 / 模型样例都能命中）与**五个筛选胶囊**
+    （全部 / 就绪 / 待配置 / 冷却中 / 已吊销，每个胶囊自带数字 —— 既是筛选器也是汇总行）。
+  - 卡片多一行**模型样例**（前 5 个 id），让"这条渠道能调什么"不用点开就知道。
+  - 「清掉健康状态」按钮：换完新 key 之后，旧 key 的 401 会把它永久钉成"已吊销"，
+    没有这个按钮就得等宿主重启。
+  - 底部汇总行 `共 N 条 · 就绪 x · 待配置 y · 冷却 z · 吊销 w`。
+  - 被筛空时说「换个关键词」并给回全部按钮，**不复用**「暂无渠道」那句（那会让人以为渠道丢了）。
+- **`registry.js` 投影多 `modelSample`（前 8 个 id）**：字段名刻意不叫 `models` ——
+  后者会让人以为这是完整目录，于是拿它去渲染需要全量数据的界面。
+
+### 修复
+
+- **`formatDuration` 把 90 分钟说成「2 小时」**（0.6.0 开发中实测暴露）：
+  四舍五入让冷却看起来比实际更长。改为「1 小时 30 分钟」（余数 < 5 分钟才省略）。
+  冷却时间的任务是让人决定"还能不能等"，宁可多说一段也不要报大。
+- **搜索曾经搜不到模型名**：`/channels` 投影里没有全量 `models`，前端却按 `row.models` 匹配 ——
+  那条路径永远为空。改读 `modelSample`，由 `test/render.mjs` 钉住。
+- **写 `package.json` 时带进了 UTF-8 BOM**，导致 `test/smoke.mjs` 的两条断言
+  （`version 与 package.json 一致`、`client bundle 用包名注册`）读 JSON 直接抛
+  `Unexpected token '﻿'`。已剥 BOM。
+
+### 证据（本机实测）
+
+| 断言 | 怎么验的 |
+|---|---|
+| 30 条 keyed + 1 条 keyless + 1 条已下线，统计自洽 | `node -e "import('./src/lanes/keyed/catalog.js').then(m=>console.log(m.catalogStats()))"` |
+| 新增 10 条的 evidence 全部带 `GET https://…` 与本轮日期 | `node test/keyed/catalog-more.mjs` → `pass=14 fail=0` |
+| 被否掉的 9 个候选没混进任何渠道表 | 同上（`ALL_CHANNELS` 全表扫描） |
+| 健康分类 7 档 + 4 档不记 + 指数退避 + 半开 + 落盘 + 脱敏 | `node test/lanes-health.mjs` → `pass=29 fail=0` |
+| 词表翻译表六个记账 / 四个不记 | `node --import ./test/hooks.mjs test/keyed/manage-health.mjs` → `pass=11 fail=0` |
+| 健康徽章四档文案互不相同、冷却带剩余时间、筛空给对文案 | `node test/render.mjs` → `pass=51 fail=0` |
+| 端点全量复查 | `node scripts/probe-endpoints.mjs` → 可达 **29/31**（10 alive-open / 19 alive-needs-auth / 2 目录已声明） |
+| 远程目录重生成且与随包一致 | `node scripts/build-catalog.mjs` → 34 条 / 55,789 字节；`--check` 通过 |
+| 全量回归 | `npm run check`（78 文件）→ 全过；`npm test` → 9 套 `fail=0`；`npm run test:host` → 18 项全过 |
+
+### 未实测 / 边界
+
+- **新渠道的真实对话未在本轮跑**：10 条新增里 8 条需要 key（本机没有），
+  验证到"端点活着且已鉴权"（401/403）与"目录可读"（200）为止。
+  `kimi-coding` / `zai-coding-cn` 的 `/usages`、`coding_plan/remains` 套餐窗口
+  **本插件暂不消费**（要单独解析，且形态各家不同），页面上也不显示套餐剩余。
+- **健康记账的"按模型分档"未做**：现在是渠道级（一把 key 挂了，它下面所有模型都挂）。
+  真要按模型分，改的是账本的键，不是 `isAvailable` 的签名。
+- **`/health` 不参与路由决策**：账本已经知道"这条在冷却"，但 DSH 的模型选择器仍会把它列出来
+  （宿主没有"按健康过滤模型"的扩展点）。当前只做到"让用户看见"，没做到"自动摘掉"。
+
 ## [0.5.0] · 2026-10-25
 
 > 主题：**把「宿主 channel-pack 的那 11 条账号车道」整体移出本插件**，改由独立插件

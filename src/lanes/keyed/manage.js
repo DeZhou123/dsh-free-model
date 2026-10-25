@@ -37,6 +37,7 @@ import { keyRefOf, laneKeyState, saveLaneKey, clearLaneKey, maskKey } from './ke
 import { probeLaneKey } from './probe.js'
 import { laneById } from './catalog.js'
 import { resolveApiKey } from './ready.js'
+import { createHealthStore, describeHealth } from '../health.js'
 
 /** 探测结果的缓存时长：成功 60 秒。面板切页签会重复读，别每次都打上游。 */
 export const PROBE_CACHE_TTL_MS = 60_000
@@ -59,11 +60,29 @@ export const PROBE_FAILURE_TTL_MS = 20_000
  *   readImage?: Function,
  *   readImageRequest?: Function,
  *   onUpdate?: (snapshot: object) => void,
+ *   health?: ReturnType<typeof createHealthStore>,   // 注入的账本（页面/测试可换一个纯内存的）
+ *   healthFile?: string,
  * }} deps
  * @returns {object} 见下方各方法的 jsdoc
  */
 export function createKeyedManager(deps = {}) {
   const logger = deps.logger
+  /**
+   * 渠道健康账本（`../health.js`）。
+   *
+   * ## 为什么管理器要持有它，而不是让页面自己记
+   *
+   * 「这条渠道现在还能不能打」必须由**打过它的那一方**记账：页面刷新就忘、
+   * 宿主重启就忘，而免费渠道的冷却常常有 6 小时（额度）甚至永久（key 废了）。
+   * 忘了的后果是每隔几分钟拿同一把废 key 去撞一次上游 —— 日志噪音之外，
+   * 还在别人家白刷请求数。
+   *
+   * 注入优先：测试传一个 `persist:false` 的实例；生产由 `index.js` 给文件路径。
+   */
+  const health = deps.health ?? createHealthStore({
+    ...(typeof deps.healthFile === 'string' && deps.healthFile !== '' ? { file: deps.healthFile } : {}),
+    logger,
+  })
   /** laneId → { lane, adapter, handle } */
   const mounted = new Map()
   /** laneId → { result, at, ok } */
@@ -73,8 +92,54 @@ export function createKeyedManager(deps = {}) {
   /** laneId → 凭据面状态（已配置/来源/能否写/脱敏值）。 */
   let keyStates = Object.freeze({})
 
+  /**
+   * 把适配器报回来的真实对话结果记进健康账本。
+   *
+   * 与探测的区别：探测只证明「key 能过鉴权」，而真实对话才会撞上限流、额度、
+   * 模型下线、流中断 —— 那些恰恰是**用完一条免费渠道之后**最该被记住的事。
+   */
+  /**
+   * 适配器的失败类别 → 健康账本吃的分类。
+   *
+   * ## 为什么必须有一张显式的映射表
+   *
+   * 两层用的词表不一样，而且**不是因为谁写错了**：适配器的 `FAILURE_KINDS`
+   * 面向「这次请求该怎么处置」（能不能重试、要不要换模型），健康账本的分类面向
+   * 「这条渠道还要不要继续用」（冷却多久、要不要求用户换 key）。同一个失败在两边
+   * 的正确答案不同，所以这里做一次**有记录的翻译**，而不是让两边互相猜：
+   *
+   * | 适配器 | 账本 | 理由 |
+   * |---|---|---|
+   * | credential | invalid-key | 凭据被拒 = 吊销，等不会恢复 |
+   * | quota | quota | 额度问题，冷却到刷新点 |
+   * | rate-limit | rate-limited | 限流，短冷却 |
+   * | connection | network / timeout | 抖动 |
+   * | server | server-error | 上游 5xx |
+   * | upstream | server-error | 流内报错，也是上游的问题 |
+   * | unknown-model / context / invalid-request | **null（不记）** | 这是**我们的请求**不对，渠道本身没病；记了会让好好的渠道被冻住 |
+   * | aborted | **null（不记）** | 用户自己按的停止 |
+   */
+  const onOutcome = (event) => {
+    const laneId = typeof event?.lane === 'string' ? event.lane : ''
+    if (laneId === '') return
+    if (event.ok === true) {
+      health.recordSuccess(laneId)
+      return
+    }
+    const kind = healthKindOf(event.kind)
+    // 认不出来的失败**不记账**：宁可漏记一次（下一次请求会补上），
+    // 也不要把「模型名写错了」记成「渠道坏了」—— 后者会让用户去查网络和 key。
+    if (kind === null) return
+    health.recordFailure(laneId, {
+      kind,
+      ...(Number.isFinite(event.status) ? { status: event.status } : {}),
+      reason: typeof event.detail === 'string' ? event.detail : (event.advice ?? ''),
+    })
+  }
+
   const callDeps = () => ({
     readCredential: deps.readCredential,
+    onOutcome,
     logger,
     ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
     ...(deps.readImage !== undefined ? { readImage: deps.readImage } : {}),
@@ -115,7 +180,10 @@ export function createKeyedManager(deps = {}) {
       reason: row.reason,
       ...(row.retired === true ? { retired: true } : {}),
     }])))
-    const snapshot = { records, ready, keyStates }
+    // 健康状态与就绪状态**分开报**：`ready` 说「凭据配好了没」，
+    // `health` 说「上一次真打上游的结果是什么」。合成一个字段的话，
+    // 「key 填了但刚被 401 判死」和「还没填」会显示成同一件事。
+    const snapshot = { records, ready, keyStates, health: health.snapshot() }
     try {
       deps.onUpdate?.(snapshot)
     } catch (error) {
@@ -229,7 +297,45 @@ export function createKeyedManager(deps = {}) {
       logger,
     })
     probes.set(laneId, { result, at: Date.now(), ok: result.ok === true })
+    // 探测**就是**一次真实请求，所以它是健康账本最好的信息来源：
+    // 用户点「测试 key」得到的那一次结果，直接决定这条渠道接下来 30 秒 / 6 小时 / 永久的状态。
+    //
+    // ⚠️ 只有「凭据真的发出去了」才记账：`no-key` / `missing-config` 说的是本插件自己的
+    // 配置问题（没填 key、车道已下线），记成渠道故障会让用户在补 key 之前就看到一条
+    // 「冷却中」的红字，方向完全错。
+    if (result.ok === true) {
+      health.recordSuccess(laneId)
+    } else if (isUpstreamVerdict(result.kind)) {
+      health.recordFailure(laneId, {
+        kind: result.kind,
+        ...(Number.isFinite(result.status) ? { status: result.status } : {}),
+        ...(Number.isFinite(result.retryAfterMs) ? { retryAfterMs: result.retryAfterMs } : {}),
+        reason: typeof result.reason === 'string' ? result.reason : '',
+      })
+    }
     return result
+  }
+
+  /** 这条车道现在还能不能打（页面用它决定按钮是否灰、以及给什么下一步）。 */
+  function availability(laneId) {
+    return health.isAvailable(laneId)
+  }
+
+  /** 健康账本快照（`GET /health` 的正文）。 */
+  function healthSnapshot() {
+    const snap = health.snapshot()
+    const lanes = {}
+    for (const [laneId, record] of Object.entries(snap.lanes ?? {})) {
+      lanes[laneId] = { ...record, text: describeHealth(record) }
+    }
+    return { generatedAt: snap.generatedAt, lanes }
+  }
+
+  /** 清掉健康状态：不传 laneId 就全清（页面的「重新探测全部」前置动作）。 */
+  function resetHealth(laneId) {
+    health.reset(laneId)
+    probes.clear()
+    return healthSnapshot()
   }
 
   /** 页面渲染用的同步快照（不发网络）。 */
@@ -242,7 +348,74 @@ export function createKeyedManager(deps = {}) {
     }
   }
 
-  return { refresh, ensureMounted, mountAllReady, saveKey, clearKey, probeKey, snapshot }
+  return {
+    refresh,
+    ensureMounted,
+    mountAllReady,
+    saveKey,
+    clearKey,
+    probeKey,
+    snapshot,
+    availability,
+    healthSnapshot,
+    resetHealth,
+  }
+}
+
+/**
+ * 适配器的失败类别 → 健康账本吃的分类。
+ *
+ * ## 为什么必须有一张显式的映射表
+ *
+ * 两层用的词表不一样，而且**不是因为谁写错了**：适配器的 `FAILURE_KINDS`
+ * 面向「这次请求该怎么处置」（能不能重试、要不要换模型），健康账本的分类面向
+ * 「这条渠道还要不要继续用」（冷却多久、要不要求用户换 key）。同一个失败在两边
+ * 的正确答案不同，所以这里做一次**有记录的翻译**，而不是让两边互相猜：
+ *
+ * | 适配器 | 账本 | 理由 |
+ * |---|---|---|
+ * | credential | invalid-key | 凭据被拒 = 吊销，等不会恢复 |
+ * | quota | quota | 额度问题，冷却到刷新点 |
+ * | rate-limit | rate-limited | 限流，短冷却 |
+ * | connection | network | 抖动 |
+ * | server | server-error | 上游 5xx |
+ * | upstream | server-error | 流内报错，也是上游的问题 |
+ * | unknown-model / context / invalid-request | **null（不记）** | 这是**我们的请求**不对，渠道本身没病；记了会让好好的渠道被冻住 |
+ * | aborted | **null（不记）** | 用户自己按的停止 |
+ *
+ * @param {string} kind 适配器的 FAILURE_KINDS 之一
+ * @returns {string|null} 账本认的分类；null = 不进冷却
+ */
+export function healthKindOf(kind) {
+  switch (String(kind ?? '')) {
+    case 'credential': return 'invalid-key'
+    case 'quota': return 'quota'
+    case 'rate-limit': return 'rate-limited'
+    case 'connection': return 'network'
+    case 'server': return 'server-error'
+    case 'upstream': return 'server-error'
+    default: return null
+  }
+}
+
+/**
+ * 这次探测结果算不算「上游对这条渠道的判决」。
+ *
+ * 只有真把请求发出去、并拿到上游结论的那几档才算：`ok` 走成功分支，这里列失败侧。
+ * `no-key` / `missing-config` 是**我们自己**的配置问题，不记；
+ * `bad-request` 是参数问题，也不该让渠道进冷却（`health.classifyFailure` 会把它判成 ok）。
+ */
+function isUpstreamVerdict(kind) {
+  return [
+    'invalid-key',
+    'forbidden',
+    'rate-limited',
+    'quota',
+    'not-found',
+    'server-error',
+    'network',
+    'timeout',
+  ].includes(String(kind ?? ''))
 }
 
 /** 错误 → 一行可显示的文本（绝不回显可能的凭据）。 */

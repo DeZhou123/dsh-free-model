@@ -100,6 +100,7 @@ export const keyedLaneDescriptors = descriptors
  *   readImageRequest?: Function,
  *   route?: string,
  *   timeoutMs?: number,
+ *   onOutcome?: (event: { lane: string, ok: boolean, kind?: string, status?: number }) => void,
  * }} deps
  * @returns {Promise<{ lane: object, route: string, adapter: object, readiness: object }>}
  * @throws 渠道不存在、已下线、或未就绪 —— 抛错文案直接可显示给用户；
@@ -122,6 +123,8 @@ export async function mount(laneId, deps = {}) {
     readImage: deps.readImage,
     readImageRequest: deps.readImageRequest,
     timeoutMs: deps.timeoutMs,
+    // 真实对话的结果回执（健康账本）。可选：没有注入时适配器完全不记账。
+    ...(typeof deps.onOutcome === 'function' ? { onOutcome: deps.onOutcome } : {}),
   })
   return { lane, route, adapter, readiness }
 }

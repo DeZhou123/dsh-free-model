@@ -215,6 +215,19 @@ export function projectRegistryView(channels, runtime = {}) {
       ...(channel.unknown === true ? { unknown: true } : {}),
       ...(channel.extra !== undefined ? { extra: channel.extra } : {}),
       modelCount: channel.models.length,
+      /**
+       * 前 8 个模型 id（页面在卡片上摊开用）。
+       *
+       * ## 为什么只给 id 的前 8 条，而不是整份 `models`
+       *
+       * 30 条渠道 × 平均 5 条模型 = 150 行，一次 `/channels` 就要多送几十 KB，
+       * 而页面上真正用得上的只有「这条渠道有没有我认识的那个模型」。
+       * 需要完整清单时页面走 `/key/probe`（它会带回**实测**的上游目录，比静态表准）。
+       *
+       * 字段名刻意叫 `modelSample` 而不是 `models`：后者会让人以为这是完整目录，
+       * 于是拿它去渲染「模型开关」那种需要全量数据的界面。
+       */
+      modelSample: channel.models.slice(0, 8).map((model) => model.id),
       state: readiness.state,
       reason: readiness.reason,
     }

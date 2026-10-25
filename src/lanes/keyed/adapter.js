@@ -734,6 +734,18 @@ export class KeyedAdapter extends LlmAdapter {
     this.readImage = options.readImage
     this.readImageRequest = options.readImageRequest
     this.timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : DEFAULT_TIMEOUT_MS
+    /**
+     * 真实对话的结果回执（0.6.0）。
+     *
+     * ## 为什么适配器要往外报，而不是让上层自己看 `lastFailure()`
+     *
+     * 上层不可能"守着"看：失败发生在一次 `stream()` 里面，异常直接抛给 agent loop，
+     * 等上层下一次读 `lastFailure()` 时可能已经是十分钟后、甚至换了一条模型。
+     * 而**健康账本要的就是这一刻**：它记录的是"这次真打上游失败了，别再拿它撞"。
+     *
+     * 回调是纯通知：它抛错不影响这次请求的成败（`notify` 自己吞掉异常）。
+     */
+    this.onOutcome = typeof options.onOutcome === 'function' ? options.onOutcome : undefined
     /** 实时目录缓存。 */
     this.catalogModels = undefined
     this.catalogSource = 'static'
@@ -743,6 +755,35 @@ export class KeyedAdapter extends LlmAdapter {
     this.streamUsageSupported = this.lane.streamUsage !== false
     /** 最近一次分类后的失败（页面渲染「这次为什么不能用」）。 */
     this.failure = undefined
+  }
+
+  /**
+   * 把一次结果通知给上层（健康账本）。**绝不抛**：这是旁路通知，不能让一次
+   * 本来已成功的请求因为记账失败而变成失败。
+   */
+  #notify(ok, classified) {
+    if (this.onOutcome === undefined) return
+    try {
+      this.onOutcome({
+        lane: this.lane.id,
+        ok,
+        ...(classified === undefined ? {} : {
+          kind: classified.kind,
+          ...(Number.isFinite(classified.status) ? { status: classified.status } : {}),
+          advice: classified.advice,
+          detail: classified.detail,
+        }),
+      })
+    } catch (error) {
+      this.logger?.warn?.('dsh-free-model: 健康回执失败（' + (error instanceof Error ? error.message : String(error)) + '）')
+    }
+  }
+
+  /** 记一次失败：写 `this.failure` 并向上层回执（两件事必须一起做，别再散落成 5 处）。 */
+  #fail(classified, modelKey) {
+    this.failure = { ...classified, at: new Date().toISOString(), model: modelKey }
+    this.#notify(false, classified)
+    return failureToError(this.lane, classified)
   }
 
   /** 运行期换 key（页面填完 key 之后可以直接换，不必重挂）。 */
@@ -949,8 +990,7 @@ export class KeyedAdapter extends LlmAdapter {
           response = second.response
           if (!second.ok) {
             const classified = classifyUpstreamFailure({ status: second.status, body: second.text, headers: second.headers, lane })
-            this.failure = { ...classified, at: new Date().toISOString(), model: modelKey }
-            throw failureToError(lane, classified)
+            throw this.#fail(classified, modelKey)
           }
         }
       }
@@ -958,8 +998,7 @@ export class KeyedAdapter extends LlmAdapter {
         response = first.response
         if (!first.ok) {
           const classified = classifyUpstreamFailure({ status: first.status, body: first.text, headers: first.headers, lane })
-          this.failure = { ...classified, at: new Date().toISOString(), model: modelKey }
-          throw failureToError(lane, classified)
+          throw this.#fail(classified, modelKey)
         }
       }
       if (response.body === null || typeof response.body?.getReader !== 'function') {
@@ -986,8 +1025,7 @@ export class KeyedAdapter extends LlmAdapter {
         // 错误帧：OpenAI 兼容端点在**流内**报错也常见（限流、无权限、模型下线）。
         if (chunk.error !== undefined && chunk.error !== null) {
           const classified = classifyUpstreamFailure({ body: JSON.stringify({ error: chunk.error }), lane })
-          this.failure = { ...classified, at: new Date().toISOString(), model: modelKey }
-          throw failureToError(lane, classified)
+          throw this.#fail(classified, modelKey)
         }
         const choice = Array.isArray(chunk.choices) ? chunk.choices[0] : undefined
         const delta = choice?.delta
@@ -1068,18 +1106,18 @@ export class KeyedAdapter extends LlmAdapter {
       if (outerSignal?.aborted === true && !timedOut) {
         const classified = classifyUpstreamFailure({ lane, error, userAborted: true })
         this.failure = { ...classified, at: new Date().toISOString(), model: modelKey }
+        // ⚠️ 用户自己按了停止：**不**回执。把它记成渠道故障会让「我取消了」变成
+        // 「这条渠道冷却 30 秒」，而用户下一步通常就是重发。
         throw error instanceof LlmError ? error : failureToError(lane, classified)
       }
       if (timedOut || (error instanceof Error && error.name === 'AbortError')) {
         const classified = classifyUpstreamFailure({ lane, error, timedOut: true })
-        this.failure = { ...classified, at: new Date().toISOString(), model: modelKey }
-        throw failureToError(lane, classified)
+        throw this.#fail(classified, modelKey)
       }
       // 传输层失败（fetch 抛错）也要分类，页面才能说清「连不上」还是「被拒」。
       if (!(error instanceof LlmError)) {
         const classified = classifyUpstreamFailure({ lane, error })
-        this.failure = { ...classified, at: new Date().toISOString(), model: modelKey }
-        throw failureToError(lane, classified)
+        throw this.#fail(classified, modelKey)
       }
       throw error
     } finally {
@@ -1136,6 +1174,9 @@ export class KeyedAdapter extends LlmAdapter {
     } else {
       reason = { kind: 'stop', ...(finishReason === undefined ? {} : { stopReason: finishReason }) }
     }
+    // 只有「真的产出了内容」才算一次成功。空响应 / 被内容过滤 / 纯思考都不回执：
+    // 前者是上游抖动（该进冷却），后两者是**模型的输出选择**，不是渠道健康问题。
+    if (blockCount > 0 && finishReason !== 'content_filter') this.#notify(true)
     yield { type: 'finish', reason }
   }
 

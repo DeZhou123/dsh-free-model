@@ -566,6 +566,9 @@ export function apply(ctx, config = {}) {
     // 于是保存 key / 清除 key / 探测三条动作都能落在**当前**运行态上。
     keyedManager = createKeyedManager({
       logger,
+      // 健康账本落盘：免费渠道的冷却常有 6 小时（额度）甚至永久（key 废了），
+      // 只在内存里记等于宿主一重启就把「这条别再打了」忘干净。
+      healthFile: join(dshHome, 'free-model', 'health.json'),
       readCredential,
       writeCredential,
       unsetCredential,

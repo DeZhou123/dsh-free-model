@@ -1,6 +1,6 @@
 {
   "catalogVersion": 1,
-  "updatedAt": "2026-10-24",
+  "updatedAt": "2026-10-25",
   "generatedBy": "scripts/build-catalog.mjs",
   "note": "远程渠道目录。它只改「有哪些渠道、各自什么元数据」，不含任何可执行内容；插件会逐条校验后才采用（见 src/lanes/catalog.js）。",
   "channels": [
@@ -958,6 +958,574 @@
         "evidence": "2026-10-25 GET https://api.sambanova.ai/v1/models → 200（抄下实测 6 条 id，本静态表取其中 4 条）",
         "unknownFields": [
           "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "gitee-ai",
+      "displayName": "Gitee 模力方舟",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://ai.gitee.com/v1",
+      "apiKeyEnv": "GITEE_AI_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "⚠️ /models **不要 key 也能读**（实测 200，213 条）：所以\"探测通过\"只证明地址活着，不证明你有额度。模型 id 里混着大量社区微调（Jev / TEE 后缀），挑主流的用。",
+      "freeTier": "有免费体验额度（按模型/账号档给，数值随平台活动变）；用完后按量计费。国内直连，不需要代理。",
+      "docsURL": "https://ai.gitee.com/docs/openapi/v1",
+      "signupURL": "https://ai.gitee.com/serverless-api",
+      "models": [
+        {
+          "id": "DeepSeek-V4.1-Flash-1017",
+          "name": "DeepSeek V4.1 Flash",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "GLM-5.3",
+          "name": "GLM 5.3",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "GLM-5.3-Flash",
+          "name": "GLM 5.3 Flash",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "kimi-k3.1-pro",
+          "name": "Kimi K3.1 Pro",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "qwen3.8-max-0902",
+          "name": "Qwen3.8 Max",
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "cn",
+        "evidence": "2026-10-26 GET https://ai.gitee.com/v1/models → 200，返回 213 条（含 kimi-k3.1-pro、GLM-5.3、DeepSeek-V4.1-Flash-1017、qwen3.8-max-0902、MiniMax-H3）",
+        "unknownFields": [
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "qwen-intl",
+      "displayName": "通义千问（国际站）",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "apiKeyEnv": "DASHSCOPE_INTL_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "与 dashscope（国内站）要分开：key 不通用，额度也不共享。国际站地址在大陆常需代理。",
+      "freeTier": "国际站每个模型给一段免费额度（按模型发，用尽转按量）。与国内站 dashscope 是**两份账号、两把 key、两套额度**。",
+      "docsURL": "https://www.alibabacloud.com/help/en/model-studio/compatibility-of-openai-with-dashscope",
+      "signupURL": "https://modelstudio.console.alibabacloud.com/",
+      "models": [
+        {
+          "id": "qwen-plus",
+          "name": "Qwen Plus",
+          "contextWindow": 131072,
+          "maxTokens": 8192,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "qwen-max",
+          "name": "Qwen Max",
+          "contextWindow": 32768,
+          "maxTokens": 8192,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "qwen-turbo",
+          "name": "Qwen Turbo",
+          "contextWindow": 131072,
+          "maxTokens": 8192,
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-26 GET https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models → 401 \"You didn't provide an API key ... Bearer auth\"（端点活着且已鉴权）",
+        "unknownFields": [
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "huggingface-router",
+      "displayName": "Hugging Face Inference Providers",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://router.huggingface.co/v1",
+      "apiKeyEnv": "HF_TOKEN",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "⚠️ /models **不要 key 也能读**（实测 200，131 条），所以探测通过只说明地址活着。它是**转发层**：同一个模型 id 底下挂着多家上游（novita / cerebras / deepinfra / baseten…），调速与可用性由它选，你的 key 只是 HF 的 token。",
+      "freeTier": "免费账号每月有一笔额度（按 provider 转发，用完转 PRO 或按量）。数值随账号档变化，本插件不写死。",
+      "docsURL": "https://huggingface.co/docs/inference-providers/index",
+      "signupURL": "https://huggingface.co/settings/tokens",
+      "models": [
+        {
+          "id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+          "name": "DeepSeek V4.1 Flash",
+          "contextWindow": 1048576,
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "Qwen/Qwen3.8-27B",
+          "name": "Qwen3.8 27B",
+          "contextWindow": 1000000,
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "zai-org/GLM-5.3-Flash",
+          "name": "GLM 5.3 Flash",
+          "contextWindow": 1048576,
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "moonshotai/Kimi-K3",
+          "name": "Kimi K3",
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "google/gemma-4-31B-it",
+          "name": "Gemma 4 31B IT",
+          "contextWindow": 262144,
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "openai/gpt-oss-120b",
+          "name": "GPT-OSS 120B",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "meta-llama/Llama-3.1-8B-Instruct",
+          "name": "Llama 3.1 8B Instruct",
+          "contextWindow": 16384,
+          "vision": false,
+          "tools": false
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-26 GET https://router.huggingface.co/v1/models → 200，返回 131 条且每条带 providers[]（provider/status/context_length/pricing/supports_tools）——本批唯一带上游明细的目录",
+        "unknownFields": [
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "chutes",
+      "displayName": "Chutes",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://llm.chutes.ai/v1",
+      "apiKeyEnv": "CHUTES_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "卖点是「TEE 机密推理」——模型 id 带 -TEE 后缀表示跑在可信执行环境里，换来的是**模型清单偏少**（实测只有 16 条）与偶发排队。",
+      "freeTier": "注册赠一笔试用额度，用尽转按量（它自己也卖 TAO 计价）。**不是无限免费**。",
+      "docsURL": "https://docs.chutes.ai/",
+      "signupURL": "https://chutes.ai/app/api",
+      "models": [
+        {
+          "id": "deepseek-ai/DeepSeek-V4-Flash-0731-TEE",
+          "name": "DeepSeek V4 Flash (TEE)",
+          "contextWindow": 1048576,
+          "maxTokens": 131072,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "zai-org/GLM-5.2-TEE",
+          "name": "GLM 5.2 (TEE)",
+          "contextWindow": 1048576,
+          "maxTokens": 65535,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "moonshotai/Kimi-K3-TEE",
+          "name": "Kimi K3 (TEE)",
+          "contextWindow": 1048576,
+          "maxTokens": 65535,
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "Qwen/Qwen3.8-27B-TEE",
+          "name": "Qwen3.8 27B (TEE)",
+          "contextWindow": 262144,
+          "maxTokens": 65536,
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "deepseek-ai/DeepSeek-V3.2-TEE",
+          "name": "DeepSeek V3.2 (TEE)",
+          "contextWindow": 131072,
+          "maxTokens": 65536,
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-26 GET https://llm.chutes.ai/v1/models → 200，返回 16 条，每条带 context_length / max_output_length / input_modalities / supported_features",
+        "unknownFields": [
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "novita",
+      "displayName": "Novita AI",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.novita.ai/v3/openai",
+      "apiKeyEnv": "NOVITA_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "目录里混着 -p 后缀的型号（推测是 premium/峰值档），挑不带后缀的先试。⚠️ 它的 /models 路径是 /v3/openai/models（不是 /v3/models）。",
+      "freeTier": "新号赠小额试用额度，之后按 token 计费。",
+      "docsURL": "https://novita.ai/docs/api-reference/introduction",
+      "signupURL": "https://novita.ai/settings/key-management",
+      "models": [
+        {
+          "id": "deepseek/deepseek-v4.1-flash-1017",
+          "name": "DeepSeek V4.1 Flash",
+          "contextWindow": 1048576,
+          "maxTokens": 393216,
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "moonshotai/kimi-k3.1-pro",
+          "name": "Kimi K3.1 Pro",
+          "contextWindow": 1048576,
+          "maxTokens": 1048576,
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "zai-org/glm-5.3-flash",
+          "name": "GLM 5.3 Flash",
+          "contextWindow": 1048576,
+          "maxTokens": 131072,
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "minimax/minimax-m3.1-flash",
+          "name": "MiniMax M3.1 Flash",
+          "contextWindow": 1000000,
+          "maxTokens": 524288,
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "xiaomimimo/mimo-v2.6-pro",
+          "name": "MiMo V2.6 Pro",
+          "contextWindow": 1048576,
+          "maxTokens": 131072,
+          "vision": true,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-26 GET https://api.novita.ai/v3/openai/models → 200，返回 97 条，每条带 context_size / max_output_tokens / input_modalities",
+        "unknownFields": [
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "deepinfra",
+      "displayName": "DeepInfra",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "apiKeyEnv": "DEEPINFRA_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "⚠️ /models **不要 key 也能读**（实测 200，175 条）且**不带上下文/模态元数据** —— 所以下面的 contextWindow 只能写 0（未知），页面据此显示\"未知窗口\"而不是编一个数。目录里混了图片/视频模型（veo / seedream / sdxl），选模型时看 id 前缀。",
+      "freeTier": "按 token 计费；偶有标价 0 的开源模型可白用。**不是免费层渠道**，列它是因为型号极全。",
+      "docsURL": "https://deepinfra.com/docs/openai_api",
+      "signupURL": "https://deepinfra.com/dash/api_keys",
+      "models": [
+        {
+          "id": "Qwen/Qwen3.7-Max",
+          "name": "Qwen3.7 Max",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "deepseek-ai/DeepSeek-V4-Pro-0813",
+          "name": "DeepSeek V4 Pro",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "moonshotai/Kimi-K2.6",
+          "name": "Kimi K2.6",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "Qwen/Qwen3-VL-235B-A22B-Instruct",
+          "name": "Qwen3 VL 235B",
+          "vision": true,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-26 GET https://api.deepinfra.com/v1/openai/models → 200，返回 175 条（Qwen3.7-Max、DeepSeek-V4-Pro-0813、Kimi-K2.6、claude-sonnet-4-6、gemini-2.5-pro…），每行只有 id/object/created/owned_by/root/metadata，无窗口字段",
+        "unknownFields": [
+          "freeTier",
+          "models"
+        ]
+      }
+    },
+    {
+      "id": "zai",
+      "displayName": "Z.ai（智谱国际站）",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.z.ai/api/paas/v4",
+      "apiKeyEnv": "ZAI_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "与 zhipu-bigmodel（国内站）**key 不通用**：同一个模型 id，两个站两把 key、两套额度。国际站地址在大陆常需代理；国内站见那条。",
+      "freeTier": "有免费型号（GLM 的 Flash 档）；额度按账号档发放。与国内站 bigmodel 是**两份账号**。",
+      "docsURL": "https://docs.z.ai/api-reference/llm/chat-completion",
+      "signupURL": "https://z.ai/manage-apikey/apikey-list",
+      "models": [
+        {
+          "id": "glm-5.3-flash",
+          "name": "GLM 5.3 Flash",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "glm-4.7-flash",
+          "name": "GLM 4.7 Flash",
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-26 GET https://api.z.ai/api/paas/v4/models → 401 {\"error\":{\"code\":\"1001\",\"message\":\"Authentication parameter not received in Header\"}}（端点活着且已鉴权）",
+        "unknownFields": [
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "xiaomi-mimo",
+      "displayName": "小米 MiMo",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.xiaomimimo.com/v1",
+      "apiKeyEnv": "XIAOMI_MIMO_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "国内直连。模型名同时出现在 novita / deepinfra 的中转目录里（xiaomimimo/mimo-v2.6-*），但**直连用的是不带前缀的短 id**，前缀形态只在中转站有效 —— 别抄错。",
+      "freeTier": "有免费档（按账号/活动发），用完后按量。具体数值平台不写死在页面上，本插件不猜。",
+      "docsURL": "https://platform.xiaomimimo.com/docs",
+      "signupURL": "https://platform.xiaomimimo.com/",
+      "models": [
+        {
+          "id": "mimo-v2.6-pro",
+          "name": "MiMo V2.6 Pro",
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "mimo-v2.6-flash",
+          "name": "MiMo V2.6 Flash",
+          "vision": true,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "cn",
+        "evidence": "2026-10-26 GET https://api.xiaomimimo.com/v1/models → 401 {\"error\":{\"type\":\"invalid_key\",\"message\":\"Invalid API Key\"}}（端点活着且已鉴权）",
+        "unknownFields": [
+          "freeTier"
+        ]
+      }
+    },
+    {
+      "id": "kimi-coding",
+      "displayName": "Kimi 编程套餐",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.kimi.com/coding/v1",
+      "apiKeyEnv": "KIMI_CODING_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "⚠️ 套餐专用端点：拿按量的 moonshot key 来调它会 401。它回答「套餐还剩多少」用的是另一个路径（/coding/v1/usages），本插件暂不消费它。",
+      "freeTier": "**订阅套餐**：5 小时窗 + 7 天窗双层限额（不按 token 计费），超了等窗口滚动。与 moonshot（按量）是两套计费，key 也不同。",
+      "docsURL": "https://platform.moonshot.cn/docs/api/chat",
+      "signupURL": "https://platform.moonshot.cn/console/api-keys",
+      "models": [
+        {
+          "id": "kimi-k3",
+          "name": "Kimi K3",
+          "contextWindow": 262144,
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "kimi-k2.6",
+          "name": "Kimi K2.6",
+          "contextWindow": 262144,
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "cn",
+        "evidence": "2026-10-26 GET https://api.kimi.com/coding/v1/models → 401 {\"error\":{\"type\":\"invalid_authentication_error\",\"message\":\"Invalid Authentication\"}}（端点活着且已鉴权）",
+        "unknownFields": [
+          "freeTier",
+          "models"
+        ]
+      }
+    },
+    {
+      "id": "zai-coding-cn",
+      "displayName": "Z.ai 编程套餐",
+      "kind": "keyed",
+      "backend": "native",
+      "endpoint": "https://api.z.ai/api/coding/paas/v4",
+      "apiKeyEnv": "ZAI_CODING_API_KEY",
+      "protocol": "openai",
+      "capability": {
+        "tools": null,
+        "vision": null
+      },
+      "credits": {
+        "balance": false,
+        "claim": false
+      },
+      "unknown": true,
+      "note": "路径里多一段 /coding —— 拿按量 key 调它会 401。这条车道在中文攻略里常被写成\"Claude Code 兼容端点\"；它确实能吃 Anthropic 形态的请求，但这里按 OpenAI 兼容注册。",
+      "freeTier": "**订阅套餐**：5 小时窗 + 7 天窗双层限额，不按 token 计费。与 zai（按量）是两把 key。",
+      "docsURL": "https://docs.z.ai/scenario-example/develop-tools/claude",
+      "signupURL": "https://z.ai/subscribe",
+      "models": [
+        {
+          "id": "glm-5.3",
+          "name": "GLM 5.3",
+          "vision": false,
+          "tools": true
+        },
+        {
+          "id": "glm-4.7",
+          "name": "GLM 4.7",
+          "vision": false,
+          "tools": true
+        }
+      ],
+      "extra": {
+        "region": "global",
+        "evidence": "2026-10-26 GET https://api.z.ai/api/coding/paas/v4/models → 401 {\"error\":{\"code\":\"1001\",\"message\":\"Authentication parameter not received in Header\"}}（端点活着且已鉴权）",
+        "unknownFields": [
+          "freeTier",
+          "models"
         ]
       }
     },

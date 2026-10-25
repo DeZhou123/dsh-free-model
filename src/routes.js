@@ -161,6 +161,23 @@ export function createRoutes(deps) {
         const snapshot = await manager.refresh()
         return send(200, { ok: true, ready: Object.keys(snapshot.ready ?? {}).length })
       }
+      // ── 渠道健康（0.6.0）：上次真打上游的结果 + 冷却到什么时候 ──────────────
+      //
+      // 与 `/channels` 的分工：那里是**目录与就绪**（有哪些渠道、凭据配了没），
+      // 这里是**实测健康**（最近一次请求成功/失败、失败被分到哪一类、还要等多久）。
+      // 两个都得有：「key 填了但刚被 401 判死」在只看就绪时显示为可用。
+      if (method === 'GET' && routePath === '/health') {
+        const manager = deps.keyed?.manager?.()
+        if (manager === undefined) return fail(503, '健康账本未就绪（插件还没完成装配）')
+        return send(200, { wired: true, ...manager.healthSnapshot() })
+      }
+      if (method === 'POST' && routePath === '/health/reset') {
+        const manager = deps.keyed?.manager?.()
+        if (manager === undefined) return fail(503, '健康账本未就绪（插件还没完成装配）')
+        const body = await readJson(req)
+        const lane = typeof body?.lane === 'string' && body.lane !== '' ? body.lane : undefined
+        return send(200, { ok: true, ...manager.resetHealth(lane) })
+      }
       // 渠道目录（可远程迭代的那一层）的状态与强制刷新。
       if (method === 'GET' && routePath === '/catalog') {
         return send(200, deps.catalog?.status?.() ?? { wired: false, reason: '目录层未接线' })

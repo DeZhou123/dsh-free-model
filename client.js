@@ -257,6 +257,7 @@ window.__ModuleLoader__.load({
       keyedUnknown: '未确证',
       keyedUnknownHint: '这条记录有字段没有实证（多半是免费额度的具体数值）；运行时以实时模型目录为准。',
       keyedModels: '{count} 个模型',
+      keyedModelSample: '模型样例',
       // ── 填 key / 测 key（0.4.1）─────────────────────────────────────────────
       keyedConfigured: '已配 {count}',
       keyedKeyState: 'key',
@@ -291,6 +292,25 @@ window.__ModuleLoader__.load({
       keyedProbeServerError: '上游故障（与 key 无关）',
       keyedProbeNetwork: '连不上上游',
       keyedProbeTimeout: '探测超时',
+
+      // ── 渠道健康（0.6.0）：与「就绪」分开说 ────────────────────────────────
+      keyedHealthOk: '健康',
+      keyedHealthCooldown: '冷却中',
+      keyedHealthRevoked: '已吊销',
+      keyedHealthUnknown: '未测过',
+      keyedHealthHint: '健康 = 最近一次真打上游的结果（探测或真实对话），与「key 填了没」是两件事：填了也可能刚被 401 判死。',
+      keyedHealthLeft: '还有 {left}',
+      keyedHealthJustOk: '冷却刚到期，只会放一次探测',
+      keyedResetHealth: '清掉健康状态',
+      keyedHealthResetDone: '健康状态已清空（下次探测重新记账）',
+      keyedSearch: '搜索渠道 / 凭据名 / 模型',
+      keyedFilterAll: '全部',
+      keyedFilterReady: '就绪',
+      keyedFilterPending: '待配置',
+      keyedFilterCooldown: '冷却中',
+      keyedFilterRevoked: '已吊销',
+      keyedNoMatch: '没有匹配的渠道：换个关键词，或把筛选切回「全部」。',
+      keyedSummary: '共 {total} 条 · 就绪 {ready} · 待配置 {pending} · 冷却 {cool} · 吊销 {revoked}',
 
       // 第二页：本地与网关
       serviceProbe: '重新探测',
@@ -463,6 +483,7 @@ window.__ModuleLoader__.load({
       keyedUnknown: 'unconfirmed',
       keyedUnknownHint: 'Some fields of this record have no evidence (usually the exact free-tier numbers); the live model catalog wins at runtime.',
       keyedModels: '{count} models',
+      keyedModelSample: 'Sample models',
       keyedConfigured: '{count} configured',
       keyedKeyState: 'key',
       keyedKeySet: 'set',
@@ -495,6 +516,24 @@ window.__ModuleLoader__.load({
       keyedProbeServerError: 'upstream failure (unrelated to the key)',
       keyedProbeNetwork: 'cannot reach the upstream',
       keyedProbeTimeout: 'probe timed out',
+
+      keyedHealthOk: 'Healthy',
+      keyedHealthCooldown: 'Cooling down',
+      keyedHealthRevoked: 'Revoked',
+      keyedHealthUnknown: 'Never tested',
+      keyedHealthHint: 'Health is the result of the last real upstream call (a probe or a real chat) — a different question from "is a key configured": a saved key may already have been rejected with 401.',
+      keyedHealthLeft: '{left} left',
+      keyedHealthJustOk: 'Cooldown just expired; only one probe is allowed',
+      keyedResetHealth: 'Clear health state',
+      keyedHealthResetDone: 'Health state cleared (the next probe records again)',
+      keyedSearch: 'Search channel / credential / model',
+      keyedFilterAll: 'All',
+      keyedFilterReady: 'Ready',
+      keyedFilterPending: 'Needs key',
+      keyedFilterCooldown: 'Cooling',
+      keyedFilterRevoked: 'Revoked',
+      keyedNoMatch: 'No channel matches: change the keyword, or switch the filter back to All.',
+      keyedSummary: '{total} channels · ready {ready} · needs key {pending} · cooling {cool} · revoked {revoked}',
 
       serviceProbe: 'Probe again',
       serviceProbing: 'Probing…',
@@ -1191,6 +1230,90 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 渠道健康徽章（0.6.0）。
+     *
+     * ## 为什么要单独一颗，而不是改 StatePill 的文案
+     *
+     * 它们回答的是**两个不同的问题**，而且会在现实里分叉：
+     *
+     * | 情况 | 就绪（StatePill） | 健康（这颗） |
+     * |---|---|---|
+     * | key 填了，刚被 401 拒 | 就绪 | 已吊销 |
+     * | key 填了，额度用尽等刷新 | 就绪 | 冷却中（到几点） |
+     * | 免 key 渠道，从没打过 | 就绪 | 未测过 |
+     * | 没填 key，但这条本来免 key | 就绪 | 未测过 |
+     *
+     * 合并成一档的后果：用户看到「就绪」点进去被拒，或者看到「不可用」却查不出原因。
+     *
+     * ## 四色必须分得开
+     *
+     * ok 走绿、cooldown 走黄（等一等会好）、revoked 走红（换 key 才能救）、
+     * unknown 走灰（还没测，不代表坏）。灰不能画成红 —— 那会让刚装好插件的人
+     * 以为所有渠道都坏了。
+     */
+    function HealthPill(props) {
+      const { health, t } = props
+      const state = typeof health?.state === 'string' ? health.state : 'unknown'
+      const label = healthLabel(state, t)
+      const tone = state === 'ok' ? 'ok' : state === 'revoked' ? 'bad' : state === 'cooldown' ? 'warn' : undefined
+      const extra = healthExtra(health, t)
+      return h('span', {
+        className: 'ow-pill strong ow-health',
+        'data-health': state,
+        title: typeof health?.text === 'string' ? health.text : '',
+      }, [
+        h('span', { key: 'd', className: 'ow-dot ' + (tone === undefined ? 'unknown' : tone) }),
+        label,
+        extra === '' ? null : h('span', { key: 'x', className: 'ow-dim ow-healthx' }, extra),
+      ])
+    }
+
+    /** 健康状态 → 短标签（已知四档；未来新增的状态一律按「未测过」显示，不露出内部键名）。 */
+    function healthLabel(state, t) {
+      if (state === 'ok') return t('keyedHealthOk')
+      if (state === 'cooldown') return t('keyedHealthCooldown')
+      if (state === 'revoked') return t('keyedHealthRevoked')
+      return t('keyedHealthUnknown')
+    }
+
+    /**
+     * 徽章右边那一小段补充：冷却剩余 / 半开提示。
+     *
+     * 剩余时间是**后端算的**（until 是绝对时刻），这里只做差 —— 页面自己攒计数器
+     * 会在切页签后归零，然后显示出一个「还剩 8 小时」的假数字。
+     */
+    function healthExtra(health, t) {
+      if (health?.state !== 'cooldown') {
+        return health?.halfOpen === true ? t('keyedHealthJustOk') : ''
+      }
+      const until = Number.isFinite(health?.until) ? health.until : null
+      if (until === null) return ''
+      const left = until - Date.now()
+      if (left <= 0) return t('keyedHealthJustOk')
+      return t('keyedHealthLeft').replace('{left}', formatDuration(left))
+    }
+
+    /**
+     * 剩余时长（中文口语：秒 / 分钟 / 小时 / 小时+分钟）。
+     *
+     * ## 为什么不直接用 Math.round
+     *
+     * 一轮实测（0.6.0）暴露：90 分钟被四舍五入成「2 小时」，用户以为冷却比实际长。
+     * 冷却时间的**任务**是让人决定"现在还能不能等"，所以宁可拆成
+     * 「1 小时 30 分钟」，也不要报一个更大的整数量。60 分钟以下同理用秒。
+     */
+    function formatDuration(ms) {
+      const seconds = Math.max(0, Math.round(Number(ms) / 1000))
+      if (seconds < 60) return seconds + ' 秒'
+      const minutes = Math.round(seconds / 60)
+      if (minutes < 60) return minutes + ' 分钟'
+      const hours = Math.floor(minutes / 60)
+      const rest = minutes % 60
+      // 余数太小就不提：60 小时 1 分钟读起来比「60 小时」还费劲。
+      return rest >= 5 ? hours + ' 小时 ' + rest + ' 分钟' : hours + ' 小时'
+    }
+
+    /**
      * 一条「自带 key」渠道卡。
      *
      * ## 0.4.1 的改动：这一页现在**能填 key、能测 key**
@@ -1214,7 +1337,7 @@ window.__ModuleLoader__.load({
      * - 回车即保存（粘贴 → Enter 是最短路径），但按钮同时存在（触屏没有回车）。
      */
     function KeyedCard(props) {
-      const { channel, t, keyState, probe, busy, error, onSave, onClear, onProbe } = props
+      const { channel, t, keyState, probe, busy, error, onSave, onClear, onProbe, health } = props
       const capability = channel?.capability ?? { tools: null, vision: null }
       const tools = capability.tools ?? null
       const vision = capability.vision ?? null
@@ -1252,6 +1375,8 @@ window.__ModuleLoader__.load({
           // 记录自己声明「有字段没实证」时标出来，而不是让用户以为这是确证数据。
           channel?.unknown === true ? h(Pill, { key: 'un', tone: 'warn', strong: true }, t('keyedUnknown')) : null,
           h(StatePill, { key: 'st', state: channel?.state, t }),
+          // 健康徽章与「就绪」**并排**，不合并：一个答「凭据配好了没」，一个答「上次真打上游成没成」。
+          h(HealthPill, { key: 'hp', health, t }),
           typeof channel?.modelCount === 'number'
             ? h('span', { key: 'c', className: 'ow-count' }, t('keyedModels').replace('{count}', String(channel.modelCount)))
             : null,
@@ -1261,6 +1386,13 @@ window.__ModuleLoader__.load({
           : null,
         freeTier !== ''
           ? h('p', { key: 'ft', className: 'ow-hint' }, t('keyedFree') + '：' + freeTier)
+          : null,
+        // 模型样例：让"这条渠道到底能调什么"在卡片上直接可见。
+        // 只显示前几个（后端只送 8 条）：要完整清单就点「测试 key」，那里回的是**实测**目录。
+        Array.isArray(channel?.modelSample) && channel.modelSample.length > 0
+          ? h('p', { key: 'ms', className: 'ow-hint ow-modelsample' },
+              t('keyedModelSample') + '：' + channel.modelSample.slice(0, 5).join(' · ')
+              + (channel.modelCount > 5 ? ' …' : ''))
           : null,
         // 就绪/未就绪的**原文原因**（后端算的，页面不重算）。
         typeof channel?.reason === 'string' && channel.reason !== ''
@@ -1399,6 +1531,19 @@ window.__ModuleLoader__.load({
         .join('')
     }
 
+    /** 筛选档位（顺序 = 胶囊顺序：全部 → 能用 → 待配 → 冷却 → 吊销）。 */
+    const FILTERS = ['all', 'ready', 'pending', 'cooldown', 'revoked']
+
+    /** 筛选档位 → 文案（未知档位原样返回，不露内部键名）。 */
+    function filterLabel(id, t) {
+      if (id === 'all') return t('keyedFilterAll')
+      if (id === 'ready') return t('keyedFilterReady')
+      if (id === 'pending') return t('keyedFilterPending')
+      if (id === 'cooldown') return t('keyedFilterCooldown')
+      if (id === 'revoked') return t('keyedFilterRevoked')
+      return id
+    }
+
     /**
      * 第三页：自带 key 的免费渠道。
      *
@@ -1421,6 +1566,24 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState({})
       /** 每张卡各自的**错误行**（保存/清除失败的原文）。 */
       const [errors, setErrors] = useState({})
+      /**
+       * 渠道健康（laneId → { state, until, text, halfOpen }）。
+       *
+       * 与 `probes` 的区别：`probes` 是**这次打开页面之后**点过的探测结果；
+       * `health` 是**落盘的、跨重启的**记账（后端 `/health`）。后者能让用户
+       * 第二天打开页面就看到「这条还在 6 小时冷却里」，前者刷一次就没了。
+       */
+      const [health, setHealth] = useState(props.health ?? {})
+      /** 搜索框内容（渠道名 / 凭据名 / 模型 id 都能匹配）。 */
+      const [query, setQuery] = useState('')
+      /**
+       * 当前筛选：all / ready / pending / cooldown / revoked。
+       *
+       * 为什么筛选用「健康」而不只是「就绪」：20+ 条渠道平铺之后，
+       * 用户真正要的动作只有两种 —— 「把能用的挑出来用」和「把坏的找出来修」。
+       * 前者是 ready，后者是 cooldown + revoked。
+       */
+      const [filter, setFilter] = useState('all')
 
       const reload = useCallback(async () => {
         try {
@@ -1433,6 +1596,14 @@ window.__ModuleLoader__.load({
           setChannels([])
           setWired(false)
           setReason(error.message)
+        }
+        // 健康账本是**另一条**接口：/channels 挂了不该连带把它也丢掉
+        //（那正是要排查"为什么挂"的时候，最需要看到健康状态）。
+        try {
+          const snapshot = await call('/health')
+          setHealth(snapshot?.lanes ?? {})
+        } catch {
+          // 健康层未接线（旧版本后端）时保留上一次的值：清空会让人误以为"全都好了"。
         }
       }, [])
 
@@ -1505,12 +1676,37 @@ window.__ModuleLoader__.load({
         }
       }, [mark, setErrorOf, reload])
 
+      /**
+       * 清掉健康记账（全清）。
+       *
+       * 场景：用户换了一把新 key，而旧 key 的 401 把这条渠道永久钉成「已吊销」。
+       * 没有这个按钮就得等宿主重启 —— 而"我刚换了 key 为什么还显示吊销"是
+       * 最典型的会把人挡在门外的一步。
+       */
+      const resetHealthOf = useCallback(async () => {
+        try {
+          const snapshot = await call('/health/reset', {})
+          setHealth(snapshot?.lanes ?? {})
+          setProbes({})
+          setKeyStates((current) => current)
+          setErrors((current) => ({ ...current }))
+        } catch (error) {
+          setReason(error.message)
+        }
+      }, [])
+
       const probeKeyOf = useCallback(async (id) => {
         mark(id, 'probe')
         setErrorOf(id, '')
         try {
           const payload = await call('/key/probe', { lane: id, force: true })
           setProbes((current) => ({ ...current, [id]: payload }))
+          // 探测会写健康账本（后端做的），所以顺手把新的记账读回来 ——
+          // 否则徽章要等下一次刷新页面才更新，而用户刚点完按钮正盯着它。
+          try {
+            const snapshot = await call('/health')
+            setHealth(snapshot?.lanes ?? {})
+          } catch { /* 健康层未接线时忽略 */ }
         } catch (error) {
           setProbes((current) => ({ ...current, [id]: { ok: false, kind: 'network', reason: error.message, ms: 0 } }))
         } finally {
@@ -1518,8 +1714,47 @@ window.__ModuleLoader__.load({
         }
       }, [mark, setErrorOf])
 
-      const keyed = (channels ?? []).filter((row) => row.kind === 'keyed')
-      const configuredCount = keyed.filter((row) => keyStates?.[row.id]?.configured === true).length
+      const keyedAll = (channels ?? []).filter((row) => row.kind === 'keyed')
+
+      /**
+       * 一行渠道属于哪一档（用于筛选与汇总）。
+       *
+       * 判据顺序刻意是 **健康优先**：一条渠道刚被 401 判死时，它的「就绪」仍是
+       * true（凭据确实填着），把 ready 放在前面会让"已吊销"永远筛不出来。
+       */
+      const bucketOf = (row) => {
+        const state = health?.[row.id]?.state
+        if (state === 'revoked') return 'revoked'
+        if (state === 'cooldown') return 'cooldown'
+        return keyStates?.[row.id]?.configured === true || row.state === 'ready' ? 'ready' : 'pending'
+      }
+
+      const counts = { all: keyedAll.length, ready: 0, pending: 0, cooldown: 0, revoked: 0 }
+      for (const row of keyedAll) counts[bucketOf(row)] += 1
+
+      // 搜索：渠道名 / 凭据名 / 端点 / 模型 id 任一处命中即可。
+      // 模型 id 也算，是因为「我记得有个 glm-5.3 的免费渠道」是最常见的找法，
+      // 而那时用户并不记得渠道叫什么。
+      const needle = query.trim().toLowerCase()
+      const keyed = keyedAll.filter((row) => {
+        if (filter !== 'all' && bucketOf(row) !== filter) return false
+        if (needle === '') return true
+        // ⚠️ 用 `modelSample`（后端只给前 8 条），不是 `models`：`/channels` 的投影
+        // 里根本没有全量模型清单 —— 写 `row.models` 会让「搜模型名」这条永远搜不到。
+        const haystack = [
+          row.id,
+          row.displayName,
+          row.apiKeyEnv,
+          row.endpoint,
+          ...(Array.isArray(row.modelSample) ? row.modelSample : []),
+        ]
+          .filter((value) => typeof value === 'string')
+          .join(' ')
+          .toLowerCase()
+        return haystack.includes(needle)
+      })
+
+      const configuredCount = keyedAll.filter((row) => keyStates?.[row.id]?.configured === true).length
 
       return h('div', { className: 'ow-root' }, [
         h('header', { key: 'hero', className: 'ow-hero' }, [
@@ -1529,7 +1764,7 @@ window.__ModuleLoader__.load({
               h('p', { key: 's', className: 'ow-pagesub' }, t('keyedIntro')),
             ]),
             h('div', { key: 'pills', className: 'ow-pills' }, [
-              h(Pill, { key: 'c', strong: true }, String(keyed.length)),
+              h(Pill, { key: 'c', strong: true }, String(keyedAll.length)),
               // 已配置数单独一颗：打开这一页第一件想知道的事就是「我配了几条」。
               h(Pill, { key: 'k', tone: configuredCount > 0 ? 'ok' : undefined },
                 t('keyedConfigured').replace('{count}', String(configuredCount))),
@@ -1537,31 +1772,77 @@ window.__ModuleLoader__.load({
           ]),
         ]),
 
+        // ── 工具条：搜索 + 按健康分档筛选 ─────────────────────────────────────
+        //
+        // 20 → 30 条渠道之后，"一眼扫完"不再成立，所以给两件最小的工具：
+        // 一个搜索框（渠道/凭据/模型都能命中）、一排计数即按钮的筛选胶囊。
+        // 筛选胶囊**自己带数字**：既是筛选器也是汇总行，省掉一行纯统计。
+        channels === undefined
+          ? null
+          : h('div', { key: 'tools', className: 'ow-keybar' }, [
+              h('input', {
+                key: 'q',
+                className: 'ow-input ow-keysearch',
+                type: 'search',
+                placeholder: t('keyedSearch'),
+                value: query,
+                onChange: (event) => setQuery(event?.target?.value ?? ''),
+              }),
+              h('div', { key: 'f', className: 'ow-filters', role: 'group', 'aria-label': t('keyedSearch') },
+                FILTERS.map((id) => h('button', {
+                  key: id,
+                  type: 'button',
+                  className: filter === id ? 'ow-chip on' : 'ow-chip',
+                  'data-filter': id,
+                  'aria-pressed': filter === id ? 'true' : 'false',
+                  onClick: () => setFilter(id),
+                }, filterLabel(id, t), h('span', { key: 'n', className: 'ow-chipnum' }, String(counts[id] ?? 0))))),
+              h(Button, {
+                key: 'rst',
+                onClick: () => void resetHealthOf(),
+              }, t('keyedResetHealth')),
+            ]),
+
         channels === undefined
           ? h('p', { key: 'wait', className: 'ow-dim' }, t('busy'))
           : !wired
             ? h('p', { key: 'off', className: 'ow-statuserr', role: 'status' },
                 safeText(reason, 240) || t('catUnwired'))
-            : keyed.length === 0
+            : keyedAll.length === 0
               ? h('div', { key: 'empty', className: 'ow-empty' }, [
                   h('p', { key: 'e' }, t('keyedEmpty')),
                   h('p', { key: 'h', className: 'ow-hint' }, t('keyedEmptyHint')),
                 ])
-              : h('div', { key: 'cards', className: 'ow-cards' },
-                  keyed.map((channel) => h(KeyedCard, {
-                    key: channel.id,
-                    channel,
-                    t,
-                    keyState: keyStates?.[channel.id],
-                    probe: probes?.[channel.id],
-                    busy: busy?.[channel.id] ?? '',
-                    error: errors?.[channel.id] ?? '',
-                    onSave: (value) => void saveKeyOf(channel.id, value),
-                    onClear: () => void clearKeyOf(channel.id),
-                    onProbe: () => void probeKeyOf(channel.id),
-                  }))),
+              : keyed.length === 0
+                // 有渠道但筛掉了：**不能**复用「暂无渠道」那句 —— 那会让用户以为
+                // 刚才那步操作把渠道弄丢了。给出「换个关键词 / 切回全部」的动作。
+                ? h('div', { key: 'nomatch', className: 'ow-empty' }, [
+                    h('p', { key: 'n' }, t('keyedNoMatch')),
+                    h(Button, { key: 'b', onClick: () => { setQuery(''); setFilter('all') } }, t('keyedFilterAll')),
+                  ])
+                : h('div', { key: 'cards', className: 'ow-cards' },
+                    keyed.map((channel) => h(KeyedCard, {
+                      key: channel.id,
+                      channel,
+                      t,
+                      keyState: keyStates?.[channel.id],
+                      probe: probes?.[channel.id],
+                      health: health?.[channel.id],
+                      busy: busy?.[channel.id] ?? '',
+                      error: errors?.[channel.id] ?? '',
+                      onSave: (value) => void saveKeyOf(channel.id, value),
+                      onClear: () => void clearKeyOf(channel.id),
+                      onProbe: () => void probeKeyOf(channel.id),
+                    }))),
 
         h('div', { key: 'foot', className: 'ow-foot' }, [
+          h('span', { key: 'sum', className: 'ow-dim ow-summary' },
+            t('keyedSummary')
+              .replace('{total}', String(counts.all))
+              .replace('{ready}', String(counts.ready))
+              .replace('{pending}', String(counts.pending))
+              .replace('{cool}', String(counts.cooldown))
+              .replace('{revoked}', String(counts.revoked))),
           h(Button, { key: 'r', onClick: () => void reload() }, t('refresh')),
         ]),
       ])
@@ -2760,6 +3041,42 @@ window.__ModuleLoader__.load({
 .ow-probeerr[data-kind="quota"] { color: var(--dsw-alias-state-error-primary); }
 .ow-servicemodels { margin: 0; font-size: 10.5px; overflow-wrap: anywhere; }
 
+/* ── 渠道健康徽章（0.6.0）：与「就绪」并排，四档必须分得开 ─────────────────── */
+.ow-health[data-health="ok"] { border-color: color-mix(in srgb, var(--dsw-alias-state-success-primary) 45%, transparent); }
+.ow-health[data-health="cooldown"] { border-color: color-mix(in srgb, var(--dsw-alias-state-warning-primary, #f0a441) 55%, transparent); }
+.ow-health[data-health="revoked"] { border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 55%, transparent); }
+.ow-health[data-health="unknown"] { opacity: .72; }
+.ow-healthx { font-size: 10.5px; font-weight: 400; }
+
+/* ── 工具条：搜索 + 筛选胶囊 ──────────────────────────────────────────────── */
+/* 30 条渠道平铺之后必须能筛：搜索框吃掉剩余宽度，胶囊自动换行不挤压。 */
+.ow-keybar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 0 2px;
+}
+.ow-keysearch { flex: 1 1 240px; min-width: 180px; }
+.ow-filters { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.ow-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 999px; cursor: pointer;
+  font-size: 11.5px; line-height: 1.6;
+  color: var(--dsw-alias-text-secondary);
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent);
+  transition: background .15s ease, border-color .15s ease;
+}
+.ow-chip:hover { border-color: var(--dsw-alias-border-l2, var(--dsw-alias-border-l1)); }
+.ow-chip.on {
+  color: var(--dsw-alias-text-primary);
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary, #4c8dff) 55%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary, #4c8dff) 14%, transparent);
+}
+.ow-chipnum {
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px; opacity: .78;
+}
+.ow-summary { font-size: 11px; flex: 1 1 auto; }
+
 /* 尊重系统的减少动效偏好。 */
 @media (prefers-reduced-motion: reduce) {
   .ow-btn, .ow-row, .ow-mrow, .ow-tab, .ow-pill { transition: none !important; }
@@ -2793,6 +3110,8 @@ window.__ModuleLoader__.load({
         safeText, safeHref, stateTone, stateLabel,
         // 0.4.1：探测结果 → 文案的两个纯函数（离线可断言，不需要 DOM）
         probeText, probeKindSuffix, describeKeySource,
+        // 0.6.0：健康徽章 + 筛选胶囊（同样是纯函数 → 文案，离线可断言）
+        HealthPill, healthLabel, healthExtra, filterLabel, formatDuration, FILTERS,
       },
       inject: ['slots', 'locale'],
       apply(ctx) {

@@ -91,11 +91,19 @@
  * @module src/lanes/keyed/catalog
  */
 
+import { MORE_KEYED_CHANNELS } from './catalog-more.js'
+
 /**
  * 需要凭据的渠道。**顺序 = 页面上推荐的顺序**（能用、免费层明确、坑少的排前面）。
+ *
+ * ⚠️ 0.6.0 起本数组只放**第一批**；第二批（gitee-ai / huggingface-router / chutes /
+ * novita / deepinfra / zai / xiaomi-mimo / kimi-coding / zai-coding-cn / qwen-intl）
+ * 在 `./catalog-more.js`，由文件末尾那行 spread 拼成导出的 `KEYED_CHANNELS`。
+ * 拆文件的理由不是好看：两批数据的**实测日期与判据不同**，混在一个数组里会让
+ * 「这条是上一轮验的、那条是这一轮验的」彻底看不出来。
  * @type {ReadonlyArray<object>}
  */
-export const KEYED_CHANNELS = [
+const KEYED_CHANNELS_BASE = [
   {
     id: 'openrouter-free',
     displayName: 'OpenRouter 免费模型',
@@ -505,6 +513,15 @@ export const KEYED_CHANNELS = [
     ],
   },
 ]
+
+/**
+ * 第一批（上一轮实测）与第二批（`./catalog-more.js`，本轮实测）**拼成**页面看到的那一份。
+ *
+ * ⚠️ 顺序：第一批在前，因为它们的 `note` 里写着更细的坑；第二批是新面孔，排在后面
+ * 反而让老用户不必重新认一遍页面。想改推荐顺序就改两个文件里的数组顺序。
+ * @type {ReadonlyArray<object>}
+ */
+export const KEYED_CHANNELS = [...KEYED_CHANNELS_BASE, ...MORE_KEYED_CHANNELS]
 
 /**
  * **真·不需要 key** 的直连渠道。
