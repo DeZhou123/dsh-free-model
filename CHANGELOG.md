@@ -205,6 +205,22 @@
 | `Retry-After` 一路透传到账本（`adapter.#notify` → `manage.onOutcome`） | 漏掉它就只剩 60 秒基准，上游明确要等 300 秒时会被提前重试 |
 | `GET {baseURL}/models` 的 404 **不记账**（只有 `mode:'chat'` 的 404 才记） | 30 多条渠道里有一批本来就没有目录端点；记成 6 小时长冷却会在第一次探测后把它们冻住 |
 
+
+#### ③ 复核报告里剩下的一条：状态「最新赢」不等于「最严赢」
+
+复核用 `repro-1.mjs` 抓到：`429 → 401 → 500` 三轮之后，账本停在一段 **120 秒**的抖动冷却上 ——
+**吊销被覆盖了**。后果很具体：闸门 120 秒后重新放行，用户拿同一把废 key 再撞一次。
+
+加了两条粘滞规则（都在 `recordFailure` 里，各有专门断言）：
+
+| 规则 | 为什么 |
+|---|---|
+| **已吊销只由成功 / `reset` 解除** | 一把废 key 不会因为后来的一次 5xx 变好；吊销期间只更新诊断信息 |
+| **进行中的冷却不缩短** | 额度档（到下一个整点 + 6h）不该被后来的 429（60 秒）冲掉；反向（短→长）仍然采纳 |
+
+同时把 `halfOpen` 的语义写成了断言（复核指出「全仓库没有消费者」）：到期后 `isAvailable` 放行并带
+`halfOpen: true`，**那一次请求的结果就是它的消费者** —— 失败即回到冷却且退避更长，成功即 `ok`。
+这条语义原本只写在注释里，现在有测试钉住。
 ### 证据（本轮补记，逐条可复跑）
 
 | 断言 | 怎么验的 |
@@ -213,6 +229,7 @@
 | `402+rate-limited` 短冷却 / 裸 `402` 长冷却 / `429+quota` 长冷却 | `classifyFailure` 三例各打印一次（状态 + 冷却长度） |
 | 单条 reset 只清那一条 | 造一份盘上含两条（mine/other）的健康文件，`reset('mine')` 后读回：只剩 `other` |
 | `probeKey` 不再 ReferenceError | 起一个 manager（桩凭据 + 桩 fetch 回 401），`probeKey('groq', {force:true})` → `{ok:false, kind:'invalid-key'}` |
+| 粘滞规则 / halfOpen 语义 | `node test/lanes-health.mjs` → `pass=40 fail=0`（+3 条：吊销粘滞、冷却不缩短、halfOpen 被下一次结果消费） |
 | 全量门 | `npm run check`（83 文件）✓ · `npm test` 12 套 `fail=0` ✓ · `npm run test:host` 27 项 ✓ |
 ### 未实测 / 边界
 

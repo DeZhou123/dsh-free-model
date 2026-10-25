@@ -523,6 +523,51 @@ await check('describeHealth 带上失败原因（只有「还有 6 小时」不�
   const noWhy = describeHealth(store.get('lane2'), 1_700_000_000_000)
   assert.equal(noWhy.includes('（）'), false, '空原因不该渲染成一对空括号：' + noWhy)
 })
+
+// ── 2026-10-26：粘滞规则（复核发现「最新赢」≠「最严赢」）─────────────────────
+await check('已吊销是粘滞的：后来的 5xx/429 不能把一把废 key 说活', () => {
+  const store = createHealthStore({ persist: false, now: () => 3_000_000 })
+  store.recordFailure('lane', { kind: 'invalid-key', status: 401 })
+  assert.equal(store.get('lane').state, 'revoked')
+  // 同一把 key 后来又一次抖动失败：仍然吊销（until 保持「不可自动恢复」）
+  const after = store.recordFailure('lane', { kind: 'server-error', status: 500 })
+  assert.equal(after.state, 'revoked', '吊销被后来的 5xx 覆盖了：' + JSON.stringify(after))
+  assert.equal(store.get('lane').until, null, '吊销不该出现「到点自动恢复」')
+  assert.equal(store.isAvailable('lane').available, false)
+  // 只有成功（或 reset）能解除
+  store.recordSuccess('lane')
+  assert.equal(store.get('lane').state, 'ok')
+  assert.equal(store.isAvailable('lane').available, true)
+})
+
+await check('进行中的冷却不被缩短：额度档 6h 不会被后来的 429（60 秒）冲掉', () => {
+  const store = createHealthStore({ persist: false, now: () => 4_000_000 })
+  const quota = store.recordFailure('lane', { kind: 'quota', status: 402 })
+  const quotaLeft = quota.until - 4_000_000
+  const limited = store.recordFailure('lane', { kind: 'rate-limited', status: 429 })
+  const left = limited.until - 4_000_000
+  assert.ok(left >= quotaLeft, '后到的 429 把额度冷却缩短了：' + left + ' < ' + quotaLeft)
+  // 反向：较短的冷却之后来了个更长的（额度），应当被采纳（不能把长的也挡掉）
+  const store2 = createHealthStore({ persist: false, now: () => 5_000_000 })
+  store2.recordFailure('lane', { kind: 'rate-limited', status: 429 })
+  const ext = store2.recordFailure('lane', { kind: 'quota', status: 402 })
+  assert.ok(ext.until - 5_000_000 > 60 * 60 * 1000, '额度档没能把冷却延长：' + JSON.stringify(ext))
+})
+
+await check('halfOpen 的语义：到期后放行一次，并被下一次结果（成功或失败）消费', () => {
+  let clock = 6_000_000
+  const store = createHealthStore({ persist: false, now: () => clock })
+  store.recordFailure('lane', { kind: 'server-error', status: 500 })
+  assert.equal(store.isAvailable('lane').available, false)
+  clock += 31_000
+  const opened = store.isAvailable('lane')
+  assert.equal(opened.available, true, '冷却到期后应当放行')
+  assert.equal(opened.halfOpen, true, '到期后应当带 halfOpen 标记（只放一次探测）')
+  // 那一次探测的结果把它消费掉：失败 → 回到冷却且退避更长；成功 → ok
+  const again = store.recordFailure('lane', { kind: 'server-error', status: 500 })
+  assert.equal(again.halfOpen, false, '记录结果后不该再自称半开')
+  assert.equal(store.isAvailable('lane').available, false)
+})
 rmSync(root, { recursive: true, force: true })
 
 console.log('pass=' + passed + ' fail=' + failures.length)

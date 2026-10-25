@@ -545,9 +545,28 @@ export function createHealthStore(deps) {
       cooldownMs = classification.cooldownMs
     }
 
-    const until = Number.isFinite(cooldownMs) ? at + cooldownMs : null
+    /**
+     * 两条**粘滞规则**（2026-10-26 复核发现「最新赢」不是「最严赢」）：
+     *
+     * 1. **已吊销只由成功/reset 解除**：一把废 key 不会因为后来的一次 5xx 变好。
+     *    没有这条时，`429 → 401 → 500` 会让吊销被一次 120 秒的抖动冷却覆盖 ——
+     *    闸门随即重新放行，用户拿同一把废 key 再撞一次。
+     * 2. **进行中的冷却不缩短**：额度档（到下一个整点 + 6h）不该被后来的 429（60 秒）冲掉。
+     *    缩短的后果是「按额度退避」变成「按抖动退避」，冷却窗口被反复提前。
+     */
+    const previousRevoked = previous?.state === 'revoked'
+    const previousUntil = Number.isFinite(previous?.until) ? previous.until : null
+    let state = classification.state
+    let until = Number.isFinite(cooldownMs) ? at + cooldownMs : null
+    if (previousRevoked && state !== 'revoked') {
+      // 吊销期间的任何失败：保住吊销，只更新诊断信息。
+      state = 'revoked'
+      until = null
+    } else if (!previousRevoked && previousUntil !== null && previousUntil > at && until !== null && until < previousUntil) {
+      until = previousUntil
+    }
     const record = {
-      state: classification.state,
+      state,
       until,
       failures,
       consecutive,
