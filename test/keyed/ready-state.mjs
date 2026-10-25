@@ -16,7 +16,7 @@
 import assert from 'node:assert/strict'
 
 await import('../hooks.mjs') // 离线模块解析钩子：先注册，下面的动态 import 才解析得到内核包
-const { decodeApiKey, keyedLaneState, laneStates, normalizeSecret, resolveApiKey } = await import('../../src/lanes/keyed/ready.js')
+const { decodeApiKey, keyedLaneState, laneStates, normalizeSecret, resolveApiKey, resolveApiKeys } = await import('../../src/lanes/keyed/ready.js')
 const { KEYED_CHANNELS, KEYLESS_CHANNELS, laneById } = await import('../../src/lanes/keyed/catalog.js')
 const { descriptors, keyedLaneDescriptors, mount, mountAll } = await import('../../src/lanes/keyed/index.js')
 
@@ -255,6 +255,41 @@ await checkAsync('mountAll()：拆出成功与失败两张单，不因一条失�
   assert.deepEqual(failed, [])
 })
 
+
+// ── 0.6.0：多把 key（同渠道轮换）───────────────────────────────────────────
+await checkAsync('resolveApiKeys：基名 + __N 后缀、逗号/换行分隔、去重、上限 5', async () => {
+  const lane = { ...laneById('groq') }
+  const store = {
+    GROQ_API_KEY: 'k1',
+    GROQ_API_KEY__2: 'k2',
+    GROQ_API_KEY__3: 'k1', // 与第一把重复：必须去重
+    GROQ_API_KEY__4: 'k4,k5\nk6', // 一条里三把：只取到上限
+    GROQ_API_KEY__5: 'k7',
+  }
+  const out = await resolveApiKeys(lane, { readCredential: async (name) => store[name] })
+  assert.deepEqual(out.keys, ['k1', 'k2', 'k4', 'k5', 'k6'], '多 key 解析不对：' + JSON.stringify(out.keys))
+  assert.equal(out.keys.length, 5, '上限必须正好是 5')
+  assert.ok(out.refs.includes('GROQ_API_KEY__2'), '没有记住第二把来自哪条凭据')
+})
+
+await checkAsync('resolveApiKeys：只有一把时与旧行为一致（列表长度 1）', async () => {
+  const out = await resolveApiKeys(laneById('groq'), { readCredential: async (name) => (name === 'GROQ_API_KEY' ? 'only' : undefined) })
+  assert.deepEqual(out.keys, ['only'])
+})
+
+await checkAsync('resolveApiKeys：没配时给可读原因（不抛、不空返）', async () => {
+  const out = await resolveApiKeys(laneById('groq'), { readCredential: async () => undefined })
+  assert.deepEqual(out.keys, [])
+  // 「空」有两种来源：凭据没写（source:'empty'）与凭据服务说没有（同一个 empty）。
+  // 两者都**不该**编一条原因 —— 页面上的「未配置 KEY 名」是由 keyedLaneState 补的。
+  assert.ok(out.source === 'empty' || typeof out.reason === 'string', '既没说来源也没给原因：' + JSON.stringify(out))
+})
+
+await checkAsync('resolveApiKeys：凭据服务未注入时报 unavailable（不猜、不回退读文件）', async () => {
+  const out = await resolveApiKeys(laneById('groq'), {})
+  assert.equal(out.source, 'unavailable')
+  assert.deepEqual(out.keys, [])
+})
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：')

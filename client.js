@@ -265,6 +265,7 @@ window.__ModuleLoader__.load({
       keyedKeyState: 'key',
       keyedKeySet: '已填写',
       keyedKeyUnset: '未填写',
+      keyedKeyMany: '{count} 把 key（轮换）',
       keyedKeyPlaceholder: '把 key 粘进来（回车即保存）',
       keyedKeyReplace: '粘贴新 key 可替换现有的',
       keyedKeySave: '保存 key',
@@ -501,6 +502,7 @@ window.__ModuleLoader__.load({
       keyedKeyState: 'key',
       keyedKeySet: 'set',
       keyedKeyUnset: 'not set',
+      keyedKeyMany: '{count} keys (rotating)',
       keyedKeyPlaceholder: 'Paste the key (Enter saves)',
       keyedKeyReplace: 'Paste a new key to replace the current one',
       keyedKeySave: 'Save key',
@@ -1394,6 +1396,8 @@ window.__ModuleLoader__.load({
       const [draft, setDraft] = useState('')
       const [reveal, setReveal] = useState(false)
       const configured = keyState?.configured === true
+      /** 这条车道配了几把 key（>1 时页面显示「N 把」并解释轮换）。 */
+      const keyCount = Number.isFinite(props.keyCount) ? Number(props.keyCount) : null
       const masked = safeText(keyState?.masked, 48)
       const sourceText = describeKeySource(keyState?.source, t)
       const canWrite = keyState === undefined ? true : keyState.writable !== false
@@ -1455,6 +1459,10 @@ window.__ModuleLoader__.load({
               configured
                 ? h(Pill, { key: 'p', tone: 'ok' }, t('keyedKeySet'))
                 : h(Pill, { key: 'p', tone: 'warn' }, t('keyedKeyUnset')),
+              // 多把 key：免费额度的实际倍数，值得单独一颗（0.6.0）。
+              Number.isFinite(keyCount) && keyCount > 1
+                ? h(Pill, { key: 'n', tone: 'ok', strong: true }, t('keyedKeyMany').replace('{count}', String(keyCount)))
+                : null,
               masked !== ''
                 ? h('code', { key: 'm', className: 'ow-mono ow-keymask' }, masked)
                 : null,
@@ -1627,6 +1635,8 @@ window.__ModuleLoader__.load({
        * 第二天打开页面就看到「这条还在 6 小时冷却里」，前者刷一次就没了。
        */
       const [health, setHealth] = useState(props.health ?? {})
+      /** laneId → 配了几把 key（>1 时卡片上显示，0.6.0）。 */
+      const [keyCounts, setKeyCounts] = useState(props.keyCounts ?? {})
       /** 工具条的整页提示（批量探测的「探了 N 条、跳了 M 条」）。 */
       const [note, setNote] = useState('')
       /** 搜索框内容（渠道名 / 凭据名 / 模型 id 都能匹配）。 */
@@ -1656,6 +1666,7 @@ window.__ModuleLoader__.load({
           setReason(typeof payload.reason === 'string' ? payload.reason : '')
           if (payload.keyStates !== undefined && payload.keyStates !== null) setKeyStates(payload.keyStates)
           setRejected(Array.isArray(payload.rejected) ? payload.rejected : [])
+          if (payload.keyCounts !== undefined && payload.keyCounts !== null) setKeyCounts(payload.keyCounts)
         } catch (error) {
           setChannels([])
           setWired(false)
@@ -1940,6 +1951,7 @@ window.__ModuleLoader__.load({
                       channel,
                       t,
                       keyState: keyStates?.[channel.id],
+                      keyCount: keyCounts?.[channel.id],
                       probe: probes?.[channel.id],
                       health: health?.[channel.id],
                       busy: busy?.[channel.id] ?? '',

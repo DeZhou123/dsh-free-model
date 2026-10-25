@@ -24,7 +24,8 @@ const {
   parseRetryAfter,
   pickFailureDetail,
 } = await import('../../src/lanes/keyed/adapter.js')
-const { createKeyedAdapter } = await import('../../src/lanes/keyed/adapter.js')
+const modAdapter = await import('../../src/lanes/keyed/adapter.js')
+const { createKeyedAdapter } = modAdapter
 const { laneById } = await import('../../src/lanes/keyed/catalog.js')
 
 let passed = 0
@@ -451,6 +452,82 @@ await checkAsync('重试策略：串行限速渠道不自己重试，其余最�
   const serialPolicy = serial.providerRetryPolicy()
   assert.equal(serialPolicy.maxRetries, 0, '串行限速渠道不该自己重试')
   assert.deepEqual(serialPolicy.retryableCodes, [])
+})
+await checkAsync('key 轮换：401 换下一把 key 重试一次，成功即返回', async () => {
+  const seen = []
+  const modelsBody = JSON.stringify({ data: [{ id: 'openai/gpt-oss-120b' }] })
+  const fetchImpl = async (url, init) => {
+    if (String(url).endsWith('/models')) {
+      return { status: 200, ok: true, headers: { get: () => null }, text: async () => modelsBody, body: null }
+    }
+    const auth = init?.headers?.authorization ?? ''
+    seen.push(auth)
+    if (auth.endsWith('key-a')) {
+      return { status: 401, ok: false, headers: { get: () => null }, text: async () => '{"error":{"message":"Invalid API key"}}' }
+    }
+    // 第二把 key：回一个最小但合法的 SSE 流（带 [DONE]）。
+    const encoder = new TextEncoder()
+    const frames = ['data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}\n\n', 'data: [DONE]\n\n']
+    let index = 0
+    return {
+      status: 200,
+      ok: true,
+      headers: { get: () => null },
+      text: async () => '',
+      body: {
+        getReader() {
+          return {
+            async read() {
+              if (index >= frames.length) return { done: true, value: undefined }
+              const value = encoder.encode(frames[index])
+              index += 1
+              return { done: false, value }
+            },
+            async cancel() {},
+          }
+        },
+      },
+    }
+  }
+  const adapter = createKeyedAdapter({
+    lane: { ...laneById('groq'), id: 'groq' },
+    apiKeys: ['key-a', 'key-b'],
+    fetchImpl,
+  })
+  const chunks = []
+  for await (const piece of adapter.stream({ model: 'openai/gpt-oss-120b', messages: [{ role: 'user', content: 'hi' }] })) chunks.push(piece)
+  const text = chunks.filter((piece) => piece.type === 'text-delta').map((piece) => piece.text).join('')
+  assert.equal(text, 'ok', '换 key 之后没有正常拿到内容')
+  assert.deepEqual(seen, ['Bearer key-a', 'Bearer key-b'], '换 key 的顺序不对：' + JSON.stringify(seen))
+  assert.equal(adapter.keyCount(), 2)
+})
+
+await checkAsync('key 轮换：只有一把时不重试（不能把上游流量翻倍）', async () => {
+  let calls = 0
+  const modelsBody = JSON.stringify({ data: [{ id: 'openai/gpt-oss-120b' }] })
+  const adapter = createKeyedAdapter({
+    lane: { ...laneById('groq'), id: 'groq' },
+    apiKeys: ['only-key'],
+    fetchImpl: async (url) => {
+      if (String(url).endsWith('/models')) return { status: 200, ok: true, headers: { get: () => null }, text: async () => modelsBody, body: null }
+      calls += 1
+      return { status: 401, ok: false, headers: { get: () => null }, text: async () => '{"error":{"message":"Invalid API key"}}', body: null }
+    },
+  })
+  try {
+    for await (const _ of adapter.stream({ model: 'openai/gpt-oss-120b', messages: [{ role: 'user', content: 'hi' }] })) { void _ }
+  } catch { /* 预期 */ }
+  assert.equal(calls, 1, '只有一把 key 却重试了：' + calls)
+})
+
+await checkAsync('normalizeKeyList：逗号/换行/数组/去重/上限 5', () => {
+  const { normalizeKeyList } = modAdapter
+  assert.deepEqual(normalizeKeyList(undefined, 'a'), ['a'])
+  assert.deepEqual(normalizeKeyList(['a', 'b', 'a'], undefined), ['a', 'b'])
+  assert.deepEqual(normalizeKeyList('a,b\nc', undefined), ['a', 'b', 'c'])
+  assert.deepEqual(normalizeKeyList(undefined, ' a , b '), ['a', 'b'])
+  assert.equal(normalizeKeyList(['1', '2', '3', '4', '5', '6'], undefined).length, 5, '上限必须是 5')
+  assert.deepEqual(normalizeKeyList(undefined, ''), [])
 })
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {

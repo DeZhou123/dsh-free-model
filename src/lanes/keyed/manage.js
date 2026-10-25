@@ -91,6 +91,8 @@ export function createKeyedManager(deps = {}) {
   let records = []
   /** laneId → 凭据面状态（已配置/来源/能否写/脱敏值）。 */
   let keyStates = Object.freeze({})
+  /** laneId → 这条车道配了几把 key（同渠道多账号轮换，0.6.0）。 */
+  const keyCounts = {}
 
   /**
    * 把适配器报回来的真实对话结果记进健康账本。
@@ -186,7 +188,7 @@ export function createKeyedManager(deps = {}) {
     // 健康状态与就绪状态**分开报**：`ready` 说「凭据配好了没」，
     // `health` 说「上一次真打上游的结果是什么」。合成一个字段的话，
     // 「key 填了但刚被 401 判死」和「还没填」会显示成同一件事。
-    const snapshot = { records, ready, keyStates, health: health.snapshot() }
+    const snapshot = { records, ready, keyStates, keyCounts: { ...keyCounts }, health: health.snapshot() }
     try {
       deps.onUpdate?.(snapshot)
     } catch (error) {
@@ -212,6 +214,9 @@ export function createKeyedManager(deps = {}) {
     try {
       const handle = deps.register?.(result.route, result.adapter)
       mounted.set(laneId, { lane: result.lane, adapter: result.adapter, handle })
+      // 记一下这条车道配了几把 key（0.6.0）：页面上「已配 3 把」比「已配」有用得多 ——
+      // 它是免费额度的实际倍数。
+      keyCounts[laneId] = typeof result.adapter?.keyCount === 'function' ? result.adapter.keyCount() : 1
       logger?.info?.(`dsh-free-model: keyed 车道 ${result.route} 已挂载`)
       return { mounted: true }
     } catch (error) {
@@ -346,6 +351,7 @@ export function createKeyedManager(deps = {}) {
     return {
       records,
       keyStates,
+      keyCounts: { ...keyCounts },
       mounted: [...mounted.keys()],
       probes: Object.fromEntries([...probes].map(([id, entry]) => [id, { ...entry.result, at: entry.at }])),
     }

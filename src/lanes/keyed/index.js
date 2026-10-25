@@ -27,11 +27,12 @@
  */
 
 import { ALL_CHANNELS, KEYED_CHANNELS, KEYLESS_CHANNELS, RETIRED_CHANNELS, laneById, staticModels } from './catalog.js'
-import { keyedLaneState, laneStates, resolveApiKey } from './ready.js'
+import { keyedLaneState, laneStates, resolveApiKey, resolveApiKeys } from './ready.js'
 import { createKeyedAdapter } from './adapter.js'
 
 export {
   ALL_CHANNELS,
+  resolveApiKeys,
   KEYED_CHANNELS,
   KEYLESS_CHANNELS,
   RETIRED_CHANNELS,
@@ -114,11 +115,14 @@ export async function mount(laneId, deps = {}) {
   if (readiness.retired === true || readiness.ready !== true) {
     throw new Error(`${lane.id} 未就绪：${readiness.reason}`)
   }
-  const resolved = await resolveApiKey(lane, { readCredential: deps.readCredential })
+  // 多把 key（同渠道轮换）：一次性解析成列表交给适配器，它自己管游标。
+  // 单 key 时列表长度为 1，行为与旧实现逐字一致。
+  const resolved = await resolveApiKeys(lane, { readCredential: deps.readCredential })
   const route = typeof deps.route === 'string' && deps.route !== '' ? deps.route : lane.id
   const adapter = createKeyedAdapter({
     lane,
-    apiKey: resolved.key,
+    apiKey: Array.isArray(resolved.keys) ? (resolved.keys[0] ?? null) : resolved.key,
+    apiKeys: Array.isArray(resolved.keys) ? resolved.keys : undefined,
     fetchImpl: deps.fetchImpl,
     logger: deps.logger,
     readImage: deps.readImage,

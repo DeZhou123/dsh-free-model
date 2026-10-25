@@ -160,6 +160,91 @@ export async function resolveApiKey(lane, deps = {}) {
 }
 
 /**
+ * 一条车道可用的**多把 key**（同渠道多账号/多 key 轮换）。
+ *
+ * ## 为什么免费渠道特别需要它（0.6.0，审计的 P0-6）
+ *
+ * 免费额度的单位几乎都是「每个账号/每把 key 每天多少」，于是同一条渠道配三把 key
+ * 是最常见、也最有效的可用性手段。而本插件此前只读一个 `apiKeyEnv` 的**一个值** ——
+ * 用户手里明明有三把 Groq key，插件只用第一把，撞上 429 就整条渠道不可用。
+ *
+ * ## 三种「多把」的写法都要认（不猜格式，只认确定的命名约定）
+ *
+ * | 写法 | 例子 | 为什么认它 |
+ * |---|---|---|
+ * | 基名 + `__N` 后缀 | `GROQ_API_KEY`、`GROQ_API_KEY__2`、`GROQ_API_KEY__3` | 不破坏任何既有配置；用户多写一条凭据即可 |
+ * | 单条目里逗号/换行分隔 | `GROQ_API_KEY=sk-a,sk-b` | 直接从别处拷一串 key 的人最常见的做法 |
+ * | 只有一个值 | 老配置 | 与旧行为逐字一致 |
+ *
+ * ⚠️ 上限 5 把：再多的收益（额度）远小于代价（每把都要探测/记账，出错时更难归因）。
+ * 顺序**稳定**（基名在前、后缀按数字升序）—— 轮换要有确定顺序才可复现。
+ *
+ * @param {object} lane 目录条目
+ * @param {{ readCredential?: (name:string) => unknown|Promise<unknown> }} [deps]
+ * @returns {Promise<{ keys: string[], refs: string[], source: string, reason?: string }>}
+ */
+export async function resolveApiKeys(lane, deps = {}) {
+  const MAX_KEYS = 5
+  if (lane?.kind === 'keyless') return { keys: [], refs: [], source: 'keyless' }
+  const base = typeof lane?.apiKeyEnv === 'string' && lane.apiKeyEnv !== '' ? lane.apiKeyEnv : null
+  if (base === null) return { keys: [], refs: [], source: 'unset', reason: '目录条目没有声明 apiKeyEnv' }
+  const readCredential = deps?.readCredential
+  if (typeof readCredential !== 'function') {
+    return { keys: [], refs: [base], source: 'unavailable', reason: '宿主 credentials 服务未注入（readCredential 缺失）' }
+  }
+
+  const keys = []
+  const refs = []
+  /**
+   * 解一个条目名，并把可能的多值（逗号/换行/分号分隔）摊平。
+   *
+   * ⚠️ **先按分隔符切开，再逐段解码**（不是先整体解码再切）。
+   * 第一版写成「整体 decode 再 split」，而 `decodeApiKey` 会拒含控制字符的值 ——
+   * 于是 `k4,k5\nk6` 这种最自然的多行写法被整条丢掉，只剩别的条目里的 key。
+   * 这是实测踩到的（`test/keyed/ready-state.mjs` 的顺序断言当场报错）。
+   */
+  const pushFrom = async (name) => {
+    let raw
+    try {
+      raw = await readCredential(name)
+    } catch {
+      return
+    }
+    if (raw === undefined || raw === null) return
+    const text = typeof raw === 'string' ? raw : String(raw)
+    // 先切：换行、逗号、分号都是用户真实会用的分隔符（从别处拷一串 key 最常见的形态）。
+    for (const part of text.split(/[\n,;]+/)) {
+      if (keys.length >= MAX_KEYS) return
+      const candidate = normalizeSecret(part)
+      if (candidate === '') continue
+      // `ref:` / `env:` 这类引用仍走解码器（它负责解引用与一层限制）；
+      // 明文则自己校验（长度上限 + 控制字符），因为解码器会拒掉整段多行文本。
+      let key = candidate
+      if (candidate.startsWith('ref:') || candidate.startsWith('env:')) {
+        const decoded = await decodeApiKey(candidate, (next) => readCredential(next))
+        key = typeof decoded.value === 'string' ? normalizeSecret(decoded.value) : ''
+      } else if (candidate.length > 4096 || /[\u0000-\u001f\u007f]/.test(candidate)) {
+        continue
+      }
+      if (key === '' || keys.includes(key)) continue
+      keys.push(key)
+      refs.push(name)
+    }
+  }
+
+  await pushFrom(base)
+  for (let index = 2; index <= MAX_KEYS; index += 1) {
+    if (keys.length >= MAX_KEYS) break
+    await pushFrom(base + '__' + index)
+  }
+  if (keys.length === 0) {
+    const single = await resolveApiKey(lane, deps)
+    return { keys: [], refs: [base], source: single.source, ...(single.reason !== undefined ? { reason: single.reason } : {}) }
+  }
+  return { keys, refs, source: 'resolved' }
+}
+
+/**
  * 就绪判定。**这是页面「能不能用」那一栏的唯一依据。**
  *
  * @param {object} lane 目录条目（`catalog.js` 的形状）

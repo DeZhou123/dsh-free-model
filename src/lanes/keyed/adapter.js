@@ -441,6 +441,29 @@ export function failureToError(lane, classified) {
   )
 }
 
+/**
+ * 把「单值 / 数组 / 逗号换行分隔的串」统一成 key 列表（去重、去空、上限 5）。
+ *
+ * 上限 5 与 `ready.js` 的 `resolveApiKeys` 同数：两处不一致会让「页面说有 5 把、
+ * 适配器只认 3 把」这种偏差出现，而它只在轮换到第 4 把时才暴露。
+ */
+export function normalizeKeyList(apiKeys, apiKey) {
+  const MAX_KEYS = 5
+  const out = []
+  const push = (value) => {
+    if (typeof value !== 'string') return
+    for (const part of value.split(/[\n,;]+/)) {
+      const key = part.trim()
+      if (key === '' || out.includes(key) || out.length >= MAX_KEYS) continue
+      out.push(key)
+    }
+  }
+  if (Array.isArray(apiKeys)) for (const item of apiKeys) push(item)
+  else push(apiKeys)
+  push(apiKey)
+  return out
+}
+
 /** 正值有限数才算数（0/undefined 一律当「未知」）。 */
 function positive(value) {
   return Number.isFinite(value) && value > 0 ? Number(value) : undefined
@@ -728,7 +751,21 @@ export class KeyedAdapter extends LlmAdapter {
       throw new LlmError('createKeyedAdapter 需要一条带 id 的车道（见 catalog.js）', 'INVALID_ADAPTER')
     }
     this.lane = { ...lane }
-    this.apiKey = typeof options.apiKey === 'string' && options.apiKey !== '' ? options.apiKey : null
+    /**
+     * 这条车道的 key 列表（同渠道多账号轮换，0.6.0）。
+     *
+     * ## 为什么是数组而不是继续用单值
+     *
+     * 免费额度的单位几乎都是「每账号/每 key 每天多少」。用户手里常有两三把同渠道的 key，
+     * 而旧实现只用第一把：撞上 429 / 401 就整条渠道不可用，剩下的 key 白白闲置。
+     * 现在把列表带进来，失败时**换下一把再试一次**（只一次，见 stream 里的说明）。
+     *
+     * 兼容：仍接受 `options.apiKey`（单值），此时列表长度为 1。
+     */
+    this.apiKeys = normalizeKeyList(options.apiKeys, options.apiKey)
+    /** 当前用的是第几把（0 起）。换 key 只改游标，不重建适配器。 */
+    this.keyCursor = 0
+    this.apiKey = this.apiKeys.length > 0 ? this.apiKeys[0] : null
     this.fetchImpl = typeof options.fetchImpl === 'function' ? options.fetchImpl : globalThis.fetch
     this.logger = options.logger
     this.readImage = options.readImage
@@ -802,9 +839,12 @@ export class KeyedAdapter extends LlmAdapter {
     return failureToError(this.lane, classified)
   }
 
-  /** 运行期换 key（页面填完 key 之后可以直接换，不必重挂）。 */
+  /** 运行期换 key（页面填完 key 之后可以直接换，不必重挂）。接受单值或数组。 */
   setApiKey(apiKey) {
-    this.apiKey = typeof apiKey === 'string' && apiKey !== '' ? apiKey : null
+    const list = normalizeKeyList(Array.isArray(apiKey) ? apiKey : undefined, Array.isArray(apiKey) ? undefined : apiKey)
+    this.apiKeys = list
+    this.keyCursor = 0
+    this.apiKey = list.length > 0 ? list[0] : null
     // 换 key 后目录/失败状态都可能是旧身份的，一并作废。
     this.catalogModels = undefined
     this.catalogAt = 0
@@ -1047,11 +1087,11 @@ export class KeyedAdapter extends LlmAdapter {
         streamUsage: this.streamUsageSupported,
       })
 
+      // key 只在这里拼进请求头（不落在 baseHeaders 里）：轮换时每轮都要用**当前**那把。
       const headers = { 'content-type': 'application/json', accept: 'text/event-stream' }
-      if (this.apiKey !== null && this.apiKey !== '') headers.authorization = 'Bearer ' + this.apiKey
       const url = this.baseURL + '/chat/completions'
 
-      const first = await this.#send(url, body, headers, abort.signal)
+      const first = await this.#sendRotating(url, body, headers, abort.signal)
       if (first.status === 400 && body.stream_options !== undefined) {
         // 有些端点不认 stream_options：剥掉重试一次，并把结论记住（下次别问）。
         const detail = first.text ?? ''
@@ -1060,10 +1100,11 @@ export class KeyedAdapter extends LlmAdapter {
           this.logger?.warn?.(`[dsh-free-model] ${lane.id} 不接受 stream_options，已关闭（usage 将缺失）`)
           const retryBody = { ...body }
           delete retryBody.stream_options
-          const second = await this.#send(url, retryBody, headers, abort.signal)
+          const second = await this.#sendRotating(url, retryBody, headers, abort.signal)
           response = second.response
           if (!second.ok) {
-            const classified = classifyUpstreamFailure({ status: second.status, body: second.text, headers: second.headers, lane })
+            const classified = second.classified
+              ?? classifyUpstreamFailure({ status: second.status, body: second.text, headers: second.headers, lane })
             throw this.#fail(classified, modelKey)
           }
         }
@@ -1071,7 +1112,8 @@ export class KeyedAdapter extends LlmAdapter {
       if (response === undefined) {
         response = first.response
         if (!first.ok) {
-          const classified = classifyUpstreamFailure({ status: first.status, body: first.text, headers: first.headers, lane })
+          const classified = first.classified
+            ?? classifyUpstreamFailure({ status: first.status, body: first.text, headers: first.headers, lane })
           throw this.#fail(classified, modelKey)
         }
       }
@@ -1364,6 +1406,67 @@ export class KeyedAdapter extends LlmAdapter {
       this.catalogSource = 'static'
       this.catalogModels = this.catalogModels ?? staticModels(this.lane)
       return this.catalogModels
+    }
+  }
+
+  /**
+   * 换下一把 key。没有下一把时返回 false（调用方据此决定要不要放弃）。
+   *
+   * 游标**不回绕**：一轮请求最多往前走一把，走完就停 —— 回绕会让「三把都是坏的」
+   * 变成无限循环。下一轮请求重新从游标处继续（坏 key 会被健康账本记住、下次探测就能换掉）。
+   */
+  #advanceKey() {
+    if (this.keyCursor + 1 >= this.apiKeys.length) return false
+    this.keyCursor += 1
+    this.apiKey = this.apiKeys[this.keyCursor]
+    // 换 key 等于换身份：目录缓存与失败状态都可能是上一把的结论，一并作废。
+    this.catalogModels = undefined
+    this.catalogAt = 0
+    return true
+  }
+
+  /** 这条车道一共配了几把 key（页面/诊断用）。 */
+  keyCount() {
+    return this.apiKeys.length
+  }
+
+  /**
+   * 发请求，并在「换一把 key 可能就好」的失败上**换 key 重试一次**。
+   *
+   * ## 哪些失败值得换 key
+   *
+   * | 分类 | 换 key 有用吗 | 为什么 |
+   * |---|---|---|
+   * | credential（401/403） | **有用** | 一把 key 废了，另一把是另一份额度 |
+   * | rate-limit（429） | **有用** | 免费额度按 key 计，换一把等于换一份配额 |
+   * | quota（额度用尽） | **有用** | 同上 |
+   * | invalid-request / context / unknown-model | 没用 | 换 key 解决不了请求本身的问题 |
+   * | connection（超时/网络） | 没用 | 换 key 不换网络 |
+   *
+   * ⚠️ **最多换一次**：换到第二把还失败就如实报错。理由是「与宿主的重试相乘」——
+   * 适配器再重试 × 宿主最多 1 次 = 上界可算；不设限的话三把 key 就是三倍上游流量。
+   *
+   * 返回值比 `#send` 多一个 `classified`（已经算过分类，调用方不必重算）。
+   */
+  async #sendRotating(url, body, baseHeaders, signal) {
+    let switched = 0
+    for (;;) {
+      const headers = { ...baseHeaders }
+      if (this.apiKey !== null && this.apiKey !== '') headers.authorization = 'Bearer ' + this.apiKey
+      const sent = await this.#send(url, body, headers, signal)
+      if (sent.ok === true) return sent
+      const classified = classifyUpstreamFailure({ status: sent.status, body: sent.text, headers: sent.headers, lane: this.lane })
+      const worthSwitching = classified.kind === FAILURE_KINDS.CREDENTIAL
+        || classified.kind === FAILURE_KINDS.RATE_LIMIT
+        || classified.kind === FAILURE_KINDS.QUOTA
+      if (switched === 0 && worthSwitching && this.#advanceKey()) {
+        switched += 1
+        this.logger?.info?.(
+          `dsh-free-model: ${this.lane.id} 换用第 ${this.keyCursor + 1}/${this.apiKeys.length} 把 key 重试（${classified.kind}）`,
+        )
+        continue
+      }
+      return { ...sent, classified }
     }
   }
 

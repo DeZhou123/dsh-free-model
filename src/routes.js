@@ -364,7 +364,9 @@ async function channelsOverview(deps) {
       deps.logger?.warn?.(`[free-model] 服务车道探针失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }
-  return { wired: true, ...view }
+  // 每条车道配了几把 key（0.6.0）：免费额度的实际倍数，页面上直接显示。
+  const keyCounts = deps.keyed?.keyCounts?.() ?? {}
+  return { wired: true, ...view, keyCounts }
 }
 
 /**

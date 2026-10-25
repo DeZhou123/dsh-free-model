@@ -117,6 +117,8 @@ export function apply(ctx, config = {}) {
   let keyedReady = Object.freeze({})
   /** laneId → 凭据面状态（已配置 / 来源 / 能否写 / 脱敏值），页面输入框旁那一行用它。 */
   let keyedKeyStates = Object.freeze({})
+  /** laneId → 这条车道配了几把 key（0.6.0，同渠道轮换）。 */
+  let keyedKeyCounts = Object.freeze({})
   /** 目录层现状（页面顶部那条「渠道目录 v? · 指纹 ?」用的就是它）。 */
   let catalogMeta = {
     url: catalogUrl ?? undefined,
@@ -616,6 +618,7 @@ export function apply(ctx, config = {}) {
         keyedRecords = snapshot.records
         keyedReady = snapshot.ready
         keyedKeyStates = snapshot.keyStates
+        keyedKeyCounts = Object.freeze(snapshot.keyCounts ?? {})
       },
       ...(makeReadImage(scoped) !== undefined ? { readImage: makeReadImage(scoped) } : {}),
       ...(makeReadImageRequest(scoped) !== undefined ? { readImageRequest: makeReadImageRequest(scoped) } : {}),
@@ -666,6 +669,7 @@ export function apply(ctx, config = {}) {
     keyed: {
       manager: () => keyedManager,
       keyStates: () => keyedKeyStates,
+      keyCounts: () => keyedKeyCounts,
     },
   })
   ctx.inject(['webServer'], (scoped) => {
