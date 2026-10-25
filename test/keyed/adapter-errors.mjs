@@ -541,6 +541,25 @@ await checkAsync('403 归到 SERVER（可重试）而不是 CREDENTIAL —— �
   // 401 仍然是凭据档。
   assert.equal(classifyUpstreamFailure({ status: 401, body: '{"error":{"message":"Invalid API key"}}', lane: laneById('groq') }).kind, FAILURE_KINDS.CREDENTIAL)
 })
+
+await checkAsync('闸门文案按状态给下一步：吊销/关闭/冷却三句各不相同', async () => {
+  const cases = [
+    ['revoked', '换一把 key'],
+    ['disabled', '开关打开'],
+    ['cooldown', '等冷却结束'],
+  ]
+  for (const [state, expected] of cases) {
+    const adapter = makeAdapter({
+      fetchImpl: async () => { throw new Error('不该被调用') },
+      beforeRequest: () => ({ available: false, state, reason: '测试用原因' }),
+    })
+    let caught
+    try {
+      for await (const _ of adapter.stream({ model: 'openai/gpt-oss-120b', messages: [{ role: 'user', content: 'hi' }] })) { void _ }
+    } catch (error) { caught = error }
+    assert.ok(String(caught?.message).includes(expected), state + ' 的下一步动作不对：' + caught?.message)
+  }
+})
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：')

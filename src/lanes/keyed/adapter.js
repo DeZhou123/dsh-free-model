@@ -1071,8 +1071,15 @@ export class KeyedAdapter extends LlmAdapter {
         gate = undefined
       }
       if (gate !== undefined && gate !== null && gate.available === false) {
+        // 每个状态的**下一步动作**不同，所以尾句也按状态给（0.6.0 自审）：
+        // 一律写「换一条渠道」会让被关掉/被吊销的渠道用户去换渠道 —— 而他其实只差一次点击。
+        const next = gate.state === 'revoked'
+          ? '在设置 → 免费模型 → 自带 key 里换一把 key（保存新 key 会自动清掉这条结论）。'
+          : gate.state === 'disabled'
+            ? '在设置 → 免费模型里把这条渠道的开关打开。'
+            : '等冷却结束，或换一条渠道。'
         throw new LlmError(
-          lane.id + '：' + String(gate.reason ?? '这条渠道现在不可用') + '；换一条渠道，或在设置页清掉健康状态。',
+          lane.id + '：' + String(gate.reason ?? '这条渠道现在不可用') + '；' + next,
           gate.state === 'revoked' ? 'MISSING_CREDENTIAL' : 'RATE_LIMIT',
         )
       }
