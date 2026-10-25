@@ -2471,19 +2471,28 @@ window.__ModuleLoader__.load({
       const [note, setNote] = useState(undefined)
       const reload = useCallback(async () => {
         try {
+          /**
+           * 每一跳各自收口（审计 P2-6）。
+           *
+           * 旧写法是四个请求共享一个 try：`/models` 慢（它会去问各条渠道的 /models）时
+           * 整页停在「加载中」，而任一失败就把整页打成错误页 —— 另外三个已经成功的数据白拿。
+           * 现在每个请求自己 catch 成 `{ error }`，页面按块渲染：坏的那块显示原因，其余照常。
+           */
+          const safely = (promise) => promise.catch((error) => ({ error: error.message }))
           const [nextSummary, nextAccounts, nextModels, nextAuto] = await Promise.all([
-            call('/summary'),
-            call('/accounts'),
-            call('/models'),
-            // 自动领取状态单独吞掉错误：它读的是本插件的状态文件，
-            // 读不到不该让整页变成错误页（账号列表本身是好的）。
-            call('/auto-checkin').catch((error) => ({ error: error.message })),
+            safely(call('/summary')),
+            safely(call('/accounts')),
+            safely(call('/models')),
+            safely(call('/auto-checkin')),
           ])
-          setSummary(nextSummary)
-          setAccounts(nextAccounts.accounts ?? [])
+          if (nextSummary.error === undefined) setSummary(nextSummary)
+          else setNote({ kind: 'error', text: t('error') + ': /summary ' + nextSummary.error })
+          if (nextAccounts.error === undefined) setAccounts(nextAccounts.accounts ?? [])
           // 每个产品的模型清单拍平成一张表，卡片按 provider 过滤即可。
-          setModelRows((nextModels.products ?? []).flatMap((product) => product.models ?? []))
-          setAuto(nextAuto.autoCheckin ?? undefined)
+          if (nextModels.error === undefined) {
+            setModelRows((nextModels.products ?? []).flatMap((product) => product.models ?? []))
+          }
+          if (nextAuto.error === undefined) setAuto(nextAuto.autoCheckin ?? undefined)
         } catch (error) {
           setNote({ kind: 'error', text: t('error') + ': ' + error.message })
         }
