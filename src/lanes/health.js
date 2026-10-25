@@ -377,10 +377,31 @@ export function createHealthStore(deps) {
     return JSON.stringify(payload, null, 2)
   }
 
-  function writeStateFile() {
+  /**
+   * 落盘：**先读盘再合并，然后原子写**（0.6.0，审计的 P2-2）。
+   *
+   * ## 为什么不能直接覆盖
+   *
+   * 原子写（tmp → rename）只保证「不会半截」，**不保证不丢**：两个宿主实例指向同一个
+   * DSH_HOME 时（同一台机器开两个窗口、或者插件被装了两份），后写的整份会覆盖前写的 ——
+   * 而「前写」的那一份可能是对方刚记下的 6 小时冷却。
+   *
+   * 合并规则按 `decidedAt`（谁更新谁赢）逐条取，而不是整份覆盖：一条渠道的最新结论
+   * 才是我们要保的东西。`decidedAt` 相同则保留**本进程**的（它就是刚写的那个结论）。
+   */
+  function writeStateFile(options) {
     if (!persist) return false
+    // `reset()` 必须**权威**：它写的就是「没有记录」。合并会把刚清掉的记录读回来 ——
+    // 那等于「清不掉」，而且只会在「盘上有旧记录」时出现（测试里就是这么暴露的）。
+    const merge = options?.merge !== false
     try {
       mkdirSync(dirname(file), { recursive: true })
+      for (const [laneId, onDisk] of (merge ? readStateFile(file).lanes : new Map())) {
+        const mine = lanes.get(laneId)
+        if (mine === undefined || (Number.isFinite(onDisk.decidedAt) && onDisk.decidedAt > (mine.decidedAt ?? 0))) {
+          lanes.set(laneId, onDisk)
+        }
+      }
       const tmp = file + '.tmp-' + process.pid
       writeFileSync(tmp, serializeAll(), 'utf8')
       renameSync(tmp, file)
@@ -565,7 +586,8 @@ export function createHealthStore(deps) {
   function reset(laneId) {
     if (laneId === undefined) lanes.clear()
     else lanes.delete(String(laneId))
-    writeStateFile()
+    // 清空是**权威动作**：不许被盘上的旧记录合并回来（见 writeStateFile 的 options.merge）。
+    writeStateFile({ merge: false })
   }
 
   return {

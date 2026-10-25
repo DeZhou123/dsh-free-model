@@ -471,7 +471,11 @@ export function apply(ctx, config = {}) {
   // 配置项可以强制关掉（`autoCheckin: false`）：默认开着是产品判断，
   // 但用户明确不要这个动作时，不该靠「装完再进页面点一下」才能关。
   if (config.autoCheckin === false) {
-    void autoCheckin.setEnabled(false)
+    // 裸 void + 无 catch 是隐式契约（当前实现内部自带 try/catch，将来加前置动作就会变成
+    // unhandled rejection）。这里显式收口：关掉自动领取失败只该是一条 warn（审计 P2-5）。
+    void autoCheckin.setEnabled(false).catch((error) => {
+      logger?.warn?.(`dsh-free-model: 关闭每日自动领积分失败（${error instanceof Error ? error.message : String(error)}）`)
+    })
   } else {
     autoCheckin.start()
   }

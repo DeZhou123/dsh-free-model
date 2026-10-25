@@ -410,6 +410,42 @@ await check('formatDuration 说人话（秒 / 分钟 / 小时）', () => {
   assert.equal(formatDuration(-5), '0 秒')
 })
 
+
+// ── 0.6.0：多实例落盘不互相覆盖（审计 P2-2）────────────────────────────────
+await check('落盘是「读-合并-写」：对方更新的记录不会被本进程覆盖', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'health-merge-'))
+  const file = join(dir, 'health.json')
+  try {
+    let clock = 1_000_000
+    const mine = createHealthStore({ file, now: () => clock })
+    mine.recordFailure('dup', { kind: 'rate-limited' })
+    // 另一个实例（更晚的时刻）把同一条渠道写成 revoked 并落盘
+    const other = createHealthStore({ file, now: () => clock + 60_000 })
+    other.recordFailure('dup', { kind: 'invalid-key', status: 401 })
+    // 本进程再动一次盘：它不该把对方那条更严重的结论盖掉
+    clock = 1_000_000 + 120_000
+    mine.recordFailure('other-lane', { kind: 'server-error', status: 500 })
+    const onDisk = JSON.parse(readFileSync(file, 'utf8'))
+    assert.equal(onDisk.lanes.dup.state, 'revoked', '对方的吊销结论被本进程的旧结论覆盖了')
+    assert.ok(onDisk.lanes['other-lane'] !== undefined, '本进程自己那条没写进去')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await check('reset 是权威动作：清空之后不许被盘上的旧记录合并回来', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'health-reset-'))
+  const file = join(dir, 'health.json')
+  try {
+    const store = createHealthStore({ file, now: () => 2_000_000 })
+    store.recordFailure('x', { kind: 'invalid-key', status: 401 })
+    store.reset()
+    const onDisk = JSON.parse(readFileSync(file, 'utf8'))
+    assert.deepEqual(Object.keys(onDisk.lanes), [], 'reset 之后盘上还有记录：' + JSON.stringify(onDisk.lanes))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
 rmSync(root, { recursive: true, force: true })
 
 console.log('pass=' + passed + ' fail=' + failures.length)
