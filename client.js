@@ -331,6 +331,11 @@ window.__ModuleLoader__.load({
       keyedProbeAllDone: '已测试 {probed} 条（跳过未配置 {skipped} 条）',
       keyedHealthResetDone: '健康状态已清空（下次探测重新记账）',
       keyedSearch: '搜索渠道 / 凭据名 / 模型',
+      keyedSort: '排序',
+      keyedSortRecommended: '推荐顺序',
+      keyedSortName: '按名称',
+      keyedSortModels: '按模型数',
+      keyedSortHealth: '按健康',
       keyedFilterAll: '全部',
       keyedFilterReady: '就绪',
       keyedFilterPending: '待配置',
@@ -577,6 +582,11 @@ window.__ModuleLoader__.load({
       keyedProbeAllDone: 'Probed {probed} channel(s), skipped {skipped} without a key',
       keyedHealthResetDone: 'Health state cleared (the next probe records again)',
       keyedSearch: 'Search channel / credential / model',
+      keyedSort: 'Sort',
+      keyedSortRecommended: 'Recommended',
+      keyedSortName: 'By name',
+      keyedSortModels: 'By model count',
+      keyedSortHealth: 'By health',
       keyedFilterAll: 'All',
       keyedFilterReady: 'Ready',
       keyedFilterPending: 'Needs key',
@@ -1724,6 +1734,13 @@ window.__ModuleLoader__.load({
       /** 搜索框内容（渠道名 / 凭据名 / 模型 id 都能匹配）。 */
       const [query, setQuery] = useState('')
       /**
+       * 排序：recommended（目录顺序，后端已按「好用的在前」排）/ name / models / health。
+       *
+       * 为什么值得做：30+ 条渠道，用户常带着具体目的来（"模型最多的那条"、
+       * "哪条健康"），而目录顺序回答不了这些。
+       */
+      const [sort, setSort] = useState('recommended')
+      /**
        * 当前筛选：all / ready / pending / cooldown / revoked。
        *
        * 为什么筛选用「健康」而不只是「就绪」：20+ 条渠道平铺之后，
@@ -1937,7 +1954,17 @@ window.__ModuleLoader__.load({
       // 模型 id 也算，是因为「我记得有个 glm-5.3 的免费渠道」是最常见的找法，
       // 而那时用户并不记得渠道叫什么。
       const needle = query.trim().toLowerCase()
-      const keyed = keyedAll.filter((row) => {
+      const rank = { ready: 0, cooldown: 1, pending: 2, revoked: 3 }
+      const sorters = {
+        recommended: null,
+        name: (left, right) => String(left.displayName).localeCompare(String(right.displayName), 'zh-Hans-CN'),
+        models: (left, right) => (right.modelCount ?? 0) - (left.modelCount ?? 0),
+        health: (left, right) => (rank[bucketOf(left)] ?? 9) - (rank[bucketOf(right)] ?? 9),
+      }
+      const keyed = keyedAll
+        .slice()
+        .sort(sorters[sort] ?? (() => 0))
+        .filter((row) => {
         if (filter !== 'all' && bucketOf(row) !== filter) return false
         if (needle === '') return true
         // ⚠️ 用 `modelSample`（后端只给前 8 条），不是 `models`：`/channels` 的投影
@@ -1989,6 +2016,13 @@ window.__ModuleLoader__.load({
                 value: query,
                 onChange: (event) => setQuery(event?.target?.value ?? ''),
               }),
+              h('select', {
+                key: 's',
+                className: 'ow-select ow-sort',
+                value: sort,
+                'aria-label': t('keyedSort'),
+                onChange: (event) => setSort(event?.target?.value ?? 'recommended'),
+              }, ['recommended', 'name', 'models', 'health'].map((id) => h('option', { key: id, value: id }, t('keyedSort' + id.slice(0, 1).toUpperCase() + id.slice(1))))),
               h('div', { key: 'f', className: 'ow-filters', role: 'group', 'aria-label': t('keyedSearch') },
                 FILTERS.map((id) => h('button', {
                   key: id,
@@ -3325,6 +3359,13 @@ window.__ModuleLoader__.load({
   font-size: 10.5px; opacity: .78;
 }
 .ow-summary { font-size: 11px; flex: 1 1 auto; }
+.ow-select {
+  padding: 3px 8px; border-radius: 8px; font-size: 11.5px;
+  color: var(--dsw-alias-text-secondary);
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent);
+}
+.ow-sort { flex: 0 0 auto; }
 
 /* 尊重系统的减少动效偏好。 */
 @media (prefers-reduced-motion: reduce) {

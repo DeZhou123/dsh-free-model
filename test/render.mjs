@@ -818,6 +818,11 @@ check('KeyedPage 有搜索框、五个筛选胶囊、清健康按钮、底部汇
   assert.equal(chips.length, 5, '筛选胶囊应为 5 个，实际 ' + chips.length)
   const text = flat(tree)
   assert.ok(text.includes('keyedResetHealth'), '缺少「清掉健康状态」按钮')
+  // 排序控件（0.6.0）：30+ 条渠道时，目录顺序回答不了「哪条模型最多 / 哪条健康」。
+  const selects = collectElements(tree, (node) => node.type === 'select')
+  assert.equal(selects.length, 1, '缺一个排序下拉，实际 ' + selects.length)
+  const options = collectElements(selects[0], (node) => node.type === 'option')
+  assert.equal(options.length, 4, '排序档位应为 4 个，实际 ' + options.length)
   assert.ok(text.includes('keyedProbeAll'), '缺少「测试全部已配置」按钮')
   assert.ok(text.includes('keyedSummary'), '缺少底部汇总行')
   assert.ok(text.includes('OpenRouter 免费模型'), '默认视图应渲染出渠道卡')
