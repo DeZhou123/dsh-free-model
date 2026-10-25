@@ -38,7 +38,7 @@ import { probeLaneKey } from './probe.js'
 import { probeLaneBalance, BALANCE_TIMEOUT_MS } from './balance.js'
 import { probeLaneChat } from './probe.js'
 import { laneById } from './catalog.js'
-import { resolveApiKey } from './ready.js'
+import { resolveApiKey, resolveApiKeys } from './ready.js'
 import { createHealthStore, describeHealth } from '../health.js'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -270,11 +270,29 @@ export function createKeyedManager(deps = {}) {
     })
     if (saved.ok !== true) return saved
     probes.delete(laneId)
+    // ── 换 key 之后必须**重算整份 key 列表**，而不是只用用户刚填的这一把 ──────────
+    //
+    // 0.6.0 自审发现的 P1：原来这里传的是 `rawValue`（用户刚输入的那一把），
+    // 而 `setApiKey` 会把列表**重置为只含这一把** —— 于是 `GROQ_API_KEY__2/__3`
+    // 那些兄弟条目在「保存一次 key」之后就悄悄失效了，轮换能力凭空消失
+    //（表现是「我明明配了三把 key，它还是一条 429 就整条不可用」）。
+    const resolved = await resolveApiKeys(lane, { readCredential: deps.readCredential })
+    const list = Array.isArray(resolved.keys) && resolved.keys.length > 0
+      ? resolved.keys
+      : [String(rawValue ?? '').trim()].filter((key) => key !== '')
     // 已挂载的直接换 key：`setApiKey` 会一并作废目录缓存与失败状态（见 adapter.js）。
     const live = mounted.get(laneId)
     if (live !== undefined) {
-      live.adapter.setApiKey?.(String(rawValue ?? '').trim())
+      live.adapter.setApiKey?.(list)
+      keyCounts[laneId] = typeof live.adapter.keyCount === 'function' ? live.adapter.keyCount() : list.length
     }
+    // ── 换 key 也要**清掉这条车道的健康结论**（0.6.0 自审发现的 P1）───────────────
+    //
+    // 旧 key 的 401 会把它判成「已吊销」，而 `beforeRequest` 闸门会因此**拒绝一切请求**。
+    // 用户刚换上新 key，却还是被闸门挡住、只看到一条「已吊销」——他唯一能想到的动作是
+    // 「换个渠道」，而正确的动作是「我已经换了 key 了」。
+    // 这里的 reset 是**精确到这条车道**的，不去碰别的渠道的结论。
+    health.reset(laneId)
     await refresh()
     const after = await ensureMounted(laneId)
     return {

@@ -210,6 +210,47 @@ await await check('渠道开关：文件坏掉时从空集起（不拖垮插件�
     rmSync(dir, { recursive: true, force: true })
   }
 })
+// ── 0.6.0 自审发现的两条 P1（换 key 之后的状态）────────────────────────────
+
+await check('换 key 之后健康结论被清掉（否则闸门会一直说「已吊销」）', async () => {
+  const stored = {}
+  const health = createHealthStore({ persist: false, now: harness.now })
+  const manager = createKeyedManager({
+    health,
+    // 凭据读写都用内存，不碰真实文件
+    readCredential: async (name) => stored[name],
+    writeCredential: async (name, value) => { stored[name] = value },
+    unsetCredential: async (name) => { delete stored[name] },
+    register: () => () => {},
+  })
+  // 旧 key 的 401 → 吊销
+  health.recordFailure('groq', { kind: 'invalid-key', status: 401 })
+  assert.equal(manager.availability('groq').state, 'revoked')
+  // 用户填了新 key：写完凭据之后这条车道的健康结论必须被清掉
+  const saved = await manager.saveKey('groq', 'sk-brand-new')
+  assert.equal(saved.ok, true, '保存失败：' + JSON.stringify(saved))
+  const after = manager.availability('groq')
+  assert.notEqual(after.state, 'revoked', '换了新 key 之后仍然被判已吊销：' + JSON.stringify(after))
+  assert.equal(after.available, true, '换了新 key 之后闸门仍然不放行')
+})
+
+await check('换 key 之后 key 列表**重算**（不能只剩刚填的那一把）', async () => {
+  const stored = { GROQ_API_KEY: 'first', GROQ_API_KEY__2: 'second' }
+  const health = createHealthStore({ persist: false, now: harness.now })
+  const manager = createKeyedManager({
+    health,
+    readCredential: async (name) => stored[name],
+    writeCredential: async (name, value) => { stored[name] = value },
+    register: () => () => {},
+  })
+  // 未挂载时也只验证凭据被写到正确的条目上（挂载要真 llm 服务，host 套件覆盖那一段）
+  const saved = await manager.saveKey('groq', 'first')
+  assert.equal(saved.ok, true)
+  assert.equal(stored.GROQ_API_KEY, 'first')
+  assert.equal(stored.GROQ_API_KEY__2, 'second', '保存顺手把兄弟条目弄丢了')
+})
+
+
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：')
