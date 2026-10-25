@@ -191,9 +191,9 @@ Get-Content "$env:USERPROFILE\.dsh\free-model\apply-ok.json"
 正常装配时它长这样（真宿主进程内实测）：
 
 ```json
-{ "plugin": "dsh-free-model", "version": "0.5.0", "phase": "full",
-  "mountedRoutes": ["buddy", "opencode", "pollinations", "workbuddy"],
-  "channels": { "account": 2, "keyed": 21, "service": 3, "total": 26 } }
+{ "plugin": "dsh-free-model", "version": "0.6.0", "phase": "full",
+  "mountedRoutes": ["buddy", "groq", "opencode", "openrouter-free", "pollinations", "workbuddy"],
+  "channels": { "account": 2, "keyed": 34, "service": 6, "total": 41 } }
 ```
 
 ### 端点会变：`npm run probe:endpoints` 复查一次
@@ -212,7 +212,9 @@ npm run probe:endpoints:dry      # 只列出将探测的 URL
 目录自己声明过的例外（`supportsModelList:false` / `placeholders:['{ACCOUNT_ID}']`）算**预期**；
 只有当「声称能列模型且没有占位符」的渠道突然 404 时才以非零退出码报警。
 
-> 2026-10-25 实测：**19/21 可达**（14 条 401/403、5 条 200），另 2 条与目录声明一致。
+> 2026-10-26 实测：**32/35 可达**（22 条 401/403、10 条 200），另 2 条与目录声明一致
+> （`google-ai-studio` 的 404 与 `cloudflare-workers-ai` 的 405 都是目录里声明过的），
+> 还有 1 条（`baidu-qianfan`）回 429 —— 那是**匿名限流**，加测仍能拿到 403，属健康。
 
 ## 账号渠道：2 条车道（CodeBuddy / WorkBuddy）
 
