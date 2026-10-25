@@ -458,6 +458,18 @@ await check('403 判冷却而不是永久吊销：它可能是边缘拦截或权
   // 带 invalid-key 字样的 403 仍按 key 处理（上游自己说了凭据无效）。
   assert.equal(classifyFailure({ status: 403, kind: 'invalid-key' }).state, 'revoked')
 })
+
+await check('describeHealth 带上失败原因（只有「还有 6 小时」不够，用户要知道为什么）', () => {
+  const store = createHealthStore({ persist: false, now: () => 1_700_000_000_000 })
+  store.recordFailure('lane', { kind: 'rate-limited', status: 429, reason: 'too many requests' })
+  const text = describeHealth(store.get('lane'), 1_700_000_000_000)
+  assert.ok(text.includes('冷却中'), '缺少冷却状态：' + text)
+  assert.ok(text.includes('too many requests'), '缺少失败原因：' + text)
+  // 没有原因时不要凭空加一对空括号
+  store.recordFailure('lane2', { kind: 'server-error', status: 500 })
+  const noWhy = describeHealth(store.get('lane2'), 1_700_000_000_000)
+  assert.equal(noWhy.includes('（）'), false, '空原因不该渲染成一对空括号：' + noWhy)
+})
 rmSync(root, { recursive: true, force: true })
 
 console.log('pass=' + passed + ' fail=' + failures.length)

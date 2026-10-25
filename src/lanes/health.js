@@ -313,16 +313,21 @@ export function sanitizeErrorText(text) {
 export function describeHealth(record, now) {
   const at = Number.isFinite(now) ? Number(now) : Date.now()
   const state = record?.state ?? 'unknown'
+  // 失败原因是**这条结论的证据**：只写「冷却中，还有 6 小时」而不写「因为 429/额度」，
+  // 用户没法判断「等到点」是不是正确的下一步（0.6.0 补）。
+  const why = typeof record?.lastError === 'string' && record.lastError !== ''
+    ? '（' + record.lastError.slice(0, 60) + '）'
+    : ''
 
   if (state === 'unknown') return '未知（还没测过）'
-  if (state === 'revoked') return '已吊销：key 被拒，换个 key'
+  if (state === 'revoked') return '已吊销：' + (why === '' ? 'key 被拒，换个 key' : 'key 被拒' + why)
 
   if (state === 'cooldown') {
     const until = Number.isFinite(record?.until) ? record.until : null
-    if (until === null) return '冷却中（没有结束时刻）'
+    if (until === null) return '冷却中（没有结束时刻）' + why
     const left = until - at
     if (left <= 0) return '冷却已到期，可以试一次'
-    return '冷却中，还有 ' + formatDuration(left)
+    return '冷却中，还有 ' + formatDuration(left) + why
   }
 
   if (record?.halfOpen === true) return 'ok（冷却刚到期，只放一次探测）'
