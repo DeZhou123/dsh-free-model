@@ -663,7 +663,18 @@ export function apply(ctx, config = {}) {
     },
     // 渠道全景（三类渠道 + 目录层）。`/summary` 保持老语义，新接口另开一条：
     // 详见 `src/routes.js` 里 `channelsOverview` 的说明。
-    registry: channelsView,
+    // 装配自证（apply-ok.json）：页面顶上显示「上次装配于 …」。
+    //
+    // 为什么要它：用户（和我自己）问的第一个问题往往是「我现在跑的是不是最新代码」。
+    // 而 apply-ok 是这个问题的**唯一**硬证据 —— 用户在 AGENTS.md 里也把它的 appliedAt
+    // 当作重启的验收判据。页面能直接看到它，就不必去翻文件。
+    applyMarker: () => {
+      try {
+        return JSON.parse(readFileSync(applyMarkerFile, 'utf8'))
+      } catch {
+        return undefined
+      }
+    },
     catalog: { status: catalogStatus, refresh: refreshCatalog },
     update: { check: checkVersion },
     service: { probe: probeServices },

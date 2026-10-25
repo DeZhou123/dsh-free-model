@@ -278,6 +278,8 @@ const tTemplate = (key) => ({
   catCounts: '远程 {remote} 条 · 本地 {local} 条 · 自带 key {keyed} 条',
   keyedModels: '{count} 个模型',
   serviceModels: '{count} 个模型',
+  updApplied: '上次装配：{at}',
+  updAppliedRoutes: '路由 {count} 条',
 }[key] ?? key)
 
 check('updateAvailable 时显示新版本 + 仓库链接 + 可复制安装命令，且不代跑升级', () => {
@@ -943,6 +945,25 @@ check('sortersFor：health 档按 就绪→冷却→待配→吊销 排，models
   assert.deepEqual(rows.slice().sort(sorters.models).map((r) => r.id), ['b', 'c', 'a'])
   assert.deepEqual(rows.slice().sort((l, r) => l.displayName.localeCompare(r.displayName, 'zh-Hans-CN')).map((r) => r.id), ['b', 'a', 'c'])
   assert.deepEqual(rows.slice().sort(sorters.health).map((r) => r.id), ['b', 'c', 'a'])
+})
+
+check('状态条显示「上次装配」时刻（apply-ok 是「跑的是不是最新代码」的唯一硬证据）', () => {
+  const withApplied = StatusBar({
+    t: tTemplate, version: '0.6.0',
+    catalog: { wired: true, ok: true, counts: {}, sha256: 'abc', from: 'shipped' },
+    update: { ok: true, current: '0.6.0', latest: '0.6.0', updateAvailable: false, from: 'none', reason: '' },
+    applied: { plugin: 'dsh-free-model', version: '0.6.0', appliedAt: '2026-10-25T20:08:38.999Z', mountedRoutes: ['buddy', 'groq', 'opencode'] },
+  })
+  const body = flat(withApplied)
+  assert.ok(body.includes('上次装配'), '缺少「上次装配」这一行：' + body.slice(0, 200))
+  assert.ok(body.includes('路由 3 条') || body.includes('{count}'), '缺少已挂路由数')
+  // 没有 apply-ok 时**不编**一行：宁可少一行，也不要显示一个假时刻。
+  const withoutApplied = StatusBar({
+    t: tTemplate, version: '0.6.0',
+    catalog: { wired: true, ok: true, counts: {}, sha256: 'abc', from: 'shipped' },
+    update: { ok: true, current: '0.6.0', latest: '0.6.0', updateAvailable: false, from: 'none', reason: '' },
+  })
+  assert.ok(!flat(withoutApplied).includes('上次装配'), '没有 apply-ok 时不该有这一行')
 })
 // ── 汇总 ────────────────────────────────────────────────────────────────────
 check('语言包：三页签与新文案都有词条（缺词条会显示成变量名）', () => {

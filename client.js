@@ -234,6 +234,8 @@ window.__ModuleLoader__.load({
       catUnwired: '渠道目录层未接线',
       updTitle: '插件',
       updCheck: '检查更新',
+      updApplied: '上次装配：{at}',
+      updAppliedRoutes: '路由 {count} 条',
       updChecking: '检查中…',
       updNew: '有新版本 {latest}',
       updCurrent: '当前 v{current}',
@@ -1232,6 +1234,8 @@ window.__ModuleLoader__.load({
       // 而它只有拿到后端返回才出现；② 以后若外壳先批量取好数据再下发给它，
       // 不必改这里的取数逻辑。
       const [catalog, setCatalog] = useState(props.catalog)
+      /** 装配自证（/summary 的 applied 字段）：上次装配时刻 + 已挂路由数。 */
+      const [applied, setApplied] = useState(props.applied)
       const [update, setUpdate] = useState(props.update)
       const [busy, setBusy] = useState('')
 
@@ -1239,7 +1243,10 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (props.version !== undefined && props.catalog !== undefined && props.update !== undefined) return
         void call('/summary')
-          .then((payload) => setVersion(typeof payload?.version === 'string' ? payload.version : ''))
+          .then((payload) => {
+            setVersion(typeof payload?.version === 'string' ? payload.version : '')
+            setApplied(payload?.applied)
+          })
           .catch(() => {})
         void call('/catalog')
           .then((payload) => setCatalog(payload))
@@ -1332,6 +1339,18 @@ window.__ModuleLoader__.load({
           h(Button, { key: 'b', disabled: busy !== '', onClick: () => void checkUpdate() },
             busy === 'update' ? t('updChecking') : t('updCheck')),
         ]),
+        /**
+         * 上次装配时刻（apply-ok.json）。
+         *
+         * 「我现在跑的是不是最新代码」是第一个会被问到的问题，而这份文件是它**唯一**的硬证据
+         * （headless 模式不打 info 日志，装配是异步分片完成的）。这里只显示**时刻 + 已挂路由数**，
+         * 不显示任何凭据（那份文件本身也不含凭据值）。
+         */
+        applied !== undefined && applied !== null && typeof applied.appliedAt === 'string'
+          ? h('p', { key: 'applied', className: 'ow-dim ow-statusfoot' },
+              t('updApplied').replace('{at}', formatStamp(applied.appliedAt))
+              + (Array.isArray(applied.mountedRoutes) ? ' · ' + t('updAppliedRoutes').replace('{count}', String(applied.mountedRoutes.length)) : ''))
+          : null,
         // 有新版本：给仓库链接 + **可复制的安装命令**。本页绝不代跑升级命令 ——
         // 升级会替换正在运行的插件代码，那是用户自己的决定。
         update?.updateAvailable === true

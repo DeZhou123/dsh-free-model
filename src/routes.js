@@ -361,6 +361,9 @@ function buildSummary(deps) {
     // 页面据此只渲染老的账号页 —— 而不是拿到半份数据画出一堆「未知」。
     ...(deps.registry !== undefined ? { registry: safeCall(() => deps.registry()) } : {}),
     ...(deps.catalog?.status !== undefined ? { catalog: safeCall(() => deps.catalog.status()) } : {}),
+    // 装配自证（$DSH_HOME/free-model/apply-ok.json）。页面顶上显示「上次装配于 …」——
+    // 因为「我现在跑的是不是最新代码」是**第一个**会被问到的问题，而这份文件是它唯一的硬证据。
+    ...(deps.applyMarker !== undefined ? { applied: safeCall(() => deps.applyMarker()) } : {}),
   }
 }
 
