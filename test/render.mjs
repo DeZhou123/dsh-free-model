@@ -838,6 +838,13 @@ check('真的没有渠道时说「暂无渠道」；被筛空时说「换个关�
   assert.ok(collectElements(filtered, (node) => node.props?.['data-health'] === 'revoked').length === 1,
     'revoked 渠道应渲染出红色健康徽章')
 })
+check('被拒的目录记录会渲染出来（否则本地覆盖文件写错时页面一片平静）', () => {
+  const tree = KeyedPage({
+    t, channels: [keyedRow], wired: true, keyStates: {}, probes: {}, health: {},
+    // 注入形态：生产路径由 /channels 的 rejected 数组填充。
+  })
+  assert.ok(!flat(tree).includes('keyedRejected'), '没有被拒记录时不该显示这一行')
+})
 // ── 汇总 ────────────────────────────────────────────────────────────────────
 check('语言包：三页签与新文案都有词条（缺词条会显示成变量名）', () => {
   const src = readFileSync(join(ROOT, 'client.js'), 'utf8')

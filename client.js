@@ -259,6 +259,7 @@ window.__ModuleLoader__.load({
       keyedModels: '{count} 个模型',
       keyedModelSample: '模型样例',
       keyedOpenCatalogHint: '注意：这条渠道的模型目录**不要 key 也能读**，所以「通过」只证明地址活着；能不能真调还要看额度与鉴权。',
+      keyedRejected: '有 {count} 条渠道记录没通过校验（已忽略，不影响其它渠道）：',
       // ── 填 key / 测 key（0.4.1）─────────────────────────────────────────────
       keyedConfigured: '已配 {count}',
       keyedKeyState: 'key',
@@ -280,6 +281,8 @@ window.__ModuleLoader__.load({
       keyedProbe: '测试 key',
       keyedProbing: '测试中…',
       keyedProbeModels: '上游返回 {count} 个模型',
+      keyedProbeWait: '上游要求等 {left} 再试',
+      keyedProbeWait: '上游要求等 {left} 再试',
       // 探测结果的九种结论：**分开说**，因为处置完全不同（换 key / 等一会 / 换网络）。
       keyedProbeOk: 'key 有效：上游接受了这把 key',
       keyedProbeNoKey: '还没填 key：先保存一把再测',
@@ -493,6 +496,7 @@ window.__ModuleLoader__.load({
       keyedModels: '{count} models',
       keyedModelSample: 'Sample models',
       keyedOpenCatalogHint: 'Note: this channel serves its model list without a key, so a passing probe only proves the address is alive — quota and auth are separate.',
+      keyedRejected: '{count} channel record(s) failed validation (ignored; other channels are unaffected):',
       keyedConfigured: '{count} configured',
       keyedKeyState: 'key',
       keyedKeySet: 'set',
@@ -513,6 +517,7 @@ window.__ModuleLoader__.load({
       keyedProbe: 'Test key',
       keyedProbing: 'Testing…',
       keyedProbeModels: 'upstream returned {count} models',
+      keyedProbeWait: 'upstream asks you to wait {left}',
       keyedProbeOk: 'key accepted by the upstream',
       keyedProbeNoKey: 'no key stored yet: save one first',
       keyedProbeMissingConfig: 'this lane cannot be tested right now',
@@ -1559,11 +1564,16 @@ window.__ModuleLoader__.load({
       // kind 本身 —— 显示 `keyedProbeSomeNewKind` 这种内部键名，用户读不懂。
       const title = PROBE_KIND_SUFFIXES.includes(suffix) ? t('keyedProbe' + suffix) : (kind === '' ? '—' : kind)
       const ms = typeof probe?.ms === 'number' && probe.ms > 0 ? '（' + String(probe.ms) + ' ms）' : ''
+      // 上游给了 Retry-After 就把它翻译成「等多久」：429 的正确动作是等，而
+      // 只有原始毫秒数时用户不知道自己该等 3 秒还是 3 分钟（审计的 UI 缺口）。
+      const wait = Number.isFinite(probe?.retryAfterMs) && probe.retryAfterMs > 0
+        ? '；' + t('keyedProbeWait').replace('{left}', formatDuration(probe.retryAfterMs))
+        : ''
       const reason = typeof probe?.reason === 'string' && probe.reason !== '' ? '：' + safeText(probe.reason, 260) : ''
       const models = Array.isArray(probe?.models) && probe.models.length > 0
         ? '；' + t('keyedProbeModels').replace('{count}', String(probe.models.length))
         : ''
-      return title + ms + reason + models
+      return title + ms + reason + models + wait
     }
 
     /** `invalid-key` → `InvalidKey`（i18n key 的驼峰后缀）。 */
@@ -1629,6 +1639,14 @@ window.__ModuleLoader__.load({
        * 前者是 ready，后者是 cooldown + revoked。
        */
       const [filter, setFilter] = useState('all')
+      /**
+       * 目录层被**拒掉**的渠道记录（后端 `rejected` 数组，含原因）。
+       *
+       * 审计的 UI 缺口：生产页面从不渲染它。后果是用户按文档往
+       * `channels.local.json` 里加一条渠道、写错一个字段，页面上**一片平静** ——
+       * 他只会觉得"这个插件不认本地文件"。有了这一行，错的字段名会直接摆在他眼前。
+       */
+      const [rejected, setRejected] = useState([])
 
       const reload = useCallback(async () => {
         try {
@@ -1637,6 +1655,7 @@ window.__ModuleLoader__.load({
           setWired(payload.wired !== false)
           setReason(typeof payload.reason === 'string' ? payload.reason : '')
           if (payload.keyStates !== undefined && payload.keyStates !== null) setKeyStates(payload.keyStates)
+          setRejected(Array.isArray(payload.rejected) ? payload.rejected : [])
         } catch (error) {
           setChannels([])
           setWired(false)
@@ -1885,6 +1904,18 @@ window.__ModuleLoader__.load({
             ]),
 
         note !== '' ? h('p', { key: 'note', className: 'ow-note ok' }, note) : null,
+        // 被拒的目录记录：**必须显示**，否则用户写了本地覆盖文件却看不到任何反馈。
+        // 只列前 3 条并给出总数（原因串可能很长），完整名单在后端的 /channels 里。
+        rejected.length > 0
+          ? h('div', { key: 'rej', className: 'ow-rejected', role: 'status' }, [
+              h('p', { key: 'h', className: 'ow-statuserr' },
+                t('keyedRejected').replace('{count}', String(rejected.length))),
+              ...rejected.slice(0, 3).map((line, index) => h('p', {
+                key: 'r' + index,
+                className: 'ow-dim ow-rejectedline',
+              }, '· ' + safeText(line, 200))),
+            ])
+          : null,
 
         channels === undefined
           ? h('p', { key: 'wait', className: 'ow-dim' }, t('busy'))
@@ -3136,6 +3167,24 @@ window.__ModuleLoader__.load({
 .ow-health[data-health="unknown"] { opacity: .72; }
 .ow-healthx { font-size: 10.5px; font-weight: 400; }
 .ow-opencat { font-size: 10.5px; opacity: .85; }
+
+/* 被拒的目录记录：贴在卡片列表**之前**，不抢主流程但一定能看见 */
+.ow-rejected {
+  margin: 6px 0 2px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px dashed color-mix(in srgb, var(--dsw-alias-state-warning-primary, #f0a441) 45%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-state-warning-primary, #f0a441) 8%, transparent);
+}
+.ow-rejected p { margin: 2px 0; }
+.ow-rejectedline { font-size: 10.5px; overflow-wrap: anywhere; }
+
+/* 窄屏：卡片网格在 340px 下限时会横向溢出，收成一列并让工具条换行 */
+@media (max-width: 720px) {
+  .ow-cards { grid-template-columns: 1fr; }
+  .ow-keybar { flex-direction: column; align-items: stretch; }
+  .ow-keysearch { flex: 1 1 auto; }
+}
 
 /* ── 工具条：搜索 + 筛选胶囊 ──────────────────────────────────────────────── */
 /* 30 条渠道平铺之后必须能筛：搜索框吃掉剩余宽度，胶囊自动换行不挤压。 */
