@@ -58,7 +58,17 @@ export const DEFAULT_TIMEOUT_MS = 180_000
 /** 实时目录的缓存时长（同一轮里 listModels 会被选择器/状态页/探测并发送）。 */
 const CATALOG_TTL_MS = 5 * 60 * 1000
 /** 目录拉取失败后的冷却：10 秒，挡住并发重试，又不至于让用户改了配置还要等。 */
-const CATALOG_FAILURE_TTL_MS = 10_000
+/**
+ * 目录拉取失败后的冷却：60 秒（0.6.0 从 10 秒上调）。
+ *
+ * ## 为什么必须与成功 TTL 同量级
+ *
+ * `/models` 单次超时上限是 20 秒。失败后只冷却 10 秒，等于「上一个请求还没超时完，
+ * 下一个已经可以发」—— 而 `listModels` 会被模型选择器、状态页、探测三处**并发**调用，
+ * 于是打开一次设置页可能在失败态下重复触发多次 20 秒的目录请求（审计的 P1-3）。
+ * 60 秒与成功 TTL 对齐：失败就等一轮，别拿同一堵墙反复撞。
+ */
+const CATALOG_FAILURE_TTL_MS = 60_000
 /** 单张图片的请求体预算（OpenAI 兼容端点普遍按 base64 体积计费与限制）。 */
 const REQUEST_IMAGE_MAX_BYTES = 2 * 1024 * 1024
 /** 图片像素预算（≈1,037 视觉 token），与 buddy 车道的默认值一致。 */
@@ -442,6 +452,22 @@ export function failureToError(lane, classified) {
 }
 
 /**
+ * 这一帧像不像「心跳」而不是「坏帧」。
+ *
+ * 判据刻意保守：只有**短**且**不含结构字符**（`{` `[` `<`）的帧才算心跳。
+ * 短了一律当坏帧、含结构字符（HTML/JSON）一律当坏帧 ——
+ * 反过来判（把长帧当心跳）会让「网关返回 HTML 错误页」被无限忽略。
+ */
+export function isLikelyKeepalive(payload) {
+  const text = String(payload ?? '').trim()
+  if (text === '') return true
+  if (text.length > 64) return false
+  if (/[<{[\]]/.test(text)) return false
+  // 纯数字 / 时间串 / ping / keep-alive 之类
+  return /^[\d\s:.,\-TZ/+]+$/.test(text) || /^(ping|pong|keep[-_ ]?alive|heartbeat|ok)$/i.test(text)
+}
+
+/**
  * 把「单值 / 数组 / 逗号换行分隔的串」统一成 key 列表（去重、去空、上限 5）。
  *
  * 上限 5 与 `ready.js` 的 `resolveApiKeys` 同数：两处不一致会让「页面说有 5 把、
@@ -812,6 +838,8 @@ export class KeyedAdapter extends LlmAdapter {
      * 记下来，页面就能说一句「上游目录里已经没有这条渠道的静态模型了」。
      */
     this.catalogSuspect = null
+    /** 正在飞的那次目录请求（并发去重，见 #catalog）。 */
+    this.catalogInflight = undefined
     /** 上游是否接受 `stream_options`（400 之后记住，不再问第二次）。 */
     this.streamUsageSupported = this.lane.streamUsage !== false
     /** 最近一次分类后的失败（页面渲染「这次为什么不能用」）。 */
@@ -1053,6 +1081,8 @@ export class KeyedAdapter extends LlmAdapter {
     let usage
     let finishReason
     let badFrames = 0
+    /** 心跳帧计数（只用于诊断，不参与失败判定）。 */
+    let keepaliveFrames = 0
     /**
      * 上游是否**明确表示说完了**（收到 `[DONE]`，或收到带了 finish_reason 的帧）。
      *
@@ -1135,6 +1165,14 @@ export class KeyedAdapter extends LlmAdapter {
         try {
           chunk = JSON.parse(payload)
         } catch {
+          // ⚠️ 先分清「心跳帧」与「不是 SSE」：有些网关会在流里推 `data: 2026-10-26 …`
+          // 或 `data: 0` 这类纯数字/时间串的心跳。把它们算进坏帧，五个之后就会把一条
+          // **正常**渠道判成「对面不是 SSE」并整轮失败（审计的 P2-4）。
+          // 判据：短、且看起来不像 HTML/JSON 结构 —— 心跳帧单独计数，上限宽得多。
+          if (isLikelyKeepalive(payload)) {
+            keepaliveFrames += 1
+            continue
+          }
           badFrames += 1
           if (badFrames === 1) this.logger?.warn?.(`[dsh-free-model] ${lane.id} 收到无法解析的 SSE 帧（已跳过）：${payload.slice(0, 160)}`)
           if (badFrames > MAX_BAD_FRAMES) {
@@ -1351,6 +1389,16 @@ export class KeyedAdapter extends LlmAdapter {
   async #catalog(signal) {
     const now = Date.now()
     if (this.catalogModels !== undefined && now - this.catalogAt < CATALOG_TTL_MS) return this.catalogModels
+    // 同一个 TTL 窗口内的**并发**调用共享同一次网络请求（0.6.0）。
+    // 没有这一条时，三处调用者会各自发一次，而上游看到的是三倍请求 ——
+    // 对按 IP 限速的免费渠道尤其不友好。
+    if (this.catalogInflight !== undefined) {
+      try {
+        return await this.catalogInflight
+      } catch {
+        // 共享的那次失败了：走下面的正常路径（它会去看失败冷却）。
+      }
+    }
     if (this.lane.supportsModelList === false || lanePlaceholders(this.lane).length > 0) {
       this.catalogModels = staticModels(this.lane)
       this.catalogSource = 'static'
@@ -1363,6 +1411,21 @@ export class KeyedAdapter extends LlmAdapter {
     const url = typeof this.lane.modelsURL === 'string' && this.lane.modelsURL !== ''
       ? this.lane.modelsURL
       : this.baseURL + '/models'
+    this.catalogInflight = this.#fetchCatalog(url, signal, now)
+    try {
+      return await this.catalogInflight
+    } finally {
+      this.catalogInflight = undefined
+    }
+  }
+
+  /**
+   * 真去拉一次目录，并归一化成行。
+   *
+   * 与 `#catalog` 拆开是为了让「并发去重」有一个**可 await 的 Promise**：
+   * 把网络与缓存判断写在同一个函数里，就没法把「正在飞的那一次」交给第二个调用者。
+   */
+  async #fetchCatalog(url, signal, now) {
     try {
       const headers = { accept: 'application/json' }
       if (this.apiKey !== null && this.apiKey !== '') headers.authorization = 'Bearer ' + this.apiKey

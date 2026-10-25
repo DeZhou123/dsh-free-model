@@ -330,31 +330,45 @@ export function createKeyedManager(deps = {}) {
       const ttl = cached.ok ? PROBE_CACHE_TTL_MS : PROBE_FAILURE_TTL_MS
       if (Date.now() - cached.at < ttl) return { ...cached.result, cached: true }
     }
-    const resolved = await resolveApiKey(lane, { readCredential: deps.readCredential })
-    const result = await probeLaneKey(lane, {
-      apiKey: resolved.key ?? '',
-      ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
-      ...(Number.isFinite(deps.probeTimeoutMs) ? { timeoutMs: deps.probeTimeoutMs } : {}),
-      logger,
-    })
-    probes.set(laneId, { result, at: Date.now(), ok: result.ok === true })
-    // 探测**就是**一次真实请求，所以它是健康账本最好的信息来源：
-    // 用户点「测试 key」得到的那一次结果，直接决定这条渠道接下来 30 秒 / 6 小时 / 永久的状态。
-    //
-    // ⚠️ 只有「凭据真的发出去了」才记账：`no-key` / `missing-config` 说的是本插件自己的
-    // 配置问题（没填 key、车道已下线），记成渠道故障会让用户在补 key 之前就看到一条
-    // 「冷却中」的红字，方向完全错。
-    if (result.ok === true) {
-      health.recordSuccess(laneId)
-    } else if (isUpstreamVerdict(result.kind)) {
-      health.recordFailure(laneId, {
-        kind: result.kind,
-        ...(Number.isFinite(result.status) ? { status: result.status } : {}),
-        ...(Number.isFinite(result.retryAfterMs) ? { retryAfterMs: result.retryAfterMs } : {}),
-        reason: typeof result.reason === 'string' ? result.reason : '',
+    // ⚠️ 并发去重（0.6.0，审计的 P1-8）：前端探测一律 `force:true`，于是 60/20 秒的
+    // 结果缓存被绕过；而快速连点 / 多标签页会各自发一次上游请求（每次 8 秒）。
+    // `force` 只跳过**结果**缓存，不该跳过**去重** —— 这两个是不同的问题：
+    // 「我想看最新结论」不等于「我要同时打五次上游」。
+    const inflight = probesInflight.get(laneId)
+    if (inflight !== undefined) return await inflight
+    const pending = (async () => {
+      const resolved = await resolveApiKey(lane, { readCredential: deps.readCredential })
+      const result = await probeLaneKey(lane, {
+        apiKey: resolved.key ?? '',
+        ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
+        ...(Number.isFinite(deps.probeTimeoutMs) ? { timeoutMs: deps.probeTimeoutMs } : {}),
+        logger,
       })
+      probes.set(laneId, { result, at: Date.now(), ok: result.ok === true })
+      // 探测**就是**一次真实请求，所以它是健康账本最好的信息来源：
+      // 用户点「测试 key」得到的那一次结果，直接决定这条渠道接下来 30 秒 / 6 小时 / 永久的状态。
+      //
+      // ⚠️ 只有「凭据真的发出去了」才记账：`no-key` / `missing-config` 说的是本插件自己的
+      // 配置问题（没填 key、车道已下线），记成渠道故障会让用户在补 key 之前就看到一条
+      // 「冷却中」的红字，方向完全错。
+      if (result.ok === true) {
+        health.recordSuccess(laneId)
+      } else if (isUpstreamVerdict(result.kind)) {
+        health.recordFailure(laneId, {
+          kind: result.kind,
+          ...(Number.isFinite(result.status) ? { status: result.status } : {}),
+          ...(Number.isFinite(result.retryAfterMs) ? { retryAfterMs: result.retryAfterMs } : {}),
+          reason: typeof result.reason === 'string' ? result.reason : '',
+        })
+      }
+      return result
+    })()
+    probesInflight.set(laneId, pending)
+    try {
+      return await pending
+    } finally {
+      probesInflight.delete(laneId)
     }
-    return result
   }
 
   /** 这条车道现在还能不能打（页面用它决定按钮是否灰、以及给什么下一步）。 */

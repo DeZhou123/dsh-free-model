@@ -16,7 +16,8 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 
 await import('../hooks.mjs')
-const { createKeyedAdapter, convertRequestMessages, buildOpenAiBody, frameData, normalizeUsage } = await import('../../src/lanes/keyed/adapter.js')
+const modAdapter = await import('../../src/lanes/keyed/adapter.js')
+const { createKeyedAdapter, convertRequestMessages, buildOpenAiBody, frameData, normalizeUsage } = modAdapter
 const { laneById } = await import('../../src/lanes/keyed/catalog.js')
 
 let passed = 0
@@ -559,6 +560,43 @@ await checkAsync('部分交集不误报（上游天天加模型，那不该是�
   })
   await adapter.listModels('openrouter-free')
   assert.equal(adapter.catalogDiagnostics().suspect, null, '部分交集被误报成零交集')
+})
+
+// ── 0.6.0：心跳帧不该被当成「对面不是 SSE」（审计 P2-4）────────────────────
+
+await checkAsync('心跳帧（纯数字/时间串）被单独忽略，不触发「不是 SSE」误判', async () => {
+  // 网关常在流里推 data: 2026-10-26T02:00:00Z 或 data: 0 当心跳。
+  // 旧实现把 5 个这样的帧算成「无法解析」，然后把一条正常渠道判失败。
+  const frames = [
+    frame('0'), frame('2026-10-26T02:00:00Z'), frame(''), frame('ping'),
+    frame('0'), frame('0'),
+    frame(chunkOf({ content: '好' })),
+    frame('[DONE]'),
+  ]
+  const adapter = createKeyedAdapter({ lane: { ...LANE, id: 'openrouter-free' }, apiKey: 'k', timeoutMs: 5_000, fetchImpl: sseFetch(frames) })
+  const { chunks, error } = await runStream(adapter)
+  assert.equal(error, undefined, '心跳帧把请求弄挂了：' + error?.message)
+  assert.equal(textOf(chunks), '好')
+  assert.equal(chunks.find((piece) => piece.type === 'finish')?.reason?.kind, 'stop')
+})
+
+await checkAsync('网关 HTML 错误页仍然算坏帧（心跳判据必须保守）', async () => {
+  const frames = Array.from({ length: 6 }, () => frame('<html>502 Bad Gateway</html>'))
+  const adapter = createKeyedAdapter({ lane: { ...LANE, id: 'openrouter-free' }, apiKey: 'k', timeoutMs: 5_000, fetchImpl: sseFetch(frames) })
+  const { error } = await runStream(adapter)
+  assert.ok(error !== undefined, 'HTML 帧没有被判成坏帧')
+  assert.equal(error.code, 'UPSTREAM_ERROR')
+})
+
+await checkAsync('isLikelyKeepalive 的判据：短且不含结构字符', () => {
+  const { isLikelyKeepalive } = modAdapter
+  assert.equal(isLikelyKeepalive('0'), true)
+  assert.equal(isLikelyKeepalive('2026-10-26T02:00:00Z'), true)
+  assert.equal(isLikelyKeepalive('ping'), true)
+  assert.equal(isLikelyKeepalive(''), true)
+  assert.equal(isLikelyKeepalive('{"a":1}'), false, 'JSON 不该被当心跳')
+  assert.equal(isLikelyKeepalive('<html>'), false, 'HTML 不该被当心跳')
+  assert.equal(isLikelyKeepalive('x'.repeat(200)), false, '长帧不该被当心跳')
 })
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {
