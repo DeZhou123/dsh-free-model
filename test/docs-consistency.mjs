@@ -93,6 +93,36 @@ check('README 里的续期/探测超时数字与 keys.js 一致（写死的超�
   }
 })
 
+
+check('代码里的每一条路由都出现在 README（「有功能但没人知道在哪」= 没有这个功能）', () => {
+  const routesSource = readFileSync(join(ROOT, 'src', 'routes.js'), 'utf8')
+  const paths = [...new Set([...routesSource.matchAll(/routePath === '([^']+)'/g)].map((m) => m[1]))]
+  assert.ok(paths.length >= 30, 'routePath 抽出来只有 ' + paths.length + ' 条，抽取规则可能过期了')
+  const missing = paths.filter((path) => !readme.includes(path))
+  assert.deepEqual(missing, [], '这些路由没写进 README：' + missing.join(', '))
+})
+
+check('「九件事」的个数与那张表的行数一致（数字写死就会漂）', () => {
+  const heading = /## 自带 key 那一页现在有(\S+)件事可做/.exec(readme)
+  assert.ok(heading !== null, '找不到「N 件事」标题')
+  const zh = { 七: 7, 八: 8, 九: 9, 十: 10, 十一: 11, 十二: 12 }
+  const declared = zh[heading[1]] ?? Number(heading[1])
+  assert.ok(Number.isFinite(declared), '标题里的数字读不出来：' + heading[1])
+  // 只数该小节到下一个二级标题之间的**表格数据行**：
+  // ⚠️ 不能只按「以 | 开头」数 —— 那样会把表头一起算进来（第一版就是这么错的：9 行表数出 10）。
+  // 判据改成「分隔行（|---|）之后的行」，表头自然被排除。
+  const section = readme.slice(heading.index)
+  const sectionEnd = section.indexOf('\n## ', 1)
+  const body = sectionEnd === -1 ? section : section.slice(0, sectionEnd)
+  let seenSeparator = false
+  let rows = 0
+  for (const line of body.split('\n')) {
+    if (!line.startsWith('|')) continue
+    if (/^\|\s*:?-{2,}/.test(line)) { seenSeparator = true; continue }
+    if (seenSeparator) rows += 1
+  }
+  assert.equal(rows, declared, '标题说「' + declared + ' 件事」，表里却有 ' + rows + ' 行')
+})
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：')
