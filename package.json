@@ -34,7 +34,9 @@
     "catalog": "node scripts/build-catalog.mjs",
     "catalog:check": "node scripts/build-catalog.mjs --check",
     "probe:endpoints": "node scripts/probe-endpoints.mjs",
-    "probe:endpoints:dry": "node scripts/probe-endpoints.mjs --dry"
+    "probe:endpoints:dry": "node scripts/probe-endpoints.mjs --dry",
+    // 静态表 vs 上游实时目录：问的是「我的快照过期了吗」（endpoints 问的是「地址还活着吗」）。
+    "probe:models": "node scripts/diff-static-live.mjs"
   },
   "keywords": [
     "dsh",
