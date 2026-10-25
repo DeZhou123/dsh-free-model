@@ -643,9 +643,21 @@ export function apply(ctx, config = {}) {
     ctx.effect(() => {
       const timer = setInterval(() => {
         void keyedManager.healMounts?.().then((result) => {
-          if (result !== undefined && result.mounted.length > 0) {
+          if (result === undefined || result.attempted !== true) return
+          // ⚠️ 无论挂没挂上都**记一笔**（0.6.0）：`keyedMounted` 只说结论，
+          // 而这个字段说的是「自愈跑过没有、当时还差几条」。排查「某条车道为什么没挂上」
+          // 时它把「机制没跑」与「跑了但凭据读不到」分得清清楚楚 —— 这两者的下一步动作完全不同。
+          writeApplyMarker({
+            phase: 'full',
+            // ⚠️ 用管理器自己的快照，**不要**用 mountedRoutes 过滤：后者含服务车道
+            //（opencode 就在里面），会让这个字段的含义从「自带 key 车道」悄悄变成
+            //「除两条账号车道以外的所有路由」—— 字段名没变、含义变了是最坏的一种漂移。
+            // （这就是上一版写完当场发现的问题：marker 里冒出了 opencode。）
+            keyedMounted: keyedManager.snapshot?.().mounted ?? [],
+            heal: { at: new Date().toISOString(), pending: result.pending, mounted: result.mounted },
+          })
+          if (result.mounted.length > 0) {
             logger?.info?.(`dsh-free-model: 补挂了 ${result.mounted.length} 条自带 key 车道（${result.mounted.join(', ')}）`)
-            writeApplyMarker({ phase: 'full', keyedMounted: [...mountedRoutes].filter((route) => route !== 'buddy' && route !== 'workbuddy') })
           }
         }).catch(() => {})
       }, 60_000)
