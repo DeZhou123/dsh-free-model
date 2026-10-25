@@ -166,6 +166,34 @@ check('辅助函数：laneById / lanesByRegion / catalogStats', () => {
   assert.equal(stats.unverifiedBaseURL, 0, '有渠道的 baseURL 未确证 —— 那是唯一会让用户以为插件坏了的字段')
 })
 
+check('openCatalog 标记：恰好这 9 条 /models 可匿名读（2026-10-26 两轮实测）', () => {
+  // 这一条是**把实测结论钉进代码**：哪天有人加了一条"目录也免 key"的渠道却没标，
+  // 页面就不会给它挂「探测通过≠有额度」的提示，用户会拿一把废 key 反复试。
+  const expected = [
+    'openrouter-free', 'modelscope', 'nvidia-nim', 'sambanova',
+    'gitee-ai', 'huggingface-router', 'chutes', 'novita', 'deepinfra',
+  ]
+  const marked = ALL_CHANNELS.filter((lane) => lane.openCatalog === true).map((lane) => lane.id).sort()
+  assert.deepEqual(marked, [...expected].sort(), 'openCatalog 名单与实测不一致：' + marked.join(','))
+  // 标记只能落在 keyed 渠道上：keyless 本来就不需要凭据，标了是重复信息。
+  for (const lane of ALL_CHANNELS) {
+    if (lane.openCatalog !== true) continue
+    assert.equal(lane.kind, 'keyed', lane.id + ' 是 ' + lane.kind + '，不该标 openCatalog')
+  }
+})
+
+check('带占位符的渠道必须声明 supportsModelList:false（它的 /models 地址本来就是假的）', () => {
+  // 2026-10-26 实测补的纪律：cloudflare-workers-ai 的 baseURL 里有 {ACCOUNT_ID}，
+  // 而它的 /models 连匿名 GET 都不接受（两轮 405）。没声明时，每次打开模型选择器
+  // 都会先打一个必然失败的地址，再等超时 —— 用户只觉得"卡"。
+  for (const lane of ALL_CHANNELS) {
+    const found = lanePlaceholders(lane)
+    if (found.length === 0) continue
+    assert.equal(lane.supportsModelList, false,
+      lane.id + ' 带占位符 ' + found.join('、') + ' 却没声明 supportsModelList:false')
+  }
+})
+
 check('没有把 /models 实测 404 的渠道标成有实时目录', () => {
   // 2026-10-25 实测 .../v1beta/openai/models → 404。标错的后果是每次开模型
   // 选择器都白等一次超时，然后回退 —— 用户只觉得"卡"。

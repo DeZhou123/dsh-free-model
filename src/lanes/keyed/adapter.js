@@ -746,6 +746,22 @@ export class KeyedAdapter extends LlmAdapter {
      * 回调是纯通知：它抛错不影响这次请求的成败（`notify` 自己吞掉异常）。
      */
     this.onOutcome = typeof options.onOutcome === 'function' ? options.onOutcome : undefined
+    /**
+     * 发请求**之前**的闸门（0.6.0，健康账本接进来的地方）。
+     *
+     * ## 为什么要在适配器里拦，而不是让用户自己看徽章
+     *
+     * 健康账本已经知道「这条渠道在冷却，还要等 42 分钟」。如果不在发请求前拦下来，
+     * 用户（或 agent 的重试）每选一次这个模型，就真的往上游打一次 —— 打的是一个
+     * 刚刚明确拒绝过我们的端点。免费渠道的限流是有记忆的：多打几次会把冷却窗口越推越远。
+     *
+     * 拦下来报的错**必须带上剩余时间**（「还要等 42 分钟」），否则用户只知道失败、
+     * 不知道等多久 —— 于是他大概率立刻重试，把刚恢复一点点的窗口再推远。
+     *
+     * 与 retired / MISSING_CREDENTIAL 同一档：都是**不发请求的本地拒绝**，
+     * 区别只在原因不同（渠道下线 / 没 key / 正在冷却）。
+     */
+    this.beforeRequest = typeof options.beforeRequest === 'function' ? options.beforeRequest : undefined
     /** 实时目录缓存。 */
     this.catalogModels = undefined
     this.catalogSource = 'static'
@@ -910,6 +926,23 @@ export class KeyedAdapter extends LlmAdapter {
     // ⚠️ 占位符没替换就别发请求：这里的地址必然 404，而 404 在页面上会被读成
     // "插件坏了"。宁可抛一条说得清的错误。`keyedLaneState` 同样会判 not-ready，
     // 这里是给"绕过就绪判定直接挂适配器"留的兜底。
+    // 健康闸门：冷却中 / 已吊销的渠道**不发请求**。原因里必须带「还要等多久」，
+    // 否则用户会立刻重试，把限流窗口越推越远（见 beforeRequest 的注释）。
+    if (this.beforeRequest !== undefined) {
+      let gate
+      try {
+        gate = this.beforeRequest(lane.id)
+      } catch {
+        // 闸门自己出错不能挡住请求：健康是增强，不是依赖。
+        gate = undefined
+      }
+      if (gate !== undefined && gate !== null && gate.available === false) {
+        throw new LlmError(
+          lane.id + '：' + String(gate.reason ?? '这条渠道现在不可用') + '；换一条渠道，或在设置页清掉健康状态。',
+          gate.state === 'revoked' ? 'MISSING_CREDENTIAL' : 'RATE_LIMIT',
+        )
+      }
+    }
     const pending = lanePlaceholders(lane)
     if (pending.length > 0) {
       throw new LlmError(

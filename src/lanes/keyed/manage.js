@@ -140,6 +140,9 @@ export function createKeyedManager(deps = {}) {
   const callDeps = () => ({
     readCredential: deps.readCredential,
     onOutcome,
+    // 闸门与 availability 同一个实现：页面显示的「不可用」与发请求时被拒必须是同一套判据，
+    // 否则会出现「卡片说冷却中、点下去却真的发出去了」这种自相矛盾。
+    beforeRequest: (laneId) => health.isAvailable(laneId),
     logger,
     ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
     ...(deps.readImage !== undefined ? { readImage: deps.readImage } : {}),

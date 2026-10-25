@@ -101,6 +101,7 @@ export const keyedLaneDescriptors = descriptors
  *   route?: string,
  *   timeoutMs?: number,
  *   onOutcome?: (event: { lane: string, ok: boolean, kind?: string, status?: number }) => void,
+ *   beforeRequest?: (laneId: string) => { available: boolean, state: string, reason: string },
  * }} deps
  * @returns {Promise<{ lane: object, route: string, adapter: object, readiness: object }>}
  * @throws 渠道不存在、已下线、或未就绪 —— 抛错文案直接可显示给用户；
@@ -125,6 +126,8 @@ export async function mount(laneId, deps = {}) {
     timeoutMs: deps.timeoutMs,
     // 真实对话的结果回执（健康账本）。可选：没有注入时适配器完全不记账。
     ...(typeof deps.onOutcome === 'function' ? { onOutcome: deps.onOutcome } : {}),
+    // 发请求前的健康闸门：冷却中的渠道不发请求（原因带剩余时间）。
+    ...(typeof deps.beforeRequest === 'function' ? { beforeRequest: deps.beforeRequest } : {}),
   })
   return { lane, route, adapter, readiness }
 }

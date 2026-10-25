@@ -115,6 +115,8 @@ const KEYED_CHANNELS_BASE = [
     signupURL: 'https://openrouter.ai/settings/keys',
     freeTier: 'id 带 ":free" 后缀的模型计费为 0（实测 pricing.prompt/completion = "0"）；每日次数按账户余额档限制，余额 ≥10 美元时额度更高',
     region: 'global',
+    // 目录免 key 可读（实测 2026-10-26 两轮 200）：探测通过≠有额度。
+    openCatalog: true,
     note: '免费型号随时上下架，静态表只是兜底（运行时以 /models 实时结果为准）；模型 id 里那个 ":free" 后缀是价格档位，忘掉它就会按付费模型计费。',
     evidence: '2026-10-25 GET https://openrouter.ai/api/v1/models → 200；free 三条取自实测 pricing.prompt=0 的行',
     unknown: true,
@@ -199,8 +201,12 @@ const KEYED_CHANNELS_BASE = [
     freeTier: '每天 10,000 Neurons 的免费额度（Workers AI 定价页口径），日出重置；超了要开 Workers Paid',
     region: 'global',
     note: '⚠️ baseURL 里有 {ACCOUNT_ID}：先去 dash 首页抄账号 ID 并替换，否则这条车道会一直显示「待配置」——那是对的，不是插件坏了。',
-    evidence: '官方 openai 兼容页原文：baseURL = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai/v1`',
+    evidence: '官方 openai 兼容页原文：baseURL = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai/v1`；'
+      + '2026-10-26 实测该路径的 /models 两轮均 405（补测假账号 ID 仍 405；/ai/models 与 /ai/models/search 返 400 Missing X-Auth-Key，'
+      + '说明这两个端点不接受匿名 GET）——故本渠道**不声明**可实时列目录',
     placeholders: ['{ACCOUNT_ID}'],
+    // 2026-10-26 实测补上：它的 /models 连 405 都不给正常答复，硬探只会每次白等一个超时。
+    supportsModelList: false,
     unknown: true,
     unknownFields: ['freeTier'],
     models: [
@@ -260,6 +266,7 @@ const KEYED_CHANNELS_BASE = [
     signupURL: 'https://modelscope.cn/my/myaccesstoken',
     freeTier: '社区版按模型给免费调用额度（绑阿里云账号后额度更高，具体次数见控制台；此处数值未确证）',
     region: 'cn',
+    openCatalog: true,
     note: '⚠️ 它的 /models **不用 key 就能读**（实测 200），所以「目录能拉出来」不等于「能调用」——真正能不能调由 chat/completions 的鉴权决定，别被目录骗了。',
     evidence: '2026-10-25 GET https://api-inference.modelscope.cn/v1/models → 200，抄下 38 条实测 id（本静态表取其中 4 条）',
     unknown: true,
@@ -459,6 +466,7 @@ const KEYED_CHANNELS_BASE = [
     signupURL: 'https://build.nvidia.com/settings/api-keys',
     freeTier: '注册送固定额度（官网口径为 1000 credits，约等于该数量的调用次数），用完需申请或付费',
     region: 'global',
+    openCatalog: true,
     note: '⚠️ 它的 /models **不用 key 就能读**（实测 200，80+ 条），所以目录很全但能调的只是其中一部分：页面上要按「能调通」而不是「列出来」计数。',
     evidence: '2026-10-25 GET https://integrate.api.nvidia.com/v1/models → 200（抄下实测 id，本静态表取其中 4 条）',
     unknown: true,
@@ -501,6 +509,7 @@ const KEYED_CHANNELS_BASE = [
     signupURL: 'https://cloud.sambanova.ai/apis',
     freeTier: '免费开发者档：按模型给每日请求数与 token 上限，不需绑卡',
     region: 'global',
+    openCatalog: true,
     note: '⚠️ /models **不用 key 也能读**（实测 200）；免费档限速偏紧，高并发会连续 429。',
     evidence: '2026-10-25 GET https://api.sambanova.ai/v1/models → 200（抄下实测 6 条 id，本静态表取其中 4 条）',
     unknown: true,

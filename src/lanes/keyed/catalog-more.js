@@ -54,6 +54,8 @@ export const MORE_KEYED_CHANNELS = [
     signupURL: 'https://ai.gitee.com/serverless-api',
     freeTier: '有免费体验额度（按模型/账号档给，数值随平台活动变）；用完后按量计费。国内直连，不需要代理。',
     region: 'cn',
+    // 目录免 key 可读（实测 200）：探测通过≠有额度，页面据此挂提示。
+    openCatalog: true,
     note: '⚠️ /models **不要 key 也能读**（实测 200，213 条）：所以"探测通过"只证明地址活着，'
       + '不证明你有额度。模型 id 里混着大量社区微调（Jev / TEE 后缀），挑主流的用。',
     evidence: '2026-10-26 GET https://ai.gitee.com/v1/models → 200，返回 213 条（含 kimi-k3.1-pro、'
@@ -103,6 +105,8 @@ export const MORE_KEYED_CHANNELS = [
     signupURL: 'https://huggingface.co/settings/tokens',
     freeTier: '免费账号每月有一笔额度（按 provider 转发，用完转 PRO 或按量）。数值随账号档变化，本插件不写死。',
     region: 'global',
+    // 目录免 key 可读（实测 200，且每条带上游明细）：探测通过≠有额度。
+    openCatalog: true,
     note: '⚠️ /models **不要 key 也能读**（实测 200，131 条），所以探测通过只说明地址活着。'
       + '它是**转发层**：同一个模型 id 底下挂着多家上游（novita / cerebras / deepinfra / baseten…），'
       + '调速与可用性由它选，你的 key 只是 HF 的 token。',
@@ -131,6 +135,8 @@ export const MORE_KEYED_CHANNELS = [
     signupURL: 'https://chutes.ai/app/api',
     freeTier: '注册赠一笔试用额度，用尽转按量（它自己也卖 TAO 计价）。**不是无限免费**。',
     region: 'global',
+    // 目录免 key 可读（实测 200）：探测通过≠有额度。
+    openCatalog: true,
     note: '卖点是「TEE 机密推理」——模型 id 带 -TEE 后缀表示跑在可信执行环境里，'
       + '换来的是**模型清单偏少**（实测只有 16 条）与偶发排队。',
     evidence: '2026-10-26 GET https://llm.chutes.ai/v1/models → 200，返回 16 条，每条带 '
@@ -156,6 +162,7 @@ export const MORE_KEYED_CHANNELS = [
     signupURL: 'https://novita.ai/settings/key-management',
     freeTier: '新号赠小额试用额度，之后按 token 计费。',
     region: 'global',
+    openCatalog: true,
     note: '目录里混着 -p 后缀的型号（推测是 premium/峰值档），挑不带后缀的先试。'
       + '⚠️ 它的 /models 路径是 /v3/openai/models（不是 /v3/models）。',
     evidence: '2026-10-26 GET https://api.novita.ai/v3/openai/models → 200，返回 97 条，每条带 '
@@ -181,6 +188,8 @@ export const MORE_KEYED_CHANNELS = [
     signupURL: 'https://deepinfra.com/dash/api_keys',
     freeTier: '按 token 计费；偶有标价 0 的开源模型可白用。**不是免费层渠道**，列它是因为型号极全。',
     region: 'global',
+    // 目录免 key 可读（实测 200）：探测通过≠有额度。
+    openCatalog: true,
     note: '⚠️ /models **不要 key 也能读**（实测 200，175 条）且**不带上下文/模态元数据** —— '
       + '所以下面的 contextWindow 只能写 0（未知），页面据此显示"未知窗口"而不是编一个数。'
       + '目录里混了图片/视频模型（veo / seedream / sdxl），选模型时看 id 前缀。',

@@ -211,6 +211,8 @@ export function projectRegistryView(channels, runtime = {}) {
       ...(channel.docsURL !== undefined ? { docsURL: channel.docsURL } : {}),
       ...(channel.signupURL !== undefined ? { signupURL: channel.signupURL } : {}),
       ...(channel.startable === true ? { startable: true } : {}),
+      // 目录免 key 可读：页面据此在探测结果旁边挂一句「通过≠有额度」。
+      ...(channel.openCatalog === true ? { openCatalog: true } : {}),
       ...(channel.native === true ? { native: true } : {}),
       ...(channel.unknown === true ? { unknown: true } : {}),
       ...(channel.extra !== undefined ? { extra: channel.extra } : {}),

@@ -258,6 +258,7 @@ window.__ModuleLoader__.load({
       keyedUnknownHint: '这条记录有字段没有实证（多半是免费额度的具体数值）；运行时以实时模型目录为准。',
       keyedModels: '{count} 个模型',
       keyedModelSample: '模型样例',
+      keyedOpenCatalogHint: '注意：这条渠道的模型目录**不要 key 也能读**，所以「通过」只证明地址活着；能不能真调还要看额度与鉴权。',
       // ── 填 key / 测 key（0.4.1）─────────────────────────────────────────────
       keyedConfigured: '已配 {count}',
       keyedKeyState: 'key',
@@ -484,6 +485,7 @@ window.__ModuleLoader__.load({
       keyedUnknownHint: 'Some fields of this record have no evidence (usually the exact free-tier numbers); the live model catalog wins at runtime.',
       keyedModels: '{count} models',
       keyedModelSample: 'Sample models',
+      keyedOpenCatalogHint: 'Note: this channel serves its model list without a key, so a passing probe only proves the address is alive — quota and auth are separate.',
       keyedConfigured: '{count} configured',
       keyedKeyState: 'key',
       keyedKeySet: 'set',
@@ -1472,6 +1474,11 @@ window.__ModuleLoader__.load({
                     role: 'status',
                     'data-kind': String(probe.kind ?? ''),
                   }, probeText(probe, t))
+                : null,
+              // 目录免 key 可读的渠道：探测通过**不代表**你有额度。
+              // 这句必须紧跟在探测结果下面（而不是卡片顶部），因为误读恰好发生在"看到通过"之后。
+              channel?.openCatalog === true && probe?.ok === true
+                ? h('p', { key: 'oc', className: 'ow-hint ow-opencat' }, t('keyedOpenCatalogHint'))
                 : null,
             ]),
         channel?.unknown === true
@@ -3047,6 +3054,7 @@ window.__ModuleLoader__.load({
 .ow-health[data-health="revoked"] { border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 55%, transparent); }
 .ow-health[data-health="unknown"] { opacity: .72; }
 .ow-healthx { font-size: 10.5px; font-weight: 400; }
+.ow-opencat { font-size: 10.5px; opacity: .85; }
 
 /* ── 工具条：搜索 + 筛选胶囊 ──────────────────────────────────────────────── */
 /* 30 条渠道平铺之后必须能筛：搜索框吃掉剩余宽度，胶囊自动换行不挤压。 */

@@ -318,6 +318,125 @@ await checkAsync('frameData 不在分类层里被破坏（回归：SSE 负载原
   assert.equal(frameData('data: {"error":{"message":"x"}}'), '{"error":{"message":"x"}}')
 })
 
+// ── 0.6.0：健康闸门与结果回执 ───────────────────────────────────────────────
+
+/**
+ * 造一个假 fetch：`/models` 照常回一份最小目录，其余走给定的状态。
+ *
+ * ⚠️ 必须区分 URL：适配器**先读目录再发对话**，如果桩对两次调用回同一个 401，
+ * 那么失败发生在"读目录"那一步，测的就不是"对话被拒"（第一版就是这么写错的，
+ * 断言报的是 `回执次数 0`，而真因是根本没走到发请求）。
+ */
+function stubFetch(status, body, headers = {}) {
+  const modelsBody = JSON.stringify({ data: [{ id: 'openai/gpt-oss-120b' }] })
+  return async (url) => {
+    if (String(url).endsWith('/models')) {
+      return {
+        status: 200,
+        ok: true,
+        headers: { get: () => null },
+        text: async () => modelsBody,
+        body: null,
+      }
+    }
+    return {
+      status,
+      ok: status >= 200 && status < 300,
+      headers: { get: (name) => headers[String(name).toLowerCase()] ?? null },
+      text: async () => body,
+      body: null,
+    }
+  }
+}
+
+function makeAdapter(overrides) {
+  const lane = { ...laneById('groq'), id: 'groq' }
+  return createKeyedAdapter({ lane, apiKey: 'k-1', ...overrides })
+}
+
+await checkAsync('闸门：冷却中的渠道**不发请求**，且原因带剩余时间', async () => {
+  let called = 0
+  const adapter = makeAdapter({
+    fetchImpl: async () => { called += 1; return stubFetch(200, '')() },
+    beforeRequest: () => ({ available: false, state: 'cooldown', reason: '冷却中，还有 42 分钟' }),
+  })
+  let caught
+  try {
+    for await (const _ of adapter.stream({ model: 'openai/gpt-oss-120b', messages: [{ role: 'user', content: 'hi' }] })) { void _ }
+  } catch (error) { caught = error }
+  assert.equal(called, 0, '冷却中还是把请求发出去了')
+  assert.ok(caught !== undefined, '冷却中却没有抛错')
+  assert.ok(String(caught.message).includes('42 分钟'), '错误里没带剩余时间：' + caught.message)
+  assert.equal(caught.code, 'RATE_LIMIT', '冷却应归到可重试档，实际 code=' + caught.code)
+})
+
+await checkAsync('闸门：吊销的渠道报 MISSING_CREDENTIAL（换 key 才是下一步）', async () => {
+  const adapter = makeAdapter({
+    fetchImpl: async () => { throw new Error('不该被调用') },
+    beforeRequest: () => ({ available: false, state: 'revoked', reason: '已吊销：key 被拒，换个 key' }),
+  })
+  let caught
+  try {
+    for await (const _ of adapter.stream({ model: 'openai/gpt-oss-120b', messages: [{ role: 'user', content: 'hi' }] })) { void _ }
+  } catch (error) { caught = error }
+  assert.equal(caught?.code, 'MISSING_CREDENTIAL')
+  assert.ok(String(caught.message).includes('key'), '错误里没说 key 有问题')
+})
+
+await checkAsync('闸门：放行的渠道照常发出请求', async () => {
+  let called = 0
+  const adapter = makeAdapter({
+    fetchImpl: async () => { called += 1; throw Object.assign(new Error('boom'), { name: 'TypeError' }) },
+    beforeRequest: () => ({ available: true, state: 'ok', reason: 'ok' }),
+  })
+  try {
+    for await (const _ of adapter.stream({ model: 'openai/gpt-oss-120b', messages: [{ role: 'user', content: 'hi' }] })) { void _ }
+  } catch { /* 传输失败是预期 */ }
+  // ⚠️ 两条调用：先 GET /models（目录），再 POST /chat/completions。
+  // 断言 `1` 会漏掉「目录那次」，而目录请求**也要**受闸门管 —— 这里数的是总次数。
+  assert.equal(called, 2, '放行时请求次数不对（应为目录 + 对话各一次）：' + called)
+})
+
+await checkAsync('闸门：闸门自己抛错时不影响请求（健康是增强不是依赖）', async () => {
+  let called = 0
+  const adapter = makeAdapter({
+    fetchImpl: async () => { called += 1; throw Object.assign(new Error('boom'), { name: 'TypeError' }) },
+    beforeRequest: () => { throw new Error('账本文件坏了') },
+  })
+  try {
+    for await (const _ of adapter.stream({ model: 'openai/gpt-oss-120b', messages: [{ role: 'user', content: 'hi' }] })) { void _ }
+  } catch { /* 预期 */ }
+  assert.equal(called, 2, '闸门抛错把请求一起挡住了：' + called)
+})
+
+await checkAsync('回执：上游 401 时会通知一次失败（kind=credential）', async () => {
+  const seen = []
+  const adapter = makeAdapter({
+    fetchImpl: stubFetch(401, '{"error":{"message":"Invalid API key"}}'),
+    onOutcome: (event) => seen.push(event),
+  })
+  try {
+    for await (const _ of adapter.stream({ model: 'openai/gpt-oss-120b', messages: [{ role: 'user', content: 'hi' }] })) { void _ }
+  } catch { /* 预期 */ }
+  assert.equal(seen.length, 1, '回执次数不对：' + seen.length)
+  assert.equal(seen[0].ok, false)
+  assert.equal(seen[0].kind, FAILURE_KINDS.CREDENTIAL)
+  assert.equal(seen[0].status, 401)
+})
+
+await checkAsync('回执：回执回调自己抛错不会把失败请求变成另一种错', async () => {
+  const adapter = makeAdapter({
+    fetchImpl: stubFetch(401, '{"error":{"message":"x"}}'),
+    onOutcome: () => { throw new Error('账本写炸了') },
+  })
+  let caught
+  try {
+    for await (const _ of adapter.stream({ model: 'openai/gpt-oss-120b', messages: [{ role: 'user', content: 'hi' }] })) { void _ }
+  } catch (error) { caught = error }
+  // 401 的分类码是 INVALID_CREDENTIAL（见 classifyUpstreamFailure）：
+  // 这里要断言的是「回执抛错没有改变原来那个码」，具体码值由分类层负责。
+  assert.equal(caught?.code, 'INVALID_CREDENTIAL', '原始失败码被回执的异常替换了：' + caught?.code)
+})
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：')

@@ -21,6 +21,7 @@
         "claim": false
       },
       "unknown": true,
+      "openCatalog": true,
       "note": "免费型号随时上下架，静态表只是兜底（运行时以 /models 实时结果为准）；模型 id 里那个 \":free\" 后缀是价格档位，忘掉它就会按付费模型计费。",
       "freeTier": "id 带 \":free\" 后缀的模型计费为 0（实测 pricing.prompt/completion = \"0\"）；每日次数按账户余额档限制，余额 ≥10 美元时额度更高",
       "docsURL": "https://openrouter.ai/docs/api-reference/overview",
@@ -249,10 +250,11 @@
       ],
       "extra": {
         "region": "global",
-        "evidence": "官方 openai 兼容页原文：baseURL = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai/v1`",
+        "evidence": "官方 openai 兼容页原文：baseURL = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai/v1`；2026-10-26 实测该路径的 /models 两轮均 405（补测假账号 ID 仍 405；/ai/models 与 /ai/models/search 返 400 Missing X-Auth-Key，说明这两个端点不接受匿名 GET）——故本渠道**不声明**可实时列目录",
         "placeholders": [
           "{ACCOUNT_ID}"
         ],
+        "supportsModelList": false,
         "unknownFields": [
           "freeTier"
         ]
@@ -377,6 +379,7 @@
         "claim": false
       },
       "unknown": true,
+      "openCatalog": true,
       "note": "⚠️ 它的 /models **不用 key 就能读**（实测 200），所以「目录能拉出来」不等于「能调用」——真正能不能调由 chat/completions 的鉴权决定，别被目录骗了。",
       "freeTier": "社区版按模型给免费调用额度（绑阿里云账号后额度更高，具体次数见控制台；此处数值未确证）",
       "docsURL": "https://www.modelscope.cn/docs/model-service/API-Inference/intro",
@@ -814,6 +817,7 @@
         "claim": false
       },
       "unknown": true,
+      "openCatalog": true,
       "note": "⚠️ 它的 /models **不用 key 就能读**（实测 200，80+ 条），所以目录很全但能调的只是其中一部分：页面上要按「能调通」而不是「列出来」计数。",
       "freeTier": "注册送固定额度（官网口径为 1000 credits，约等于该数量的调用次数），用完需申请或付费",
       "docsURL": "https://docs.nvidia.com/nim/",
@@ -915,6 +919,7 @@
         "claim": false
       },
       "unknown": true,
+      "openCatalog": true,
       "note": "⚠️ /models **不用 key 也能读**（实测 200）；免费档限速偏紧，高并发会连续 429。",
       "freeTier": "免费开发者档：按模型给每日请求数与 token 上限，不需绑卡",
       "docsURL": "https://docs.sambanova.ai/cloud/docs/get-started/overview",
@@ -978,6 +983,7 @@
         "claim": false
       },
       "unknown": true,
+      "openCatalog": true,
       "note": "⚠️ /models **不要 key 也能读**（实测 200，213 条）：所以\"探测通过\"只证明地址活着，不证明你有额度。模型 id 里混着大量社区微调（Jev / TEE 后缀），挑主流的用。",
       "freeTier": "有免费体验额度（按模型/账号档给，数值随平台活动变）；用完后按量计费。国内直连，不需要代理。",
       "docsURL": "https://ai.gitee.com/docs/openapi/v1",
@@ -1094,6 +1100,7 @@
         "claim": false
       },
       "unknown": true,
+      "openCatalog": true,
       "note": "⚠️ /models **不要 key 也能读**（实测 200，131 条），所以探测通过只说明地址活着。它是**转发层**：同一个模型 id 底下挂着多家上游（novita / cerebras / deepinfra / baseten…），调速与可用性由它选，你的 key 只是 HF 的 token。",
       "freeTier": "免费账号每月有一笔额度（按 provider 转发，用完转 PRO 或按量）。数值随账号档变化，本插件不写死。",
       "docsURL": "https://huggingface.co/docs/inference-providers/index",
@@ -1172,6 +1179,7 @@
         "claim": false
       },
       "unknown": true,
+      "openCatalog": true,
       "note": "卖点是「TEE 机密推理」——模型 id 带 -TEE 后缀表示跑在可信执行环境里，换来的是**模型清单偏少**（实测只有 16 条）与偶发排队。",
       "freeTier": "注册赠一笔试用额度，用尽转按量（它自己也卖 TAO 计价）。**不是无限免费**。",
       "docsURL": "https://docs.chutes.ai/",
@@ -1243,6 +1251,7 @@
         "claim": false
       },
       "unknown": true,
+      "openCatalog": true,
       "note": "目录里混着 -p 后缀的型号（推测是 premium/峰值档），挑不带后缀的先试。⚠️ 它的 /models 路径是 /v3/openai/models（不是 /v3/models）。",
       "freeTier": "新号赠小额试用额度，之后按 token 计费。",
       "docsURL": "https://novita.ai/docs/api-reference/introduction",
@@ -1314,6 +1323,7 @@
         "claim": false
       },
       "unknown": true,
+      "openCatalog": true,
       "note": "⚠️ /models **不要 key 也能读**（实测 200，175 条）且**不带上下文/模态元数据** —— 所以下面的 contextWindow 只能写 0（未知），页面据此显示\"未知窗口\"而不是编一个数。目录里混了图片/视频模型（veo / seedream / sdxl），选模型时看 id 前缀。",
       "freeTier": "按 token 计费；偶有标价 0 的开源模型可白用。**不是免费层渠道**，列它是因为型号极全。",
       "docsURL": "https://deepinfra.com/docs/openai_api",

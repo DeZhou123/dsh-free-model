@@ -161,6 +161,15 @@ export function normalizeChannelRecord(raw, origin, options = {}) {
     ...(raw.native === true ? { native: true } : {}),
     // `startable`：页面上能不能出现「启动服务」按钮。只有本插件真的能拉起进程时才为 true。
     ...(raw.startable === true ? { startable: true } : {}),
+    // `openCatalog`：这条渠道的 /models **不要凭据也能读**。
+    //
+    // ## 为什么这是一个正式字段，而不是写在 note 里的一句话
+    //
+    // 判据是实测来的（2026-10-26 两轮探测：9 条渠道 200 且不带凭据），而它决定
+    // 一件很容易被误读的事：**「探测通过」只证明地址活着，不证明你有额度**。
+    // 写在 note 里只能靠人读到；做成字段，页面才能统一挂一句"目录免 key 可读，
+    // 通过≠有额度"，新人也不必逐条去猜。
+    ...(raw.openCatalog === true ? { openCatalog: true } : {}),
     // 探针**只留给服务型车道**：它是唯一会去访问这个 URL 的地方（见 `./service.js` 的
     // `probeServiceLane`），别的类型带上它只是多一条没人用的攻击面描述。
     ...(kind === 'service' ? normalizeProbe(raw.probe) : {}),
@@ -190,7 +199,7 @@ export function normalizeChannelRecord(raw, origin, options = {}) {
 }
 
 /** 规范字段之外，仍属于「本模块认识但不下发」的名字（避免重复进 extra）。 */
-const RESERVED_FIELDS = new Set(['kind', 'baseURL', 'endpoint', 'capability', 'probe', 'native', 'startable'])
+const RESERVED_FIELDS = new Set(['kind', 'baseURL', 'endpoint', 'capability', 'probe', 'native', 'startable', 'openCatalog'])
 
 /**
  * 按 id 叠加多层目录。
