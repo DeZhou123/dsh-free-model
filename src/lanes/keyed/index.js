@@ -72,6 +72,12 @@ export async function descriptors(deps = {}, filter = {}) {
     note: lane.note,
     evidence: lane.evidence,
     models: staticModels(lane).map((row) => ({ ...row })),
+    // ⚠️ 下面这几个字段必须**显式带过去**（0.6.0 修的）：`descriptors` 是白名单式的映射，
+    // 不写在这里的字段到不了注册表，于是页面上「查额度」按钮不出现、免 key 提示也不出现。
+    // 这一条是被 host-keyed.mjs 的真实装配断言抓出来的（离线套件用的是自己造的记录，看不出来）。
+    ...(lane.balance !== undefined ? { balance: lane.balance } : {}),
+    ...(lane.openCatalog === true ? { openCatalog: true } : {}),
+    ...(lane.serialRateLimit === true ? { serialRateLimit: true } : {}),
     unknown: lane.unknown === true,
     unknownFields: Array.isArray(lane.unknownFields) ? [...lane.unknownFields] : [],
     retired: state.retired === true,

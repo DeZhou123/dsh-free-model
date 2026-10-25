@@ -203,6 +203,78 @@ try {
       JSON.stringify(marker).slice(0, 160))
   }
 
+
+  // ── 0.6.0 新增的四个动作：在**真实装配**下走一遍 HTTP 面 ──────────────────
+  //
+  // 离线套件用的是替身 manager；这里用的是 apply() 真装出来的那一个 ——
+  // 「接线错了但单测全绿」正是这一类测试要抓的东西。
+  const handler = routes.find((route) => route.path === '/api/free-model')?.handler
+  check('HTTP 面拿到了 handler', typeof handler === 'function')
+
+  /** 最小请求/响应替身（与 test/routes-channels.mjs 同一套形状）。 */
+  function makeRes() {
+    return {
+      status: 0,
+      body: '',
+      writeHead(status) { this.status = status },
+      end(body) { this.body = body ?? '' },
+      json() { return this.body === '' ? undefined : JSON.parse(this.body) },
+    }
+  }
+  async function callApi(method, url, body) {
+    const res = makeRes()
+    const req = {
+      method,
+      url,
+      headers: { host: '127.0.0.1:43120' },
+      async *[Symbol.asyncIterator]() {
+        if (body !== undefined) yield Buffer.from(JSON.stringify(body), 'utf8')
+      },
+    }
+    await handler(req, res)
+    return res
+  }
+
+  if (typeof handler === 'function') {
+    const health = await callApi('GET', '/api/free-model/health')
+    check('/health 在真实装配下可用且回 wired:true', health.status === 200 && health.json().wired === true,
+      'status=' + health.status + ' body=' + health.body.slice(0, 120))
+    check('/health 的形态是 { generatedAt, lanes }',
+      typeof health.json().generatedAt === 'number' && typeof health.json().lanes === 'object')
+
+    // 试调：没配 key 的渠道要明确说 no-key，而不是编一个失败。
+    const tryNoKey = await callApi('POST', '/api/free-model/key/try', { lane: 'openrouter-free' })
+    check('未配 key 时 /key/try 回 no-key（不是「渠道坏了」）',
+      tryNoKey.status === 200 && tryNoKey.json().kind === 'no-key',
+      'status=' + tryNoKey.status + ' kind=' + tryNoKey.json().kind)
+
+    // 余额：没有声明余额端点的渠道要明确说 missing-config。
+    const balance = await callApi('POST', '/api/free-model/key/balance', { lane: 'groq' })
+    check('没有余额端点的渠道 /key/balance 回 missing-config',
+      balance.status === 200 && balance.json().kind === 'missing-config',
+      'status=' + balance.status + ' kind=' + balance.json().kind)
+    check('声明了余额端点的渠道在 /channels 里带 hasBalance',
+      (await callApi('GET', '/api/free-model/channels')).json().channels
+        .filter((row) => row.id === 'openrouter-free' || row.id === 'moonshot')
+        .every((row) => row.hasBalance === true))
+
+    // 渠道开关：关掉 → /channels 的 disabledLanes 里出现它；再打开 → 消失。
+    const off = await callApi('POST', '/api/free-model/channels/toggle', { lane: 'openrouter-free', enabled: false })
+    check('/channels/toggle 关掉一条渠道返回 ok', off.status === 200 && off.json().enabled === false,
+      'status=' + off.status + ' body=' + off.body.slice(0, 120))
+    const withOff = (await callApi('GET', '/api/free-model/channels')).json()
+    check('关掉的渠道出现在 disabledLanes 里',
+      Array.isArray(withOff.disabledLanes) && withOff.disabledLanes.includes('openrouter-free'),
+      JSON.stringify(withOff.disabledLanes))
+    const on = await callApi('POST', '/api/free-model/channels/toggle', { lane: 'openrouter-free', enabled: true })
+    check('重新打开后 disabledLanes 里不再有它',
+      on.status === 200 && !((await callApi('GET', '/api/free-model/channels')).json().disabledLanes ?? []).includes('openrouter-free'))
+
+    // 缺参数要说得出原因（400），而不是静默成功。
+    const badToggle = await callApi('POST', '/api/free-model/channels/toggle', { lane: 'groq' })
+    check('/channels/toggle 缺 enabled → 400', badToggle.status === 400, 'status=' + badToggle.status)
+  }
+
   console.log(`\n通过 ${passed} 项`)
   if (process.exitCode === undefined) console.log('全部通过')
 } finally {
