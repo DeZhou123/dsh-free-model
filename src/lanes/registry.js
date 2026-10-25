@@ -4,14 +4,14 @@
  * ## 为什么要它
  *
  * 本插件此前长成两截：账号车道在 `index.js` 里手写一份清单，页面在 `client.js` 里
- * 再按 id 猜一遍每条车道的能力。渠道一多（13 条账号 + 服务型 + 自带 key），
+ * 再按 id 猜一遍每条车道的能力。渠道一多（账号两条 + 服务型 + 自带 key），
  * 这种「两处各猜一次」的做法必然分叉 —— 而分叉的表现是**页面说能用、点下去报错**，
  * 最难查也最伤信任。
  *
  * 所以这里把三类渠道收敛成**一种记录形状**，由本模块统一产出：
  *
  * ```
- * account  账号型：buddy / workbuddy（本插件自己挂）+ 11 条（宿主 channel-pack 提供）
+ * account  账号型：buddy / workbuddy（本插件自己挂载 auth + 适配器）
  * service  服务型：本机的免费入口（opencode / FreeLLMAPI 网关 / Ollama）
  * keyed    自带 key：注册即送额度的 OpenAI 兼容端点（有 key 才挂路由）
  * ```
@@ -25,12 +25,12 @@
  * 随包记录 = shipped 层；远程 JSON = remote 层；用户本地文件 = local 层。
  * 三层同形状、按 id 覆盖，规则与理由见 `./catalog.js`。
  *
- * ## 一条刻意的分工：**不重复挂载**宿主已有的车道
+ * ## 一条刻意的分工：账号车道只由本插件挂一次
  *
- * 11 条 OFM 车道的 auth / 适配器 / 路由全在宿主 `channel-pack` 里。本插件再挂一遍会撞
- * 两件硬事：① cordis 的 Service 同名注册直接抛（把整个 apply 打死）；
- * ② 两份 auth 实例并发消费同一个 refresh_token（表现为「刚登录却一直认证失败」）。
- * 所以它们的 `backend` 是 `ofm`：本插件只做**页面 + 管理面**，操作转发给宿主 RPC。
+ * 每条账号车道的 auth / 适配器 / 路由都只挂一次：cordis 的 Service 同名注册会直接抛
+ * （把整个 apply 打死），两份 auth 实例并发消费同一个 refresh_token 又会表现为
+ * 「刚登录却一直认证失败」。所以注册表里的账号记录一律 `backend: 'native'`：
+ * 页面与 HTTP 面共用同一套实现，不存在第二份后端。
  *
  * @module src/lanes/registry
  */
@@ -38,11 +38,8 @@
 import { BUDDY_PRODUCTS } from '../channels.js'
 import { SERVICE_LANES } from './service.js'
 import { catalogFingerprint, mergeCatalogs, normalizeChannelRecord } from './catalog.js'
-import { OFM_LANES, OFM_RPC_ENDPOINT, OFM_RPC_PATH } from '../lanes.js'
 
-export { OFM_RPC_ENDPOINT, OFM_RPC_PATH }
-
-/** 本插件自己挂载的账号车道 id（其余账号车道在宿主侧）。 */
+/** 本插件自己挂载的账号车道 id。 */
 export const NATIVE_ACCOUNT_IDS = Object.freeze(['buddy', 'workbuddy'])
 
 /**
@@ -82,23 +79,6 @@ export function nativeAccountRecords() {
       ...(model.maxOutputTokens !== undefined ? { maxTokens: model.maxOutputTokens } : {}),
       ...(model.supportsImages !== undefined ? { vision: model.supportsImages } : {}),
     })),
-  })))
-}
-
-/** 宿主 channel-pack 提供的 11 条账号车道 → 目录记录（原样搬运元数据）。 */
-export function ofmAccountRecords() {
-  return normalizeAll(OFM_LANES.map((lane) => ({
-    id: lane.id,
-    displayName: lane.displayName,
-    kind: 'account',
-    backend: 'ofm',
-    endpoint: lane.endpoint,
-    category: hostCategoryOf(lane.id),
-    credits: lane.credits,
-    login: lane.login,
-    ...(lane.smsFallback === true ? { smsFallback: true } : {}),
-    ...(lane.note !== undefined ? { note: lane.note } : {}),
-    models: [],
   })))
 }
 
@@ -142,7 +122,7 @@ function normalizeAll(records) {
  * }}
  */
 export function buildRegistry(layers = {}) {
-  const shipped = [...nativeAccountRecords(), ...ofmAccountRecords(), ...serviceRecords()]
+  const shipped = [...nativeAccountRecords(), ...serviceRecords()]
   const merged = mergeCatalogs([
     { layer: 'shipped', channels: shipped },
     { layer: 'remote', channels: layers.remote ?? [] },
@@ -190,7 +170,7 @@ export function channelById(channels, id) {
  *
  * ## 为什么就绪状态要在这里算，而不是页面算
  *
- * 「能不能用」这件事要问**运行时**（本插件的路由挂上了没、宿主 channel-pack 在不在、
+ * 「能不能用」这件事要问**运行时**（本插件的路由挂上了没、
  * 本地服务探针通不通、key 有没有）。这些信息页面都拿不到，硬让页面猜的结果是
  * 「所有渠道都显示正常，点下去一半报错」。
  *
@@ -203,7 +183,6 @@ export function channelById(channels, id) {
  * @param {object[]} channels
  * @param {{
  *   nativeMounted?: Set<string> | string[],
- *   ofmReady?: boolean,
  *   serviceProbes?: Record<string, { state: string, reason: string, models?: string[] }>,
  *   keyedReady?: Record<string, { ready: boolean, reason?: string }>,
  * }} runtime
@@ -244,11 +223,6 @@ export function projectRegistryView(channels, runtime = {}) {
 
 function readinessOf(channel, runtime, mounted) {
   if (channel.kind === 'account') {
-    if (channel.backend === 'ofm') {
-      return runtime.ofmReady === true
-        ? { state: 'ready', reason: '由宿主 channel-pack 提供，页面用它的 RPC 操作' }
-        : { state: 'unavailable', reason: '宿主 channel-pack 未就绪（没装 dsh-our-free-model 或它没跑）' }
-    }
     if (!mounted.has(channel.id)) {
       return { state: 'unavailable', reason: `本插件的 ${channel.displayName} 通道未挂载（见宿主日志）` }
     }
@@ -271,22 +245,4 @@ function readinessOf(channel, runtime, mounted) {
     state: 'needs-action',
     reason: ready.reason ?? `缺凭据 ${channel.apiKeyEnv ?? '?'}：去 ${channel.signupURL ?? '上游控制台'} 拿 key 后填进 DSH 凭据`,
   }
-}
-
-/** 宿主 channel-pack 的导航分组（页面按这个排序，与 OFM 面板同序）。 */
-function hostCategoryOf(id) {
-  const table = {
-    codearts: '华为',
-    lobsterai: '有道',
-    qoder: '阿里',
-    qodercn: '阿里',
-    trae: '字节',
-    cline: 'Cline',
-    loomy: '讯飞',
-    raccoon: '商汤',
-    minimax: 'MiniMax',
-    gemini: 'Google',
-    zcode: '智谱',
-  }
-  return table[id] ?? '其它'
 }

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * dsh-free-model —— 免费模型总台。
  *
  * ## 一句话
@@ -11,18 +11,18 @@
  * | WorkBuddy（腾讯国际版） | `workbuddy/*` | 完整（含工具、看图） | 账号 |
  * | OpenCode 免费层 | `opencode/*` | **纯文本**（无工具） | 本地 `opencode serve` |
  *
- * ## 与前身 dsh-free-model 的关系
+ * ## 与前身的关系
  *
- * 前两条车道整套从那里搬来（`src/core/` 逐行保留原注释），但**拆掉了对 OFM 的
+ * 前两条车道整套从那里搬来（`src/core/` 逐行保留原注释），但**拆掉了对其它插件的
  * 隐含依赖**：
  *
- * - 账号池：有 OFM 时用它的 `accountPool`（同一份账号、同一份限流标记），
+ * - 账号池：宿主若提供了 `accountPool`，就用它（同一份账号、同一份限流标记），
  *   没有时退化成 `LocalPool`，读写**同一个** `$DSH_HOME/channel-pack/state.json`；
- * - 凭据：走宿主 `credentials` 服务（DSH 自带），与 OFM 无关；
- * - 账本：OFM 的 `token-ledger` 是它包内的内部模块，硬 import 会在版本变动时
+ * - 凭据：走宿主 `credentials` 服务（DSH 自带）；
+ * - 账本：外部账本模块是别人包内的内部模块，硬 import 会在版本变动时
  *   把整个插件打死。这里**不接**，记账退化为 no-op（推理不受影响）。
  *
- * 也就是说：**只装本插件、不装 OFM，三条车道全部可用。**
+ * 也就是说：**本插件可以单独装，三条车道全部可用。**
  *
  * ## 第三条车道为什么是「纯文本」
  *
@@ -35,14 +35,12 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { mountBuddyChannel, BUDDY_PRODUCTS } from './src/channels.js'
-import { OFM_LANES, OFM_RPC_PATH } from './src/lanes.js'
 import {
   buildRegistry,
   nativeAccountRecords,
-  ofmAccountRecords,
   projectRegistryView,
 } from './src/lanes/registry.js'
 import { catalogCacheFile, fetchRemoteCatalog } from './src/lanes/remote.js'
@@ -53,6 +51,7 @@ import { createCreditsService } from './src/credits-service.js'
 import { createAutoCheckin, createAutoCheckinStore } from './src/auto-checkin.js'
 import { livePool } from './src/live-pool.js'
 import { createRoutes } from './src/routes.js'
+import { createKeyedManager } from './src/lanes/keyed/manage.js'
 import { connectionAdmissionView } from './src/trust.js'
 import { registerAdapterIdempotent } from './src/core/register.js'
 import { OpenCodeAdapter, OPENCODE_ROUTE } from './src/opencode/adapter.js'
@@ -116,6 +115,8 @@ export function apply(ctx, config = {}) {
   let localChannels = readLocalCatalog(localCatalogFile, logger)
   let keyedRecords = []
   let keyedReady = Object.freeze({})
+  /** laneId → 凭据面状态（已配置 / 来源 / 能否写 / 脱敏值），页面输入框旁那一行用它。 */
+  let keyedKeyStates = Object.freeze({})
   /** 目录层现状（页面顶部那条「渠道目录 v? · 指纹 ?」用的就是它）。 */
   let catalogMeta = {
     url: catalogUrl ?? undefined,
@@ -130,22 +131,76 @@ export function apply(ctx, config = {}) {
   /** 服务车道探针缓存：成功 30 秒内不重探，失败按 SERVICE_PROBE_FAILURE_TTL_MS 退避。 */
   const serviceProbes = { at: 0, failedAt: 0, byId: {} }
 
+  /**
+   * 读一条凭据的值。
+   *
+   * ## ⚠️ 不要给宿主补 ref: 前缀（2026-10-25 本机实测纠正）
+   *
+   * 本函数原先把名字拼成 ref:NAME 再交给 credentials.resolve()，注释里写着
+   * 「宿主可能两种形态都接受」。**实测不成立**：
+   *
+   *   resolve('DEEPSEEK_API_KEY')      → { value: 'sk-e8b…', source: 'file' }
+   *   resolve('ref:DEEPSEEK_API_KEY')  → undefined
+   *
+   * 宿主的引用文法就是「环境变量名」本身（/^[A-Za-z_][A-Za-z0-9_]*$/，见
+   * @deepseek-ai/dsh-credentials 的 REF_PATTERN）；ref: 是**本插件目录里**用来表示
+   * 「这是凭据条目引用」的记号，宿主不认识它。带上去的后果不是报错，而是
+   * **静默 undefined** —— 表现为「明明在 .credentials.yaml 里配了 key，页面却说未配置」，
+   * 日志里一个字都没有。这是最难查的一种。
+   *
+   * 所以：调用方可能带 ref:（目录里两种写法都有），这里**剥掉**，然后传裸名。
+   */
   const readCredential = async (rawName) => {
     const credentials = readServiceOrUndefined(ctx, 'credentials')
     if (credentials?.resolve === undefined) return undefined
-    // ⚠️ 抹掉调用方可能已经带上的 `ref:` 前缀：本函数自己会补一个。
-    // 不抹的话 `ref:ref:NAME` 解析不出来，症状是「明明配了 key 却说缺凭据」——
-    // 而 `src/lanes/keyed/**` 的契约里两种形态都可能传进来（见其 ready.js 的三种形态说明）。
-    const name = String(rawName ?? '').replace(/^ref:/i, '')
+    // 目录层用 ref:NAME 表示「去凭据里找这一条」，宿主只认 NAME。
+    const name = String(rawName ?? '').replace(/^ref:/i, '').trim()
     if (name === '') return undefined
     try {
-      return decodeCredentialValue(await credentials.resolve(`ref:${name}`))
+      return decodeCredentialValue(await credentials.resolve(name))
     } catch {
       return undefined
     }
   }
 
-  /** 组装注册表（纯函数，随取随算：17 条记录，代价可以忽略）。 */
+  /**
+   * 自带 key 车道的运行时管理器（见 `src/lanes/keyed/manage.js`）。
+   *
+   * ⚠️ 它必须是**单例**且在 `ctx.inject` 回调**之前**就存在：
+   * HTTP 面（`/api/free-model/key` 等）在用户点按钮时才用到它，而那时
+   * inject 回调可能还没跑（宿主服务晚发布）。晚绑定一份空实现比抛错好 ——
+   * 页面会看到「未就绪」，而不是 500。
+   */
+  let keyedManager = undefined
+
+  /** 写一条凭据（宿主 credentials 服务；缺席时返回 false，由调用方报「未接线」）。 */
+  /** 与 readCredential 同一条规矩：剥掉目录层的 ref: 记号，宿主只认裸名。 */
+  const bareRef = (rawName) => String(rawName ?? '').replace(/^ref:/i, '').trim()
+
+  const writeCredential = async (rawName, value) => {
+    const credentials = readServiceOrUndefined(ctx, 'credentials')
+    if (typeof credentials?.set !== 'function') throw new Error('宿主 credentials 服务未提供 set')
+    const name = bareRef(rawName)
+    if (name === '') throw new Error('凭据名为空')
+    await credentials.set(name, value)
+  }
+  const unsetCredential = async (rawName) => {
+    const credentials = readServiceOrUndefined(ctx, 'credentials')
+    if (typeof credentials?.unset !== 'function') throw new Error('宿主 credentials 服务未提供 unset')
+    const name = bareRef(rawName)
+    if (name === '') return
+    await credentials.unset(name)
+  }
+  /** 只读描述（绝不返回凭据值）：页面上「已配置 / 来自环境变量 / 能不能改」靠它。 */
+  const describeCredential = async (rawName) => {
+    const credentials = readServiceOrUndefined(ctx, 'credentials')
+    if (typeof credentials?.describe !== 'function') return undefined
+    const name = bareRef(rawName)
+    if (name === '') return undefined
+    return credentials.describe(name)
+  }
+
+  /** 组装注册表（纯函数，随取随算：几十条记录，代价可以忽略）。 */
   const registrySnapshot = () => buildRegistry({
     keyed: keyedRecords,
     remote: remoteChannels,
@@ -157,7 +212,6 @@ export function apply(ctx, config = {}) {
     const registry = registrySnapshot()
     const rows = projectRegistryView(registry.channels, {
       nativeMounted: channels,
-      ofmReady: readServiceOrUndefined(ctx, 'accountPool') !== undefined,
       serviceProbes: serviceProbes.byId,
       keyedReady,
     })
@@ -168,6 +222,9 @@ export function apply(ctx, config = {}) {
       rejected: registry.rejected,
       layers: registry.byLayer,
       catalog: catalogStatus(),
+      // 自带 key 每条车道的**凭据面**状态（是否有 key、从哪来、能不能改）。
+      // 与 `channel.state` 分工：那个说「能不能用」，这个说「key 填了没」。
+      keyStates: keyedKeyStates,
     }
   }
 
@@ -304,7 +361,7 @@ export function apply(ctx, config = {}) {
   //    任何一片失败都只留一行 warn（这是刻意的，见 `mountKeyedLanes` 的注释），看不到 warn 就没法判断。
   //
   // 所以把结果落盘为 `$DSH_HOME/free-model/apply-ok.json`：版本、时间、**已经挂上的车道 id**、
-  // OFM 后端在不在、目录层计数。**不含任何凭据**（只记「挂了哪几条」，不记 key）。
+  // 目录层计数。**不含任何凭据**（只记「挂了哪几条」，不记 key）。
   // 它也是宿主级验证的断言对象：`_supervisor/plugin-boot-check.mjs` 就看这个文件在不在、版本对不对。
   const applyMarkerFile = join(dshHome, 'free-model', 'apply-ok.json')
   /**
@@ -326,8 +383,6 @@ export function apply(ctx, config = {}) {
         appliedAt: new Date().toISOString(),
         // 已经挂上适配器的路由（native 三条 + 已就绪的 keyed）——**这是「装上了」的硬证据**。
         mountedRoutes: [...mountedRoutes].sort(),
-        // OFM 在场意味着那 11 条宿主侧车道在页面上可操作（不是本插件挂的，但页面要显示）。
-        ofmBackend: readServiceOrUndefined(ctx, 'accountPool') !== undefined,
         channels: keyed.counts,
         catalogFingerprint: keyed.fingerprint,
         ...extra,
@@ -369,7 +424,7 @@ export function apply(ctx, config = {}) {
     ...(config.creditsFetcher !== undefined ? { fetcher: config.creditsFetcher } : {}),
   })
 
-  // ── 每日自动领积分：独立状态文件，不碰 OFM 那份 auto-checkin.json ──────────
+  // ── 每日自动领积分：独立状态文件，不碰别人的 auto-checkin.json ──────────────
   //
   // ⚠️ 领取动作走 credits.claim（与页面上的「一键领取」同一条路径）：
   // 两处各写一遍领取循环，迟早会在「哪些账号要跳过」上分叉。
@@ -398,7 +453,7 @@ export function apply(ctx, config = {}) {
     port: config.opencodePort,
     logger,
     // 失败状态落盘：宿主重启后页面仍能说清「上次为什么不通」。
-    // 内容只是失败原因文本，不放凭据，故与 channel-pack 同放在 dsh home 根下。
+    // 内容只是失败原因文本，不放凭据，故放在 dsh home 根下。
     stateFile: join(resolveDshHome(ctx), 'opencode-free-tier-state.json'),
   })
   ctx.effect(() => () => { void service.dispose() }, 'dsh-free-model: opencode service')
@@ -431,8 +486,8 @@ export function apply(ctx, config = {}) {
       if (opencodeFailureAt !== 0 && now - opencodeFailureAt < OPENCODE_FAILURE_TTL_MS) return opencodeModels ?? []
     }
     try {
-      // ⚠️ 不再写死 ['opencode','ofm']：目录来自 /config/providers，用户可能自己
-      // 往 opencode 里挂了别的 provider（例如另一个本地网关）。写死会让那些
+      // ⚠️ 不写死 provider 名单：目录来自 /config/providers，用户可能自己
+      // 往 opencode 里挂了别的 provider（例如本机网关）。写死会让那些
       // 明明能调的模型在 DSH 里看不见。
       const groups = await service.client().providers()
       opencodeModels = await service.client().listModels({
@@ -503,20 +558,45 @@ export function apply(ctx, config = {}) {
     //
     // ⚠️ **必须容错**：`src/lanes/keyed/**` 是一个独立演进的模块（也可能因为远程
     // 目录把某条渠道标坏而抛错）。它挂不上只该让那一类渠道显示「未就绪」，
-    // **绝不能让整个插件的 apply 失败** —— 那会把 13 条账号车道一起带走。
-    void mountKeyedLanes(scoped, {
+    // **绝不能让整个插件的 apply 失败** —— 那会把账号车道一起带走。
+    //
+    // ⚠️ 从 0.4.1 起改走 `createKeyedManager`（`src/lanes/keyed/manage.js`）：
+    // 一次性 `mountAll` 的旧路径在「页面上允许现在填 key」之后就不成立了 ——
+    // 填完 key 的那条车道启动时没就绪，就再也没机会挂上。管理器保留句柄，
+    // 于是保存 key / 清除 key / 探测三条动作都能落在**当前**运行态上。
+    keyedManager = createKeyedManager({
       logger,
-      pkgDir: PKG_DIR,
       readCredential,
-      onRecords: (records) => { keyedRecords = records },
-      onReady: (ready) => { keyedReady = Object.freeze(ready) },
-      onMounted: (route) => mountedRoutes.add(route),
+      writeCredential,
+      unsetCredential,
+      describeCredential,
+      register: (route, adapter) => {
+        registerAdapterIdempotent(
+          scoped.llm,
+          [route],
+          adapter,
+          (message) => logger?.warn?.(message),
+        )
+        mountedRoutes.add(route)
+      },
+      onUpdate: (snapshot) => {
+        keyedRecords = snapshot.records
+        keyedReady = snapshot.ready
+        keyedKeyStates = snapshot.keyStates
+      },
       ...(makeReadImage(scoped) !== undefined ? { readImage: makeReadImage(scoped) } : {}),
       ...(makeReadImageRequest(scoped) !== undefined ? { readImageRequest: makeReadImageRequest(scoped) } : {}),
-    }).then((summary) => {
+    })
+    void keyedManager.mountAllReady().then((summary) => {
       // keyed 挂完之后重写自证：这是**最后一份**记录，谁挂了、挂了几条一目了然。
       // （写在 `.then` 而不是模块内部，是因为模块只管挂载、不该知道自证文件的存在。）
-      writeApplyMarker({ phase: 'full', keyedMounted: summary?.mounted ?? [], keyedFailed: summary?.failed ?? [] })
+      writeApplyMarker({
+        phase: 'full',
+        keyedMounted: summary?.mounted ?? [],
+        // ⚠️ 这里只记 id：`failed` 本来是 `{id, reason}`，但 reason 里可能带 baseURL
+        // 与凭据名（不含值），落盘时只留 id 更安全，原因走日志。
+        keyedFailed: (summary?.failed ?? []).map((row) => row.id ?? String(row)),
+      })
     }).catch((error) => {
       logger?.warn?.(`dsh-free-model: 自带 key 车道装载失败（${error instanceof Error ? error.message : String(error)}）`)
     })
@@ -529,12 +609,6 @@ export function apply(ctx, config = {}) {
     channels: () => channels,
     pool: () => pool,
     products: ALL_LANES,
-    // 宿主 channel-pack 是否在场（决定 11 条 OFM 侧车道能不能操作）。
-    // 判据用 accountPool 的存在性：那正是 channel-pack 的 apply 末尾
-    // `ctx.provide('accountPool', pool)` 提供的服务，没有别的来源。
-    // 晚绑定：OFM 的 fiber 可能晚于本插件挂载。
-    ofmBackend: () => readServiceOrUndefined(ctx, 'accountPool') !== undefined,
-    ofmRpcPath: OFM_RPC_PATH,
     connection: () => connection,
     logger,
     version,
@@ -551,6 +625,15 @@ export function apply(ctx, config = {}) {
     catalog: { status: catalogStatus, refresh: refreshCatalog },
     update: { check: checkVersion },
     service: { probe: probeServices },
+    // ── 自带 key 的「填 key / 清 key / 测 key」（0.4.1 新增）──────────────────
+    //
+    // 全部走 thunk：管理器由 `ctx.inject` 回调创建，而 HTTP 面在 apply 阶段就注册好了。
+    // 用户真的点按钮时它必然已经存在（那时宿主服务早就发布了）；若还没建好，
+    // thunk 返回 undefined，路由层报「未就绪」而不是 500。
+    keyed: {
+      manager: () => keyedManager,
+      keyStates: () => keyedKeyStates,
+    },
   })
   ctx.inject(['webServer'], (scoped) => {
     scoped.effect(
@@ -595,7 +678,7 @@ const OPENCODE_LANE = Object.freeze({
 /**
  * 交给 `routes.js` 的车道清单。
  *
- * ⚠️ 它**只含账号型 + OpenCode**，与 0.3.x 的形状逐字一致 —— 这是刻意的：
+ * ⚠️ 它**只含账号型（两条）+ OpenCode**，与既有形状逐字一致 —— 这是刻意的：
  * `/summary` 的 `products` / `serviceLanes` 是既有契约（离线套件与页面都在用），
  * 三类渠道的**全景**另走 `/channels`（数据来自 `src/lanes/registry.js`，比这里更全：
  * 多出服务型 3 条与自带 key 车道，以及目录层来源与指纹）。
@@ -603,7 +686,6 @@ const OPENCODE_LANE = Object.freeze({
  */
 const ALL_LANES = Object.freeze([
   ...nativeAccountRecords(),
-  ...ofmAccountRecords(),
   OPENCODE_LANE,
 ])
 
@@ -633,91 +715,7 @@ function readLocalCatalog(file, logger) {
   }
 }
 
-/**
- * 装载「自带 key / 免 key」车道模块（`src/lanes/keyed/**`）。
- *
- * ## 为什么要这么小心（这是本插件最容易炸的一处）
- *
- * 这一类渠道是最容易变、也最容易写坏的：它们的 baseURL 来自公网、适配器是新写的。
- * 而 `mountBuddyChannel` / OpenCode 那两条车道已经证明了「一个车道挂载失败不能
- * 带走另一个」的规矩。这里同样：**模块缺失 → 这一类渠道为空；模块抛错 → 只记一条警告**。
- * 绝不让它的失败影响 13 条账号车道 —— 那些才是用户每天真的在用的东西。
- *
- * ## 与 `src/lanes/keyed/index.js` 的接线（这是那一侧定义的契约，不是猜的）
- *
- * | 调用 | 拿到什么 | 用在哪 |
- * |---|---|---|
- * | `descriptors({ readCredential })` | 每行含 id/displayName/baseURL/apiKeyEnv/models/ready/reason/mountable | ① 注册表的 keyed 层 ② 页面的就绪状态 |
- * | `mountAll({ readCredential, … })` | `{ mounted:[{lane,route,adapter,readiness}], failed:[{id,error}] }` | 挂适配器（单条失败不带走其余） |
- *
- * ⚠️ 这一层**不做注册决策**：注册一律走 `registerAdapterIdempotent`（`src/core/register.js`），
- * 那里已经处理过「宿主抢路由」与「fiber 重启」两件事，重复发明只会漏掉其中一件。
- *
- * @returns {Promise<{ records: number, mounted: string[], failed: string[] }>}
- */
-async function mountKeyedLanes(scoped, deps) {
-  const entry = join(deps.pkgDir, 'src', 'lanes', 'keyed', 'index.js')
-  if (!existsSync(entry)) return { records: 0, mounted: [], failed: [] }
 
-  const mod = await import(pathToFileURL(entry).href)
-  const callDeps = {
-    readCredential: deps.readCredential,
-    logger: deps.logger,
-    ...(deps.readImage !== undefined ? { readImage: deps.readImage } : {}),
-    ...(deps.readImageRequest !== undefined ? { readImageRequest: deps.readImageRequest } : {}),
-  }
-
-  // ① 描述符：即使一条都挂不上，页面也要能看到「有哪些渠道、各自为什么不能用」。
-  let rows = []
-  try {
-    rows = await mod.descriptors({ readCredential: deps.readCredential })
-  } catch (error) {
-    deps.logger?.warn?.(`dsh-free-model: keyed 描述符读取失败（${error instanceof Error ? error.message : String(error)}）`)
-  }
-  deps.onRecords?.(rows)
-  deps.onReady?.(Object.fromEntries(rows.map((row) => [row.id, {
-    ready: row.ready === true,
-    reason: row.reason,
-    ...(row.retired === true ? { retired: true } : {}),
-  }])))
-
-  // ② 挂就绪的车道（`mountAll` 内部只会拿 `mountable` 的行）。
-  let outcome = { mounted: [], failed: [] }
-  try {
-    outcome = await mod.mountAll(callDeps)
-  } catch (error) {
-    // 整个 mountAll 抛错（例如模块本身坏掉）也要降级，不能带走账号车道。
-    deps.logger?.warn?.(`dsh-free-model: keyed 车道装载整体失败（${error instanceof Error ? error.message : String(error)}）`)
-    return { records: rows.length, mounted: [], failed: ['<all>'] }
-  }
-
-  const mounted = []
-  for (const entryMounted of outcome.mounted ?? []) {
-    try {
-      registerAdapterIdempotent(
-        scoped.llm,
-        [entryMounted.route],
-        entryMounted.adapter,
-        (message) => deps.logger?.warn?.(message),
-      )
-      mounted.push(entryMounted.route)
-      deps.onMounted?.(entryMounted.route)
-    } catch (error) {
-      deps.logger?.warn?.(
-        `dsh-free-model: keyed 车道 ${entryMounted.route} 注册失败（${error instanceof Error ? error.message : String(error)}）`,
-      )
-    }
-  }
-  const failed = (outcome.failed ?? []).map((row) => row.id)
-  if (failed.length > 0) {
-    deps.logger?.info?.(`dsh-free-model: keyed 车道 ${failed.length} 条未挂载（未就绪/已下线）：${failed.join(', ')}`)
-  }
-  deps.logger?.info?.(
-    `dsh-free-model: 自带 key 车道 ${mounted.length}/${rows.length} 已挂载`
-    + (mounted.length > 0 ? `（${mounted.join(', ')}）` : '（都没有 key/未就绪，仅展示 + 指引去拿 key）'),
-  )
-  return { records: rows.length, mounted, failed }
-}
 
 /** 读宿主池（不建本地池）。 */
 function readLivePool(ctx) {
@@ -735,7 +733,7 @@ function readServiceOrUndefined(ctx, serviceName) {
 }
 
 /**
- * 图片读取桥接（与 OFM 的 `makeReadImage` 同一实现）。
+ * 图片读取桥接（与 `src/core/` 里的同一实现）。
  *
  * ⚠️ 附件服务在 apply 时**尚未提供**（浏览器半身后挂载），故这里每次请求时
  * 重新查 —— 一次读取会把「尚未提供」固化成永久缺失，图片支持静默消失。

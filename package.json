@@ -1,9 +1,9 @@
 {
   "name": "dsh-free-model",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "private": true,
-  "description": "Free-channel console for DSH: one settings section, three tabs. Account lanes (CodeBuddy/WorkBuddy natively mounted, 11 more via the host channel-pack), local service lanes (OpenCode free tier, FreeLLMAPI gateway, Ollama) with HTTP probes, and 21 bring-your-own-key / keyless channels (OpenRouter free, Groq, Cerebras, Google AI Studio, Cloudflare, Mistral, DashScope, ModelScope, Zhipu, Moonshot, Qianfan, Volcano, SiliconFlow, StepFun, Spark, Hunyuan, MiniMax, NVIDIA NIM, Together, SambaNova, Pollinations). Channel data is a three-layer catalog (shipped <- remote JSON <- local override) so new channels arrive without a release; a version check plus the dshmarket update API path covers plugin upgrades. Every channel carries a readiness state and an actionable reason instead of a button that always fails.",
+  "description": "Free-channel console for DSH: one settings section, three tabs. Account lanes (CodeBuddy / WorkBuddy, mounted by this plugin; the host accountPool is reused when present), local service lanes (OpenCode free tier, FreeLLMAPI gateway, Ollama) with HTTP probes, and 21 bring-your-own-key / keyless channels (OpenRouter free, Groq, Cerebras, Google AI Studio, Cloudflare, Mistral, DashScope, ModelScope, Zhipu, Moonshot, Qianfan, Volcano, SiliconFlow, StepFun, Spark, Hunyuan, MiniMax, NVIDIA NIM, Together, SambaNova, Pollinations). Own-key lanes can be filled in, tested and cleared right on the page (11-way probe classification) and a saved key mounts the lane immediately. Channel data is a three-layer catalog (shipped <- remote JSON <- local override) so new channels arrive without a release; a version check covers plugin upgrades. Every channel carries a readiness state and an actionable reason instead of a button that always fails.",
   "main": "./index.js",
   "exports": {
     ".": "./index.js",
@@ -24,12 +24,12 @@
   ],
   "scripts": {
     "check": "node scripts/check-syntax.mjs",
-    "test": "node --import ./test/hooks.mjs test/lanes-registry.mjs && node test/lanes-catalog-io.mjs && node test/lanes-update.mjs && node --import ./test/hooks.mjs test/routes-channels.mjs && node test/keyed/catalog-shape.mjs && node test/keyed/ready-state.mjs && node test/keyed/adapter-stream.mjs && node test/keyed/adapter-errors.mjs && node test/lanes.mjs && node --import ./test/hooks.mjs test/smoke.mjs && node test/render.mjs && node test/opencode-sse.mjs && node test/opencode-failure-state.mjs && node --import ./test/hooks.mjs test/opencode-classify.mjs && node --import ./test/hooks.mjs test/opencode-pure.mjs && node --import ./test/hooks.mjs test/opencode-error-wiring.mjs",
+    "test": "node --import ./test/hooks.mjs test/lanes-registry.mjs && node test/lanes-catalog-io.mjs && node test/lanes-update.mjs && node --import ./test/hooks.mjs test/routes-channels.mjs && node test/keyed/catalog-shape.mjs && node test/keyed/ready-state.mjs && node --import ./test/hooks.mjs test/keyed/keys-flow.mjs && node test/keyed/adapter-stream.mjs && node test/keyed/adapter-errors.mjs && node --import ./test/hooks.mjs test/smoke.mjs && node test/render.mjs && node test/opencode-sse.mjs && node test/opencode-failure-state.mjs && node --import ./test/hooks.mjs test/opencode-classify.mjs && node --import ./test/hooks.mjs test/opencode-pure.mjs && node --import ./test/hooks.mjs test/opencode-error-wiring.mjs",
     "test:e2e": "node --import ./test/hooks.mjs test/e2e-opencode.mjs",
     "test:affinity": "node --import ./test/hooks.mjs test/opencode-affinity.mjs",
     "test:host": "node test/host-check.mjs && node test/host-apply.mjs && node test/host-keyed.mjs",
     "test:service": "node test/service-start.mjs",
-    "test:lanes": "node --import ./test/hooks.mjs test/lanes-registry.mjs && node test/lanes-catalog-io.mjs && node test/lanes-update.mjs && node --import ./test/hooks.mjs test/routes-channels.mjs && node test/keyed/catalog-shape.mjs && node test/keyed/ready-state.mjs",
+    "test:lanes": "node --import ./test/hooks.mjs test/lanes-registry.mjs && node test/lanes-catalog-io.mjs && node test/lanes-update.mjs && node --import ./test/hooks.mjs test/routes-channels.mjs && node test/keyed/catalog-shape.mjs && node test/keyed/ready-state.mjs && node --import ./test/hooks.mjs test/keyed/keys-flow.mjs",
     "test:live": "node --import ./test/hooks.mjs test/keyed-live.mjs --live",
     "catalog": "node scripts/build-catalog.mjs",
     "catalog:check": "node scripts/build-catalog.mjs --check",
@@ -40,10 +40,7 @@
     "dsh",
     "dsh-plugin",
     "free-model",
-    "workbuddy",
-    "codebuddy",
-    "opencode",
-    "tencent"
+    "workbuddy"
   ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0"

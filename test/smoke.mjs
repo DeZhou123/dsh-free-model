@@ -366,28 +366,22 @@ await checkAsync('summary 报 route=registered 与池状态', async () => {
   const res = await callRoute(handler, 'GET', '/api/free-model/summary')
   assert.equal(res.status, 200)
   assert.equal(res.payload.pool, 'host')
-  // 13 条账号车道：2 条本插件自己挂（native）+ 11 条由 OFM 侧提供（见 src/lanes.js）。
-  assert.equal(res.payload.products.length, 13)
+  // 账号车道只剩本插件自己挂的两条：宿主侧那 11 条车道已拆成独立插件
+  // `dsh-ofm-lanes`，不再出现在这里的 products 里（它们有自己的一套 HTTP 面）。
+  assert.deepEqual(res.payload.products.map((product) => product.id).sort(), ['buddy', 'workbuddy'])
   const nativeLanes = res.payload.products.filter((product) => product.backend === 'native')
-  assert.deepEqual(nativeLanes.map((product) => product.id).sort(), ['buddy', 'workbuddy'])
-  for (const product of nativeLanes) assert.equal(product.route, 'registered')
-  // 夹具里 accountPool 由宿主提供 ⇒ OFM 后端就绪，那 11 条应报 route='ofm'
-  //（而不是 native 那种 'registered' —— 本插件确实没挂它们）。
-  assert.equal(res.payload.ofm.available, true)
-  const ofmLanes = res.payload.products.filter((product) => product.backend === 'ofm')
-  assert.equal(ofmLanes.length, 11)
-  for (const product of ofmLanes) {
-    assert.equal(product.route, 'ofm')
-    assert.equal(product.mounted, false, 'OFM 侧车道不该被本插件挂载')
+  assert.equal(nativeLanes.length, 2)
+  for (const product of nativeLanes) {
+    assert.equal(product.route, 'registered')
     // 登录形态与积分能力必须随车道发出（页面据此渲染按钮/表单）。
     assert.ok(product.login === 'browser' || product.login === 'localPage')
     assert.equal(typeof product.credits.balance, 'boolean')
     assert.equal(typeof product.credits.claim, 'boolean')
   }
-  // Gemini 免费线没有签到接口：能力位必须如实为 false 且带说明。
-  const gemini = ofmLanes.find((product) => product.id === 'gemini')
-  assert.equal(gemini.credits.claim, false)
-  assert.ok(typeof gemini.credits.claimNote === 'string' && gemini.credits.claimNote.length > 0)
+  // WorkBuddy 国际版没有签到接口：能力位必须如实为 false 且带说明。
+  const workbuddy = nativeLanes.find((product) => product.id === 'workbuddy')
+  assert.equal(workbuddy.credits.claim, false)
+  assert.ok(typeof workbuddy.credits.claimNote === 'string' && workbuddy.credits.claimNote.length > 0)
 })
 
 await checkAsync('accounts 列出两个 provider 的账号', async () => {
@@ -472,8 +466,8 @@ await checkAsync('池缺席时退化为本地实现并明确报 pool=local', asy
 await checkAsync('/models 列出两个 provider 的全量模型', async () => {
   const res = await callRoute(handler, 'GET', '/api/free-model/models')
   assert.equal(res.status, 200)
-  // native 两条有全量目录；OFM 侧 11 条在本插件的 /models 里是**空目录**
-  //（本插件没挂它们的适配器）—— 页面改走宿主 RPC 的 model.list，故这里断言空。
+  // native 两条有全量目录；已迁走的那 11 条车道压根不在本插件的 products 里，
+  // 故下面的断言只需覆盖 native 两条。
   const nativeModels = res.payload.products.filter((product) => product.backend === 'native')
   assert.equal(nativeModels.length, 2)
   for (const product of nativeModels) {
@@ -482,9 +476,9 @@ await checkAsync('/models 列出两个 provider 的全量模型', async () => {
     assert.equal(product.disabled, 0)
     assert.equal(product.closed, false)
   }
-  const ofmModels = res.payload.products.filter((product) => product.backend === 'ofm')
-  assert.equal(ofmModels.length, 11)
-  for (const product of ofmModels) assert.deepEqual(product.models, [])
+  // ⚠️ 原先这里断言「OFM 侧 11 条在本插件的 /models 里是空目录」。那 11 条已拆到
+  // `dsh-ofm-lanes`，本插件的 /models 里压根没有它们，故断言改成「一条 ofm 都不该有」。
+  assert.equal(res.payload.products.filter((product) => product.backend === 'ofm').length, 0)
 })
 
 await checkAsync('/models 带元数据（上下文 / 思考档位 / 图片）', async () => {
@@ -655,7 +649,8 @@ await checkAsync('/opencode/stop 与 /opencode/start 往返', async () => {
 
 await checkAsync('summary 把服务型车道单独列出、不混进账号型 products', async () => {
   const res = await callRoute(handler, 'GET', '/api/free-model/summary')
-  assert.equal(res.payload.products.length, 13, '账号型车道 13 条（2 native + 11 OFM 侧）')
+  // 账号型只剩本插件自己的两条（OFM 那 11 条在另一个插件）。
+  assert.deepEqual(res.payload.products.map((product) => product.id).sort(), ['buddy', 'workbuddy'])
   assert.equal(res.payload.serviceLanes.length, 1)
   assert.equal(res.payload.serviceLanes[0].id, 'opencode')
   assert.equal(res.payload.serviceLanes[0].capability, 'no-tools')
@@ -671,21 +666,19 @@ await checkAsync('服务型车道拒绝模型开关（不写进账号池）', as
 
 await checkAsync('/models 不返回服务型车道（形状不同）', async () => {
   const res = await callRoute(handler, 'GET', '/api/free-model/models')
-  assert.equal(res.payload.products.length, 13)
+  assert.equal(res.payload.products.length, 2, '账号型只剩 buddy / workbuddy')
   assert.ok(res.payload.products.every((product) => product.id !== 'opencode'))
 })
 
-// ── OFM 侧车道：本插件的 HTTP 面**不代理**它们 ─────────────────────────────
-await checkAsync('OFM 侧车道在本插件的 HTTP 面上一律 409（改走宿主 RPC）', async () => {
+// ── 未知 provider：不许静默成功 ──────────────────────────────────────────────
+await checkAsync('未知 provider 一律被拒（既不是本插件的车道，也不是别处转来的）', async () => {
+  // ⚠️ 原「OFM 侧车道在本插件的 HTTP 面上一律 409（backend-ofm）」那条断言随拆分下线：
+  // 那些车道现在是 `dsh-ofm-lanes` 的产品，本插件的 products 表里已经找不到它们，
+  // 于是请求落到「未知 provider」而不是「后端不归我」这两条不同的拒绝路径上。
+  // 这里只钉住仍然成立的那条：**未知 provider 不许静默成功，也不许顺手改账号池**。
   const models = await callRoute(handler, 'POST', '/api/free-model/models', { provider: 'qoder', action: 'reset' })
-  assert.equal(models.status, 409)
-  assert.equal(models.payload.code, 'backend-ofm')
-  const login = await callRoute(handler, 'POST', '/api/free-model/login', { provider: 'trae' })
-  assert.equal(login.status, 409)
-  const credits = await callRoute(handler, 'POST', '/api/free-model/credits', { provider: 'zcode' })
-  assert.equal(credits.status, 409)
-  // 关键：这些拒绝**不能**顺手改动账号池（409 是「走错了门」，不是「操作失败」）。
-  assert.equal(Object.keys(pool.listDisabledModels('qoder')).length, 0)
+  assert.ok(models.status === 400 || models.status === 409, '未知 provider 必须被拒，实际 ' + models.status)
+  assert.equal(Object.keys(pool.listDisabledModels('qoder')).length, 0, '被拒的请求不许改账号池')
 })
 
 // ── 积分：余额 / 一键领取 / 自动领取开关 ─────────────────────────────────

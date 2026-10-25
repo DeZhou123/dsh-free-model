@@ -161,13 +161,13 @@ const section = sections[0]
 
 const { ProductCard, ServiceCard, ConsolePage, AutoCheckinBar, AccountsPage, OpenCodePage,
   KeyedPage, KeyedCard, LocalPage, ServiceLaneCard, StatusBar, StatePill,
-  safeText, safeHref, stateTone } = module.__test
+  safeText, safeHref, stateTone, probeText, probeKindSuffix } = module.__test
 
 check('__test 导出了新增的组件与工具', () => {
   for (const [name, value] of Object.entries({
     KeyedPage, KeyedCard, LocalPage, ServiceLaneCard, StatusBar, StatePill,
   })) assert.equal(typeof value, 'function', `__test.${name} 未导出`)
-  for (const [name, value] of Object.entries({ safeText, safeHref, stateTone })) {
+  for (const [name, value] of Object.entries({ safeText, safeHref, stateTone, probeText, probeKindSuffix })) {
     assert.equal(typeof value, 'function', `__test.${name} 未导出`)
   }
 })
@@ -406,10 +406,97 @@ check('自带 key 卡：恶意 signupURL（javascript:）不渲染链接', () =>
   assert.equal(links.length, 0, '非 http(s) 链接必须一个都不渲染')
 })
 
-check('自带 key 卡没有「测试连通性」这种必然失败的按钮', () => {
-  const text = flat(KeyedCard({ channel: keyedRow, t }))
-  assert.ok(!text.includes('probe'), '不该出现探测按钮')
-  assert.ok(!text.includes('probeOk'), '不该出现探测结果文案')
+// ── 6b. 填 key / 测 key（0.4.1 新增的三条动作） ────────────────────────────
+check('自带 key 卡有「填 key」的输入框与保存/显示/清除按钮', () => {
+  const tree = KeyedCard({ channel: keyedRow, t, keyState: { configured: false, writable: true, source: 'none', masked: '' } })
+  const inputs = collectElements(tree, (node) => node.type === 'input')
+  assert.equal(inputs.length, 1, '应恰好有一个 key 输入框，实际 ' + inputs.length)
+  // 明文 key 绝不能是默认的可见类型：浏览器快照/录屏都会带上它。
+  assert.equal(inputs[0].props.type, 'password', 'key 输入框默认必须是 password')
+  assert.equal(inputs[0].props.autoComplete, 'off')
+  const text = flat(tree)
+  for (const key of ['keyedKeySave', 'keyedKeyShow']) {
+    assert.ok(text.includes(key), '缺少文案 ' + key)
+  }
+  // placeholder 是 input 的 prop，不进文本子树 —— 单独断言。
+  assert.equal(inputs[0].props.placeholder, 'keyedKeyPlaceholder', '缺少输入框占位文案')
+  // 未配置时不该出现「清除」：没有可清的东西。
+  assert.ok(!text.includes('keyedKeyClear'), '未配置时不该有清除按钮')
+  // 探测按钮必须在：这正是旧版刻意没有、而用户真正需要的那一个。
+  assert.ok(text.includes('keyedProbe'), '缺少「测试 key」按钮')
+})
+
+check('已配置时只显示脱敏值，绝不出现原文，且给「清除」', () => {
+  const masked = 'sk-t…6789'
+  const tree = KeyedCard({
+    channel: { ...keyedRow, state: 'ready', reason: '已配置 OPENROUTER_API_KEY' },
+    t,
+    keyState: { configured: true, writable: true, source: 'file', masked },
+  })
+  const text = flat(tree)
+  assert.ok(text.includes('keyedKeySet'), '缺少「已填写」徽章')
+  assert.ok(text.includes(masked), '缺少脱敏值')
+  assert.ok(!text.includes('sk-test-abcdefghijklmnop'), '卡片上出现了明文 key')
+  assert.ok(text.includes('keyedKeyClear'), '已配置时应给「清除 key」')
+  assert.ok(text.includes('keyedSrcFile'), '缺少凭据来源说明')
+})
+
+check('凭据只读（来自环境变量）时给出解释，而不是一个禁用的输入框', () => {
+  const tree = KeyedCard({
+    channel: keyedRow,
+    t,
+    keyState: { configured: true, writable: false, source: 'env', masked: 'sk-a…wxyz' },
+  })
+  const text = flat(tree)
+  assert.ok(text.includes('keyedKeyReadonly'), '缺少「只读」的解释')
+  const inputs = collectElements(tree, (node) => node.type === 'input')
+  assert.equal(inputs[0].props.disabled, true, '只读时输入框应禁用')
+})
+
+check('免 key 车道不渲染输入框与探测（没有凭据可填）', () => {
+  const tree = KeyedCard({ channel: { ...keyedRow, apiKeyEnv: undefined, state: 'ready' }, t })
+  const inputs = collectElements(tree, (node) => node.type === 'input')
+  assert.equal(inputs.length, 0, '免 key 车道不该有 key 输入框')
+  const text = flat(tree)
+  assert.ok(text.includes('keyedKeylessHint'), '缺少免 key 说明')
+  assert.ok(!text.includes('keyedProbe'), '免 key 车道不该有探测按钮')
+})
+
+check('探测结果按 kind 分色分文案：401 与 429 不是同一句话', () => {
+  const bad = KeyedCard({ channel: keyedRow, t, probe: { ok: false, kind: 'invalid-key', reason: '上游拒绝这把 key（401）', ms: 42 } })
+  const limited = KeyedCard({ channel: keyedRow, t, probe: { ok: false, kind: 'rate-limited', reason: '上游限流（429）', ms: 300 } })
+  const badText = flat(bad)
+  const limitedText = flat(limited)
+  assert.ok(badText.includes('keyedProbeInvalidKey'), '401 缺少「key 被拒」文案')
+  assert.ok(limitedText.includes('keyedProbeRateLimited'), '429 缺少「被限流」文案')
+  assert.notEqual(badText, limitedText, '两种失败渲染成了一样的东西')
+  const badNode = collectElements(bad, (node) => node.props?.['data-kind'] === 'invalid-key')
+  assert.equal(badNode.length, 1, '探测结果缺少 data-kind（样式按它分色）')
+  assert.equal(badNode[0].props.className, 'ow-probeerr')
+})
+
+check('探测成功时显示耗时与抄回的模型数', () => {
+  const tree = KeyedCard({ channel: keyedRow, t, probe: { ok: true, kind: 'ok', reason: 'key 通过鉴权', ms: 128, models: ['a', 'b', 'c'] } })
+  const text = flat(tree)
+  assert.ok(text.includes('128'), '缺少耗时')
+  assert.ok(text.includes('keyedProbeModels'), '缺少「上游返回 N 个模型」')
+  const node = collectElements(tree, (n) => n.props?.['data-kind'] === 'ok')
+  assert.equal(node[0].props.className, 'ow-probeok')
+})
+
+check('保存失败的原文显示在卡片上（不吞错误）', () => {
+  const tree = KeyedCard({ channel: keyedRow, t, error: '写入凭据 OPENROUTER_API_KEY 失败：EACCES' })
+  const text = flat(tree)
+  assert.ok(text.includes('EACCES'), '保存失败原因没有显示')
+  const alerts = collectElements(tree, (node) => node.props?.role === 'alert')
+  assert.equal(alerts.length, 1, '失败提示缺少 role=alert')
+})
+
+check('探测结果 → 文案的纯函数：未知 kind 退回 kind 本身，不渲染空串', () => {
+  const text = probeText({ ok: false, kind: 'some-new-kind', reason: 'x', ms: 0 }, t)
+  assert.ok(text.includes('some-new-kind'), '未知 kind 没有退化显示')
+  assert.equal(probeKindSuffix('invalid-key'), 'InvalidKey')
+  assert.equal(probeKindSuffix('ok'), 'Ok')
 })
 
 check('自带 key 页：空状态给一句话 + 目录指引', () => {
@@ -614,50 +701,26 @@ check('有 claim 能力的车道仍然渲染领取按钮（别把功能一起删
   assert.ok(strings.includes('checkin'), 'claim:true 时账号行应有「领积分」')
 })
 
-check('OFM 侧卡片：药丸 / 后端说明 / 后端未就绪时不渲染动作', () => {
-  const ofmProduct = {
-    ...accountProduct,
-    id: 'qoder',
-    displayName: 'Qoder',
-    backend: 'ofm',
-    login: 'browser',
-    route: 'ofm',
-    mounted: false,
-    note: '设备码轮询登录。',
-    credits: { balance: true, claim: true },
-  }
-  const ready = ProductCard(cardProps({
-    product: ofmProduct,
-    creditRow: { accounts: [{ accountId: 'qoder-1', balance: { total: 88, packages: [] } }] },
-    backendNote: 'backendOfmNote',
-    ready: true,
+check('账号卡：车道说明原样渲染（不吞产品注记）', () => {
+  // ⚠️ 原「OFM 侧卡片」那组断言整体下线：`backend: 'ofm'`、`routeOfm`、
+  // `backendNote` / `backendMissing` 这一整套都随那 11 条车道搬进了
+  // `dsh-ofm-lanes`，本插件的 client.js 里已经没有任何一个这样的分支了。
+  // 留一条本插件自己仍要保证的事：产品注记必须渲染出来。
+  const card = ProductCard(cardProps({
+    product: { ...accountProduct, note: '设备码轮询登录。' },
+    accounts: [],
+    models: [],
+    creditRow: undefined,
     tab: 'accounts',
   }))
-  assert.ok(walk(ready, 'ProductCard-ofm') > 5, 'OFM 侧卡片渲染节点过少')
-  const strings = collectStrings(ready)
-  assert.ok(strings.includes('routeOfm'), '缺少「OFM 提供」药丸')
-  assert.ok(strings.includes('backendOfmNote'), '缺少后端说明')
-  assert.ok(strings.some((text) => text.includes(ofmProduct.note)), '缺少车道说明')
-
-  const down = ProductCard(cardProps({ product: ofmProduct, accounts: [], models: [], creditRow: undefined, backendNote: 'backendMissingNote', ready: false, tab: 'accounts' }))
-  const downStrings = collectStrings(down)
-  assert.ok(downStrings.includes('backendMissing'), '后端未就绪时缺少提示药丸')
-  assert.ok(!downStrings.includes('addAccount'), '后端未就绪时不应渲染「新建账号」')
+  assert.ok(walk(card, 'ProductCard-note') > 5, '账号卡渲染节点过少')
+  assert.ok(collectStrings(card).some((text) => text.includes('设备码轮询登录')), '缺少车道说明')
 })
 
-check('Loomy 手机号备用路径：未展开是按钮，展开后是四件套', () => {
-  const loomy = { ...accountProduct, id: 'loomy', displayName: 'Loomy (讯飞)', backend: 'ofm', login: 'localPage', smsFallback: true, credits: { balance: true, claim: true } }
-  const closed = ProductCard(cardProps({ product: loomy, accounts: [], models: [], creditRow: undefined, ready: true, tab: 'accounts' }))
-  assert.ok(collectStrings(closed).includes('smsOpen'), '缺少「用手机号登录」入口')
-  const open = ProductCard(cardProps({
-    product: loomy, accounts: [], models: [], creditRow: undefined, ready: true, tab: 'accounts',
-    sms: { provider: 'loomy', accountId: 'loomy-1', phone: '13800000000', code: '', msgid: '', busy: false, error: '' },
-    onSmsOpen: () => {}, onSmsChange: () => {}, onSmsSend: () => {}, onSmsSubmit: () => {},
-  }))
-  const strings = collectStrings(open)
-  assert.ok(strings.includes('smsSend'), '短信表单缺少「发送验证码」')
-  assert.ok(strings.includes('smsSubmit'), '短信表单缺少「提交并登录」')
-})
+// ⚠️ 「Loomy 手机号备用路径」那条断言随 OFM 车道一起迁走了（`dsh-ofm-lanes`）：
+// 短信表单（`smsOpen` / `smsSend` / `smsSubmit`）现在由那个插件的 client.js 提供，
+// 本插件的字典里已经没有一个 sms* 键。留在这里只会让两边互相打架 ——
+// 该断言的新位置是 `..\dsh-ofm-lanes\test\render.mjs`。
 
 // ── 9. 自动领积分条 / 服务卡（既有） ─────────────────────────────────────────
 check('自动领积分条四态可渲染', () => {

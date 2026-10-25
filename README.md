@@ -6,7 +6,6 @@
 | 类 | 条数 | 路由 | 能力 | 需要什么 | 页内页签 |
 |---|---|---|---|---|---|
 | **账号渠道**（本插件自己挂） | 2 | `buddy/*`、`workbuddy/*` | 完整：工具调用、看图 | 一个账号（浏览器登录） | 账号渠道 |
-| **账号渠道**（宿主 `dsh-our-free-model` 提供后端） | 11 | 各平台自己的路由 | 完整 | 各平台一个账号 | 账号渠道 |
 | **服务渠道**（本机进程） | 3 | `opencode/*` | **无工具**：能看图、不能调工具 | 本机 `opencode serve`（插件可代起） | 本地与网关 |
 | **自带 key / 免 key 渠道** | 21 | `<渠道 id>/*` | 取决于上游声明 | 去上游拿免费 key（免 key 渠道零配置） | 自带 key |
 
@@ -20,17 +19,56 @@
 |---|---|
 | 账号渠道 | 登录 / 续期 / 领积分 / 换账号 |
 | 服务渠道 | 起本地进程 / 填网关 key / 换一个本地服务 |
-| 自带 key | 去上游拿 key、写进凭据条目（免 key 渠道不需要） |
+| 自带 key | **在页面上把 key 填进去**（0.4.1 起）、或写进凭据条目；免 key 渠道不需要 |
 
 合并成一句「渠道不可用」会让用户乱试方向，所以本插件宁可多写三个分支。
+
+## 自带 key 那一页：能填、能测、能清（0.4.1）
+
+```
+「去拿 key」→ 粘进输入框 → 保存（写宿主凭据，回脱敏值）→ 测试 key → 分类结论
+                                     ↓ 就绪后立刻挂上路由
+                            改主意了？「清除 key」删掉凭据条目
+```
+
+三条动作对应三条路由，**凭据值只进不出**（POST 收原文、只回 `sk-t…6789`；GET 永不回显原文）：
+
+| 动作 | 路由 | 关键行为 |
+|---|---|---|
+| 保存 | `POST /key {lane, key}` | 先校验（空 / 空白 / 控制字符 / 超长都拒）→ 写宿主同名凭据 → **立刻挂上**（已挂载的走 `setApiKey()`，不重注册） |
+| 清除 | `DELETE /key {lane}` | 删凭据条目，环境变量回退随即生效；**路由保留**（报错比静默消失可读） |
+| 探测 | `POST /key/probe {lane, force}` | 打一次 `{baseURL}/models`（或声明的 `modelsURL`），结果**按 kind 分类** |
+
+探测为什么值得单独做：**没有 key 时不构造请求**（`no-key`），有 key 时十一种结论各说各的话 ——
+
+| kind | 用户该做什么 |
+|---|---|
+| `ok` | 没别的事了，顺手显示抄回来的模型数 |
+| `invalid-key`（401） | key 复制错了 / 已吊销 → 换 key |
+| `forbidden`（403） | key 是对的，但这个接口 / 模型没权限 → 开通或换模型 |
+| `rate-limited`（429） | **key 是对的**，等一会（读 `Retry-After`） |
+| `quota`（402） | 额度 / 余额不足 |
+| `not-found`（404） | 目录里的 baseURL 可能过期 |
+| `timeout` / `network` | 网络问题，**key 本身未必有问题** |
+| `no-key` | 还没填 |
+
+旧版页面刻意不放「测试连通性」，理由是「没 key 点测试必然失败，会被读成渠道坏了」。
+那个理由只对**没 key** 成立 —— 所以现在是「没有 key 就不发请求」+「失败按 kind 分类」，
+旧理由不再适用。
 
 ## 骨架：注册表 + 可远程迭代的渠道目录
 
 ```
 src/lanes/registry.js     唯一事实来源：三类渠道 → 同一种记录形状 → 就绪四态投影
-  ├── src/lanes.js            11 条宿主侧车道的元数据（**不重复挂载**：会撞同名 cordis Service）
   ├── src/lanes/service.js    3 条服务车道 + HTTP 探针（双 TTL 缓存，失败退避 30 秒）
-  ├── src/lanes/keyed/**      21 条自带 key / 免 key 车道（目录 + 就绪判定 + OpenAI 兼容适配器）
+  ├── src/lanes/keyed/**      21 条自带 key / 免 key 车道
+  │     ├── catalog.js         目录（每条带 evidence 与未确证标注）
+  │     ├── ready.js           就绪判定 + 三种凭据形态解码
+  │     ├── adapter.js         OpenAI 兼容适配器（SSE / 工具 / 图片 / 错误分类）
+  │     ├── index.js           descriptors() / mount() / mountAll()
+  │     ├── keys.js            填 key / 清 key / 脱敏 / 凭据面状态（0.4.1）
+  │     ├── probe.js           凭据探测 + 十一种分类（0.4.1）
+  │     └── manage.js          运行时管理器：存完 key 立刻挂上、换 key 不重注册（0.4.1）
   ├── src/lanes/catalog.js    记录校验（远程数据是**不可信输入**）+ 三层叠加（shipped/remote/local）
   └── src/lanes/remote.js     远程目录拉取（https-only、格式版本不符整份拒绝、原子缓存、失败降级）
 ```
@@ -65,20 +103,20 @@ src/lanes/registry.js     唯一事实来源：三类渠道 → 同一种记录�
 Get-Content "$env:USERPROFILE\.dsh\free-model\apply-ok.json"
 ```
 
-这个文件是**装配自证**：版本、上次装配时间、**已经挂上适配器的路由**、宿主 channel-pack 在不在场、
-目录层计数与指纹。**不含任何凭据值**（只记「挂了哪几条」）。
+这个文件是**装配自证**：版本、上次装配时间、**已经挂上适配器的路由**、目录层计数与指纹。
+**不含任何凭据值**（只记「挂了哪几条」）。
 
 为什么需要它：headless / CLI 模式**不打 info 日志**，而装配是异步分片的（native 车道在 `inject`
-回调里挂、自带 key 车道是 `void mountKeyedLanes(...)`），任何一片失败都只留一行 warn ——
+回调里挂、自带 key 车道是 `void keyedManager.mountAllReady()`），任何一片失败都只留一行 warn ——
 看不到 warn 就没法判断。它是**历史记录**（`appliedAt` 是上次装配的时刻），不是存活标记：
 「现在在不在跑」看设置页能不能打开。
 
 正常装配时它长这样（真宿主进程内实测）：
 
 ```json
-{ "plugin": "dsh-free-model", "version": "0.4.0", "phase": "full",
+{ "plugin": "dsh-free-model", "version": "0.5.0", "phase": "full",
   "mountedRoutes": ["buddy", "opencode", "pollinations", "workbuddy"],
-  "ofmBackend": true, "channels": { "account": 13, "keyed": 21, "service": 3, "total": 37 } }
+  "channels": { "account": 2, "keyed": 21, "service": 3, "total": 26 } }
 ```
 
 ### 端点会变：`npm run probe:endpoints` 复查一次
@@ -99,84 +137,65 @@ npm run probe:endpoints:dry      # 只列出将探测的 URL
 
 > 2026-10-25 实测：**19/21 可达**（14 条 401/403、5 条 200），另 2 条与目录声明一致。
 
-## 账号渠道：13 条车道（2 条自己挂 + 11 条 OFM 侧）
+## 账号渠道：2 条车道（CodeBuddy / WorkBuddy）
 
-上面三条是**本插件自己跑**的车道。但 OFM（`dsh-our-free-model` 的 channel-pack）里
-还有 11 条账号车道是活的 —— 它们的 auth、适配器、积分与登录实现都在宿主的
-channel-pack 里，账号也存在**同一份** `channel-pack/state.json`。只显示两条，
-用户就得在两个面板之间来回切。现在「账号渠道」页把它们全部列出：
+本插件的「账号渠道」页只管**本插件自己挂载**的两条腾讯车道：
 
 | 车道 | id | 登录形态 | 余额 | 签到 |
 |---|---|---|---|---|
-| CodeArts (华为云) | `codearts` | 浏览器回调 | ✓ | ✓ |
-| LobsterAI (有道) | `lobsterai` | 浏览器回调 | ✓ | ✓ |
-| Qoder | `qoder` | 设备码轮询 | ✓ | ✓ |
-| Qoder (中国版) | `qodercn` | 设备码轮询 | ✓ | ✓ |
-| TRAE (字节) | `trae` | 浏览器回调 | ✓ | ✓ |
-| Cline | `cline` | WorkOS 设备码 | ✓ | ✓ |
-| Loomy (讯飞) | `loomy` | **本机登录页**（微信扫码；另有手机号备用路径） | ✓ | ✓ |
-| Raccoon (商汤) | `raccoon` | **本机登录页**（微信扫码 / 短信） | ✓ | ✓ |
-| MiniMax Code | `minimax` | 设备码 + PKCE | ✓ | ✓ |
-| Gemini Code Assist | `gemini` | 浏览器回调 | ✓ | **无**（上游不提供签到） |
-| ZCode (智谱) | `zcode` | 官方设备授权 | ✓ | ✓ |
+| CodeBuddy (腾讯国内版) | `buddy` | 浏览器回调 | ✓ | ✓ |
+| WorkBuddy (腾讯国际版) | `workbuddy` | 浏览器回调 | ✓ | **无**（上游不提供签到接口） |
 
-外加本插件自己挂的 `buddy` / `workbuddy` —— **13 条账号车道一个面板**。
+### 其余免费账号车道不在这里（0.5.0 拆分）
 
-### 两条后端，页面自己选（`backend`）
+华为云 CodeArts、有道 LobsterAI、Qoder、TRAE、Cline、Loomy、Raccoon、MiniMax、
+Gemini Code Assist、ZCode 那 11 条车道，其 auth / 适配器 / 积分 / 登录实现都在
+**另一个插件**里，页面也归它。它们曾在 0.4.x 被本插件借页面展示过，0.5.0 起
+整体迁出，改由独立插件 `dsh-ofm-lanes` 提供（同一个设置区里另一个入口）。
+
+为什么拆：那 11 条的执行体从来不在本插件内 —— 本插件只做「页面 + 转发」，
+而转发要跟着对方的 RPC 变、登录时序要跟着对方的产品怪癖变。两件事绑在一个
+插件里，任何一边发版都得同步另一边，且本插件的测试根本覆盖不到对方的实现。
+
+**为什么本插件不能顺手把 11 条也挂一遍**（历史坑，仍然成立）：
+
+1. **cordis 同名 Service 会抛错**。比如 `new QoderAuth(ctx)` 会注册
+   `ctx.qoderAuth`；同名再注册一次直接抛 `service "qoderAuth" has been registered`，
+   把整个 apply 打死；
+2. **两份 auth 实例 = 两份续期定时器**。同一个 `refresh_token` 被并发消费，
+   表现是「刚登录却一直认证失败」（本仓库记录过同型事故）。
+
+### `backend` 现在只剩两档
 
 | backend | 谁实现 | 页面怎么操作 |
 |---|---|---|
 | `native` | 本插件挂载的 auth + adapter（`buddy` / `workbuddy`） | `/api/free-model/*` |
-| `ofm` | 宿主 channel-pack（上面 11 条） | 直接调宿主的 `/api/channel-pack` RPC |
+| `gateway` | 别的插件已经注册了路由（本插件只观测，不重复注册） | 只读展示 |
 
 `GET /api/free-model/summary` 里每条车道都带 `backend` / `login` / `credits`，
 页面据此渲染卡片与动作 —— 不需要认识任何具体渠道。
 
-### 为什么不把这 11 条也自己挂一遍
-
-两个硬理由（都是实测过的坑，不是洁癖）：
-
-1. **cordis 同名 Service 会抛错**。OFM 侧 `new QoderAuth(ctx)` 这类实例会注册
-   `ctx.qoderAuth`；本插件再 `new` 一个同名的会抛
-   `service "qoderAuth" has been registered`，把整个 apply 打死；
-2. **两份 auth 实例 = 两份续期定时器**。同一个 `refresh_token` 被并发消费，
-   表现是「刚登录却一直认证失败」（本仓库在 CodeArts 上记录过同型事故）。
-
-所以这 11 条只做**页面 + 管理面**：后端一律转发。转发**在浏览器里做**（页面与
-OFM 面板同源、同一份会话），不在 Host 侧再包一层 —— 那等于把 12 个 RPC 方法 ×
-11 条车道写成胶水，且每条车道的产品怪癖都会在转发层再漂移一次。
-
-### 宿主没装 OFM 时（降级）
-
-这 11 条**照样列出**（用户能看到「这台机器上有哪些免费渠道」），但每条标注
-「后端未就绪」、不给任何动作按钮，卡片上写明「要先装 dsh-our-free-model」。
-给出点了必然失败的按钮，用户的下一步动作会是「反复点它」，而不是「去装后端」。
-
-```powershell
-# 后端就绪与否看这一行：ofm.available
-curl -s http://127.0.0.1:<web端口>/api/free-model/summary   # 需要用浏览器会话（同源 JS）
-```
-
 ### 回归防线
 
-`node test/lanes.mjs` —— 断言注册表（11 条、id 顺序、积分能力与 OFM 的 claimAll
-分支一致、Loomy 的短信备用路径、RPC 常量）与「不与 native 两条重叠」。
-`test/smoke.mjs` 另断言：OFM 侧车道在本插件的 HTTP 面上一律 **409 `backend-ofm`**
-（走错了门要明确报出来，而不是 503 或静默改池）。
+`test/lanes-registry.mjs` —— 断言账号车道**全部是 native 两条**、
+注册表三类渠道齐全、未挂载时一律 `unavailable` 且原因指向下一步；
+`test/routes-channels.mjs` 断言 `/summary` 里不再有「宿主侧后端就绪」那一段。
 
 > 账号型两条车道与「不需要登录的本地车道」在**同一个设置项内分页**：前者要管账号、
 > 积分、签到；后者只有一个本地进程要管。同一时刻屏幕上只有一个主题，页签上还带
 > 数字（账号数 / 模型数），切换前就知道对面有没有东西。
 
-> **不依赖 dsh-our-free-model。** 装了 OFM 则自动共享它的账号池与凭据（同一份
-> `channel-pack/state.json`），不装则退化为本插件自带的池，读写**同一个文件**。
+> **账号池是共享的，但不是必需的。** 宿主若提供了 `accountPool` 服务，本插件
+> 直接用它的池（同一份账号、同一份限流标记）；没有则退化为本地实现，读写**同一个**
+> `$DSH_HOME/channel-pack/state.json`。两种情况下都是同一份文档，不会出现「两个池
+> 各写各的」。
 
 ## 为什么需要这个插件
 
 三件事各自都能做，但**没有一个地方能同时回答**「我到底有哪些免费模型、它们现在
 能不能用、要做什么才能用」。
 
-- OFM 2.5.8 移除了 WorkBuddy / CodeBuddy 的入口，账号与凭据还在（本插件的前身
+- 腾讯那两条车道的入口在宿主侧早已下线，但账号与凭据还在（本插件的前身
   `dsh-ofm-workbuddy` 把它们接回来了）；
 - opencode 的免费层只在「OpenCode 自己的调用方」里合法可用（直连会被拒，实测），
   而它跑的 `serve` 正好就是合法调用方；
@@ -237,9 +256,9 @@ dsh plugin --profile web add link:E:\06AI\00DeeSeekHarness\dsh-free-model
 
 ## 页面（一个设置项，页内两个页签）
 
-设置 → **免费模型**（`settings.section` id `free-model`，order 37，排在 OFM 之后）。
-进去之后是页内页签（与 OFM 的页内 `ofm_tabs` 同构），当前页签记在 `localStorage`
-的 `free-model:tab` 上，刷新后停在原处。
+设置 → **免费模型**（`settings.section` id `free-model`，order 37）。
+进去之后是页内页签，当前页签记在 `localStorage` 的 `free-model:tab` 上，
+刷新后停在原处。
 
 ```
 ┌─ 免费模型 ─────────────────────────────────────────────────────────────┐
@@ -257,7 +276,7 @@ dsh plugin --profile web add link:E:\06AI\00DeeSeekHarness\dsh-free-model
 
 ```
 ┌─ 免费模型 · 账号渠道 ──────────────────────────────────────────────────┐
-│  2/2 账号   38/38 模型   剩余积分 1.2K   账号池：OFM 共享池   自动领积分·已领  │
+│  2/2 账号   38/38 模型   剩余积分 1.2K   账号池：共享池   自动领积分·已领      │
 └────────────────────────────────────────────────────────────────────────┘
 ┌─ 自动领积分 ───────────────────────────────────────────────────────────┐
 │ ( ● ) 每日自动领积分   [今日已自动领取]  上次结果：1 个账号领取成功（+10）  │
@@ -317,10 +336,10 @@ dsh plugin --profile web add link:E:\06AI\00DeeSeekHarness\dsh-free-model
 打空 —— 于是「页面打不开」和「查不到余额」变成同一个现象。
 
 **自动领取的状态文件是独立的**：本插件写
-`$DSH_HOME/channel-pack/free-model-auto-checkin.json`，**不碰** OFM 的
+`$DSH_HOME/channel-pack/free-model-auto-checkin.json`，**不碰**宿主那份
 `auto-checkin.json`。两个进程同改一份文档时，后写的会把前者的 `lastDate` 抹掉，
-OFM 那边随即以为「今天已经跑过」而跳过它自己的十几个渠道。代价是两边的开关各自
-独立（页面上写明了这一条）。
+对方随即以为「今天已经跑过」而跳过它自己的渠道。代价是两边的开关各自独立
+（页面上写明了这一条）。
 
 **没领到就不记「今天已跑」**：池为空或全部失败时不写日期，下次启动会重试；
 否则今天新加的账号会被推迟到明天才自动领取。
@@ -331,7 +350,6 @@ OFM 那边随即以为「今天已经跑过」而跳过它自己的十几个渠�
 ```
 index.js                 三条车道的装配（账号型 ×2 + 服务型 ×1）+ 积分能力位
 src/channels.js          buddy 系通道装配（auth + adapter + 选号）
-src/lanes.js             账号渠道注册表：OFM 侧 11 条车道的元数据（页面/能力/登录形态）
 src/lanes/registry.js    三类渠道的统一注册表 + 就绪四态投影（页面与路由的唯一事实来源）
 src/lanes/catalog.js     渠道记录校验 + 三层目录叠加（shipped / remote / local）
 src/lanes/remote.js      远程渠道目录：拉取 / 校验 / 原子缓存 / 失败降级
@@ -341,6 +359,9 @@ src/lanes/keyed/catalog.js  21 条自带 key / 免 key 车道的目录（每条�
 src/lanes/keyed/ready.js    就绪判定：三种凭据形态 / 环境变量优先 / ref: 解引用
 src/lanes/keyed/adapter.js  OpenAI 兼容适配器（SSE + 工具调用 + 图片 + 错误分类）
 src/lanes/keyed/index.js    descriptors() / mount() / mountAll()（只出描述符，注册留给上层）
+src/lanes/keyed/keys.js     填 key / 清 key / 脱敏展示 / 凭据面状态（写入走宿主 credentials）
+src/lanes/keyed/probe.js    凭据探测：一次 /models 或最小补全，结果按 11 种 kind 分类
+src/lanes/keyed/manage.js   运行时管理器：保存后立刻挂载、换 key 走 setApiKey（不重注册）
 scripts/build-catalog.mjs   从随包渠道生成远程目录 catalog/channels.json（生成时自校验）
 src/credits-service.js   余额 / 一键领取（缓存 + 并发合并 + 顺序领取）
 src/auto-checkin.js      每日自动领积分（独立状态文件 + 一天一次 + 开关）
@@ -374,7 +395,7 @@ opencode 的 `POST /session/{id}/message` 是**阻塞到生成完成**的，拿�
 轮询保留为**降级路径**：老版本 serve 没有 `/event`，或 SSE 被中间层掐断时
 自动回退（只在「还没发出任何内容」时降级，避免重复文本）。
 
-实测（2026-10-23，`ofm/codearts/glm-5.3`）：首块 1.9s，26 个 delta 帧，
+实测（2026-10-23，本机配置的一条免费模型）：首块 1.9s，26 个 delta 帧，
 usage `{input:131, output:54, reasoning:18, cacheRead:1920}`。
 
 ### 模型目录从哪来（2026-10-23 修正）
@@ -393,7 +414,7 @@ provider —— 但**只有 `/config/providers` 里出现过的才真能调用**
 1. **`limit.context` 可能是 0**。上游对本地/聚合 provider 常下发
    `{ context: 0, output: 0 }`，而 0 是「未知」不是「零窗口」。不挡住会让
    `resolveModel` 返回 `contextWindow: 0`，宿主据此把请求判成超窗口
-   （实测 `ofm/codearts/glm-5.3` 就是 0）。
+   （本机实测的那条免费模型就是 0）。
 2. **上游失败也标 completed**。错误挂在 `info.error` 上，必须原样抛出去 ——
    否则用户拿到的是空回答加一句猜的「可能限流」，而真实原因可能是
    「免费层只能在 OpenCode 内使用」「模型不存在」「协议不支持」。
@@ -405,8 +426,8 @@ provider —— 但**只有 `/config/providers` 里出现过的才真能调用**
 
 | 场景 | 行为 |
 |---|---|
-| 装了 OFM | 用它的 `accountPool`（同一份账号、同一份限流标记、同一份黑名单） |
-| 没装 OFM | 退化成 `LocalPool`，读写**同一个** `$DSH_HOME/channel-pack/state.json` |
+| 宿主提供了 `accountPool` | 直接用它的池（同一份账号、同一份限流标记、同一份黑名单） |
+| 没有这个服务 | 退化成 `LocalPool`，读写**同一个** `$DSH_HOME/channel-pack/state.json` |
 
 本地实现只替换 `accounts` 里属于本插件的那几条，其余字段与条目原样保留 ——
 `state.json` 是 dsh home 级共享文档，整份重写会静默丢掉别的通道的字段。
@@ -420,8 +441,8 @@ npm test
 # 用真实宿主包验证契约（临时 link dsh-llm / dsh-credentials，跑完删掉）
 npm run test:host
 
-# 真实端到端（需要 opencode serve 在跑）
-npm run test:e2e -- 'ofm/codearts/glm-5.3'
+# 真实端到端（需要 opencode serve 在跑；模型 id 用你自己 opencode 里配好的那条）
+npm run test:e2e -- '<provider>/<model>'
 ```
 
 三套测试各挡一类错：
@@ -431,6 +452,8 @@ npm run test:e2e -- 'ofm/codearts/glm-5.3'
 | `smoke.mjs` | 协议与路由：三条车道的注册/目录/元数据/stream chunk 序列、HTTP 面每条路由、信任围栏、让位语义；积分与自动领取用**假的 fetch** 打（不碰腾讯计费接口），状态文件写进临时目录（不碰真实 `~/.dsh`） |
 | `render.mjs` | 白屏：用极小的 React 替身把组件树跑一遍（两个设置页都要注册、卡片的三条余额分支、自动领取条的四态）。`node --check` 只能抓语法错，抓不到「渲染时抛 ReferenceError」——而那正是白屏最常见的原因 |
 | `host-check` / `host-apply` | 契约漂移：`instanceof LlmAdapter`、`providerInfo.id === provider`、`prepareCall` 返回 stream、`LlmError` code 被宿主认得 |
+| `keyed/keys-flow.mjs`（0.4.1） | 凭据全流程：入参校验（空/空白/控制字符/超长）、脱敏、保存与清除、探测的十一种分类、以及**保存后立刻挂上 / 清除后路由保留**这两条运行时语义 |
+| `host-keyed.mjs` | 自带 key 车道的**真实装配**：免 key 车道上、缺 key 的一条都不上、凭据名是**裸名**（不带 `ref:` 前缀——那是 0.4.1 修掉的一个静默 bug） |
 
 `npm run check` 是另一道门：对 `index.js` / `client.js` / `src/**` / `test/**` / `scripts/**`
 下全部 `.js` / `.mjs`（当前 70 个）逐个 `node --check`，只抓语法错、本机约 8 秒。所以上面
@@ -444,7 +467,7 @@ npm run test:e2e -- 'ofm/codearts/glm-5.3'
 - **WorkBuddy 国际版没有签到接口**：`daily-checkin` 在它的后端不存在，故这条车道
   上不会出现「一键领取」，自动领取也会把它跳过并标成「无签到接口」。
   （余额接口 `get-user-resource` 两边都有。）
-- **自动领取的开关与 OFM 的开关各自独立**：本插件写自己的状态文件，见上文理由。
+- **自动领取的开关与宿主那份开关各自独立**：本插件写自己的状态文件，见上文理由。
   两边同时开着不会重复领取（服务端对「今天已领」会明确回报），但会有两次无谓请求。
 - **余额是「查得到才算」**：合计数只累计读成功的账号；查不到的账号会单独显示原因，
   不会被当成 0（否则卡片上的合计数看起来像「额度凭空少了」）。
@@ -454,7 +477,7 @@ npm run test:e2e -- 'ofm/codearts/glm-5.3'
 
   | 类别 | 上游原文特征 | 该怎么办 |
   |---|---|---|
-  | **① 当日额度耗尽** | `Free usage limit reached. Subscribe to OpenCode Go to keep going` | 按天重置，**北京时间 08:00**（UTC 0:00）恢复。在此之前重试无效；换成同池的其它 `*-free` 模型通常也无效。要立刻干活就换通道（例如本机 OFM 网关的 `ofm/*`）或订阅 Go |
+  | **① 当日额度耗尽** | `Free usage limit reached. Subscribe to OpenCode Go to keep going` | 按天重置，**北京时间 08:00**（UTC 0:00）恢复。在此之前重试无效；换成同池的其它 `*-free` 模型通常也无效。要立刻干活就换通道（换到本插件里的其它渠道）或订阅 Go |
   | **② 调用方身份被拒** | `403 FreeTierError: OpenCode's free tier can only be used from within OpenCode` | 这是 **build 级事实，重试永不恢复**。2026-10-23 复验：连 `opencode serve` 自己发出的请求都被同样拒绝（试过 Authorization / x-api-key / UA / x-opencode-session 五种组合，全 403）。出路是升级 opencode 的 build，或换通道 |
   | **③ 限流** | `429` / `rate limit` / `too many requests` | 等一两分钟，或换个模型 |
 
@@ -466,15 +489,15 @@ npm run test:e2e -- 'ofm/codearts/glm-5.3'
   免费模型声明 `input.image`，图片经 `FilePartInput` 的 `data:` URL 发送
   （实测 204，上游确实收到）。`inputModalities` 按上游声明逐模型给出，
   不再一律 text。
-- **不接 OFM 的 token 账本**：`token-ledger` 是 OFM 包内的内部模块，硬 import
+- **不硬接宿主的 token 账本**：`token-ledger` 是对方包内的内部模块，硬 import
   会在它下次重构时把整个插件打死。记账退化为 no-op，推理不受影响。
 
 ## 与前身的关系
 
-`dsh-ofm-workbuddy` 只做一件事：把 OFM 2.5.8 移除的两条通道装回来。本插件
+`dsh-ofm-workbuddy` 只做一件事：把宿主移除的两条腾讯通道装回来。本插件
 在此基础上：
 
-1. **拆掉对 OFM 的隐含依赖**（池可退化、账本不接）；
+1. **拆掉对宿主的隐含依赖**（池可退化、账本不接）；
 2. **加第三条车道**（opencode 免费层）；
 3. **重做信息架构**（能力徽章、三分状态、空状态给动作）。
 

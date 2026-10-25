@@ -3,10 +3,10 @@
  *
  * ## 为什么要有它
  *
- * 原实现在 OFM 的 Channel Pack 面板里：登录按钮、账号列表、有效期、续期、
- * 探测、一键领取积分、模型开关 —— 2.5.8 把这些入口整个删了，但**后端能力一件没少**
- * （见 `src/core/` 与 `src/channels.js`）。没有入口等于没有功能，故这里补一个
- * 最小可用的 HTTP 面，由浏览器半身（`client.js`）直接消费。
+ * 账号车道的管理入口由本插件提供：登录按钮、账号列表、有效期、续期、
+ * 探测、一键领取积分、模型开关 —— 早先这些入口在别处，宿主升级后入口没了，
+ * 但**后端能力一件没少**（见 `src/core/` 与 `src/channels.js`）。没有入口等于
+ * 没有功能，故这里补一个最小可用的 HTTP 面，由浏览器半身（`client.js`）直接消费。
  *
  * ## 每条路由都先过信任围栏
  *
@@ -45,7 +45,7 @@ import { isLocalPool } from './pool.js'
  * }} deps
  *
  * ⚠️ `registry` / `catalog` / `update` / `service` 都是**可选**依赖：
- * 缺了只是新页面段落报「未接线」，既有 13 条账号车道的接口一律照旧可用 ——
+ * 缺了只是新页面段落报「未接线」，既有账号车道的接口一律照旧可用 ——
  * 这保证老测试夹具（只造老依赖）继续有效，新能力不会把旧契约带崩。
  */
 export function createRoutes(deps) {
@@ -138,6 +138,29 @@ export function createRoutes(deps) {
       if (method === 'GET' && routePath === '/channels') {
         return send(200, await channelsOverview(deps))
       }
+      // ── 自带 key 车道：填 key / 清 key / 测 key（0.4.1 新增）─────────────────
+      //
+      // 与 `/channels` 的分工：那里是**读**（有哪些车道、各自什么状态）；
+      // 这里是**写**（把用户手里那把 key 落地，并立刻验证它）。
+      //
+      // ⚠️ 凭据值**只进不出**：POST 收原文、回脱敏值与状态；GET 永不返回值本身。
+      // 页面需要的只是「填了没 / 从哪来 / 能不能改」，回显原文等于把明文凭据
+      // 留在 DOM、页面快照和任何一次「复制整页」里。
+      if (routePath === '/key') {
+        if (method === 'GET') return await readKey(deps, url.searchParams, send)
+        if (method === 'POST') return await writeKey(deps, await readJson(req), send)
+        if (method === 'DELETE') return await deleteKey(deps, await readJson(req), send)
+        return fail(405, 'key 只支持 GET / POST / DELETE')
+      }
+      if (method === 'POST' && routePath === '/key/probe') {
+        return await probeKey(deps, await readJson(req), send)
+      }
+      if (method === 'POST' && routePath === '/key/refresh') {
+        const manager = deps.keyed?.manager?.()
+        if (manager === undefined) return fail(503, '自带 key 车道未就绪（插件还没完成装配，或该模块缺失）')
+        const snapshot = await manager.refresh()
+        return send(200, { ok: true, ready: Object.keys(snapshot.ready ?? {}).length })
+      }
       // 渠道目录（可远程迭代的那一层）的状态与强制刷新。
       if (method === 'GET' && routePath === '/catalog') {
         return send(200, deps.catalog?.status?.() ?? { wired: false, reason: '目录层未接线' })
@@ -199,7 +222,7 @@ function buildSummary(deps) {
   // `__live.current` 是门面暴露的晚绑定视图。
   //
   // 三态必须分开报，因为对用户意味着不同的事：
-  //   'host'   —— 用的是 OFM 那个真池，账号与其它通道共享
+  //   'host'   —— 用的是宿主提供的真池，账号与其它通道共享
   //   'local'  —— 宿主没给池，本插件退化实现，读写同一份 state.json
   //   'absent' —— 连退化都没装上（apply 未完成 / credentials 服务缺席）
   const live = pool?.__live?.current
@@ -221,32 +244,26 @@ function buildSummary(deps) {
     }
     // backend 决定这条车道的登录/续期/积分/模型开关走哪个后端：
     //   'native' —— 本插件自己挂的（buddy / workbuddy），走 /api/free-model/*
-    //   'ofm'    —— 宿主 channel-pack 提供的 11 条，页面直接调 /api/channel-pack
     const backend = product.backend ?? 'native'
-    const ofmReady = backend === 'ofm' && deps.ofmBackend?.() === true
     return {
       id: product.id,
       displayName: product.displayName,
       endpoint: product.endpoint,
       backend,
       // 登录交互形态（页面据此决定「弹窗 + 轮询」还是「本机登录页 + 可选短信」）。
-      // native 两条都是浏览器 OAuth，故 backend === 'ofm' 之外一律 'browser'。
+      // native 两条都是浏览器 OAuth，故缺省一律 'browser'。
       login: product.login ?? 'browser',
       ...(product.smsFallback === true ? { smsFallback: true } : {}),
       ...(typeof product.note === 'string' && product.note.length > 0 ? { note: product.note } : {}),
       total,
       enabled,
       expiringSoon,
-      // 四种状态必须分辨得开：
-      //   'registered' —— 本插件接管了路由（OFM 2.5.8 之后，或没装 OFM）
-      //   'yielded'    —— 路由已被 OFM 内置 channel-pack 占着（用户还停在 2.5.7）
-      //   'ofm'        —— 该车道本来就由 OFM 侧提供，且它正在跑
-      //   'absent'     —— 没挂载（apply 失败 / llm 服务缺席 / OFM 没装）
-      route: backend === 'ofm'
-        ? (ofmReady ? 'ofm' : 'absent')
-        : (lastRegistrationOutcome(deps.llm, product.id) ?? 'absent'),
-      // ⚠️ mounted 对 OFM 车道**恒为 false**（本插件确实没挂它们），
-      // 故页面不能用它判断「能不能操作」—— 那是 route / backend 的事。
+      // 三种状态必须分辨得开：
+      //   'registered' —— 本插件接管了路由
+      //   'yielded'    —— 路由已被同名的另一份实现占着（让位，不顶掉它）
+      //   'absent'     —— 没挂载（apply 失败 / llm 服务缺席）
+      route: lastRegistrationOutcome(deps.llm, product.id) ?? 'absent',
+      // mounted 是「本插件手上有没有这条车道的适配器」：页面据此决定能不能在本页操作。
       mounted: deps.channels().has(product.id),
       // 积分能力跟着产品走：页面据此决定渲染不渲染「领取」按钮，
       // 而不是让前端自己拿 provider id 去猜（猜错就是 404）。
@@ -257,13 +274,6 @@ function buildSummary(deps) {
     version: deps.version,
     pool: poolState,
     poolSource: poolState === 'host' ? 'accountPool' : poolState === 'local' ? 'channel-pack/state.json' : 'none',
-    // OFM 侧后端是否就绪（11 条车道的操作能力位）。页面据此把那些卡片标成
-    // 「后端未就绪」并隐藏操作按钮 —— 而不是渲染出点了必然失败的动作。
-    ofm: {
-      available: deps.ofmBackend?.() === true,
-      // 就绪时的转发目标（页面不写死路径，改路由只改这里）。
-      rpcPath: deps.ofmRpcPath ?? '/api/channel-pack',
-    },
     // 只有账号型车道进 products；服务型车道（opencode）单独一段，字段形状不同。
     products,
     serviceLanes: deps.products
@@ -333,14 +343,12 @@ async function channelsOverview(deps) {
 /**
  * 模型清单：每个产品的**全部**模型 + 当前开关状态 + 元数据。
  *
- * ## 为什么这里自己拼，而不是复用 OFM 的 `model.list`
+ * ## 为什么这里自己拼，而不是复用别处的模型清单
  *
- * OFM 的 RPC 走 `channel-pack` 的内部 `modelAdapters` 表，而 2.5.8 的
- * `provider.status` / `handleMethod` 会主动跳过 `buddy` / `workbuddy`
- * （`isRetiredProvider`）。所以那两个 provider 在 OFM 的接口里**根本问不到**，
- * 只能由持有适配器实例的本插件自己回答。
+ * 模型清单只能由**持有适配器实例的那一方**回答：适配器在谁手里，"这条 provider
+ * 现在挂了哪些模型、哪些被关掉"就在谁那里。本插件正是挂载方，所以答案在这里。
  *
- * 数据源与 OFM 一致，两条：
+ * 数据源两条：
  * 1. `adapter.listAllModels()` —— **不受黑名单影响**的全量清单。必须用它：
  *    关掉的模型也要能显示出来（否则用户没法重新打开），而 `listModels` 会过滤。
  * 2. 池的 `listDisabledModels(provider)` —— 黑名单（`modelId → true`）。
@@ -358,8 +366,8 @@ async function listModels(deps, search) {
     if (product.kind === 'service') continue
     const channel = deps.channels().get(product.id)
     if (channel === undefined) {
-      // OFM 侧车道在这里**必然是空目录**（本插件没挂它们的适配器）：页面据此
-      // 走宿主 RPC 的 model.list，而不是把空目录渲染成「读不到模型」。
+      // 适配器不在手上时给空目录而不是漏掉这条：页面上「有车道、暂无模型」比
+      // 「车道凭空消失」好判断。
       products.push({
         id: product.id,
         displayName: product.displayName,
@@ -423,7 +431,7 @@ async function listModels(deps, search) {
 /**
  * 模型开关 / 批量开关。
  *
- * 语义与 OFM 的 Channel Pack 面板一致（用户已确认过的那套）：
+ * 三种动作的语义（用户已确认过的那套）：
  * - `action: 'toggle'` —— 单个模型开或关；
  * - `action: 'all'`    —— 该 provider 全部关 / 全部开；
  * - `action: 'reset'`  —— 清空黑名单（全部打开）。
@@ -442,7 +450,6 @@ async function mutateModel(deps, body, send) {
   if (product.kind === 'service') {
     return send(409, { error: `${product.id} 是服务型车道，模型开关由本地服务管理；请用 /opencode/refresh 刷新目录` })
   }
-  if (rejectOfmLane(deps, product, send)) return
   if (!deps.channels().has(product.id)) return send(503, { error: 'channel not mounted' })
   const action = String(body.action ?? '')
 
@@ -501,7 +508,6 @@ async function listAccounts(deps) {
 async function startLogin(deps, body, send) {
   const product = findProduct(deps, body.provider)
   if (product === undefined) return send(400, { error: 'unknown provider' })
-  if (rejectOfmLane(deps, product, send)) return
   const { fetchAuthState, decorateLoginUrl } = await import('./core/buddy-oauth.js')
   const state = await fetchAuthState(fetch, undefined, product)
   const loginUrl = decorateLoginUrl(state.authUrl, product)
@@ -511,16 +517,15 @@ async function startLogin(deps, body, send) {
 /**
  * 轮询登录结果：拿到 token 后写凭据、注册账号、武装续期。
  *
- * ⚠️ 写凭据用 `{PROVIDER}_ACCOUNT_{HEX}`（与 OFM 的 `account.create` 同一约定），
+ * ⚠️ 写凭据用 `{PROVIDER}_ACCOUNT_{HEX}`（账号池时代唯一的那套命名），
  * **不写**单凭据回退 ref —— 后者是「无账号池」时代的遗留，两处都写会让
- * 续期刷到另一份凭据上（OFM 踩过的自锁）。
+ * 续期刷到另一份凭据上（踩过的自锁：刚登录就认证失败）。
  */
 async function pollLogin(deps, body, send) {
   const product = findProduct(deps, body.provider)
   if (product === undefined) return send(400, { error: 'unknown provider' })
   const state = String(body.state ?? '')
   if (state === '') return send(400, { error: 'state is required' })
-  if (rejectOfmLane(deps, product, send)) return
   const channel = deps.channels().get(product.id)
   if (channel === undefined) return send(503, { error: 'channel not mounted' })
   const refName = String(body.refName ?? `${product.id.toUpperCase()}_ACCOUNT_${randomSuffix()}`)
@@ -596,7 +601,7 @@ async function claimCheckin(deps, body, send) {
   const product = findProduct(deps, body.provider)
   if (product === undefined) return send(400, { error: 'unknown provider' })
   if (product.id === 'workbuddy') {
-    // 原实现（channel-pack-rpc.ts 的 checkin 分支）返回同一句话：
+    // 原始实现留下的同一句话：
     // 「WorkBuddy 国际版不支持每日签到（其后端没有签到接口）」。
     return send(400, { error: 'WorkBuddy 国际版不支持每日签到（其后端没有签到接口）' })
   }
@@ -616,7 +621,6 @@ async function claimCheckin(deps, body, send) {
 async function probe(deps, body, send) {
   const product = findProduct(deps, body.provider)
   if (product === undefined) return send(400, { error: 'unknown provider' })
-  if (rejectOfmLane(deps, product, send)) return
   const channel = deps.channels().get(product.id)
   if (channel === undefined) return send(503, { error: 'channel not mounted' })
   const models = await channel.adapter.listModels(product.id)
@@ -646,13 +650,125 @@ async function probe(deps, body, send) {
   }
 }
 
+/**
+ * 读自带 key 车道的**凭据面**状态。
+ *
+ * `GET /key`（全部）或 `GET /key?lane=openrouter-free`（一条）。
+ * 返回值里**永远没有 key 本身**，只有脱敏值与「填了没」。
+ *
+ * @param {any} deps
+ * @param {URLSearchParams} search
+ */
+async function readKey(deps, search, send) {
+  const states = keyStateTable(deps)
+  const only = search.get('lane')
+  if (typeof only === 'string' && only !== '') {
+    const state = states[only]
+    if (state === undefined) return send(404, { error: `未知或非自带 key 车道：${only}` })
+    return send(200, { lane: only, ...state })
+  }
+  return send(200, { keys: states })
+}
+
+/**
+ * 保存一把 key：`POST /key { lane, key }`。
+ *
+ * 顺序固定在管理器里（先写凭据、再动适配器），这里只做入参路由与错误码映射：
+ * 400 = 输入不合格，404 = 车道不存在，503 = 未接线/没装凭据服务。
+ */
+async function writeKey(deps, body, send) {
+  const laneId = laneIdOf(body)
+  if (laneId === '') return send(400, { error: 'lane 是必填项（车道 id，例如 openrouter-free）' })
+  const manager = deps.keyed?.manager?.()
+  if (manager === undefined) return send(503, { error: '自带 key 车道未就绪（插件还没完成装配，或该模块缺失）' })
+  const outcome = await manager.saveKey(laneId, body.key)
+  if (outcome.ok !== true) {
+    return send(statusForKeyFailure(outcome.code), { error: outcome.reason ?? '保存失败', code: outcome.code })
+  }
+  return send(200, {
+    ok: true,
+    lane: laneId,
+    keyRef: outcome.keyRef,
+    masked: outcome.masked,
+    mounted: outcome.mounted === true,
+    // 挂不上不等于保存失败：目录里带占位符（Cloudflare 账号 ID）的车道就是这样。
+    ...(outcome.mountReason !== undefined && outcome.mountReason !== '' ? { mountReason: outcome.mountReason } : {}),
+  })
+}
+
+/** 清除一把 key：`DELETE /key { lane }`（凭据条目被删，环境变量回退随即生效）。 */
+async function deleteKey(deps, body, send) {
+  const laneId = laneIdOf(body)
+  if (laneId === '') return send(400, { error: 'lane 是必填项' })
+  const manager = deps.keyed?.manager?.()
+  if (manager === undefined) return send(503, { error: '自带 key 车道未就绪' })
+  const outcome = await manager.clearKey(laneId)
+  if (outcome.ok !== true) {
+    return send(statusForKeyFailure(outcome.code), { error: outcome.reason ?? '清除失败', code: outcome.code })
+  }
+  return send(200, { ok: true, lane: laneId })
+}
+
+/**
+ * 探测一把 key：`POST /key/probe { lane, force? }`。
+ *
+ * ⚠️ 这是本插件**唯一**会拿用户凭据去打公网的地方（服务车道的探针不带凭据）。
+ * 所以三件事写死在这里：
+ * 1. 上游回来的错误体先脱敏再回显（见 `src/lanes/keyed/probe.js`）；
+ * 2. 结果按 `kind` 分类 —— **401 说的是「key 不对」，不是「渠道不可用」**；
+ * 3. 探测失败仍是 HTTP 200：这是「探测完成，结论是不通过」，不是请求出错。
+ *    用 4xx 会让页面把「key 错了」渲染成「插件坏了」。
+ */
+async function probeKey(deps, body, send) {
+  const laneId = laneIdOf(body)
+  if (laneId === '') return send(400, { error: 'lane 是必填项' })
+  const manager = deps.keyed?.manager?.()
+  if (manager === undefined) return send(503, { error: '自带 key 车道未就绪' })
+  const result = await manager.probeKey(laneId, { force: body.force === true })
+  return send(200, { lane: laneId, ...result })
+}
+
+/** 页面共用的凭据面状态表：优先用管理器算好的那份，缺了就现算。 */
+function keyStateTable(deps) {
+  const live = deps.keyed?.keyStates?.()
+  if (live !== undefined && live !== null && Object.keys(live).length > 0) return live
+  const rows = deps.registry?.()?.channels ?? []
+  const out = {}
+  for (const row of rows) {
+    if (row.kind !== 'keyed') continue
+    out[row.id] = {
+      keyRef: typeof row.apiKeyEnv === 'string' ? row.apiKeyEnv : null,
+      configured: row.state === 'ready',
+      writable: true,
+      source: 'none',
+      masked: '',
+      reason: typeof row.reason === 'string' ? row.reason : '',
+    }
+  }
+  return out
+}
+
+/** 车道 id：接受 `{lane}` 或 `{id}`（页面上两种叫法都出现过，别让用户猜）。 */
+function laneIdOf(body) {
+  const raw = body?.lane ?? body?.id ?? ''
+  return String(raw).trim()
+}
+
+/** 失败码 → HTTP 状态。**不把技术细节漏给用户**：原文在 body.error 里。 */
+function statusForKeyFailure(code) {
+  switch (code) {
+    case 'unknown-lane': return 404
+    case 'invalid': return 400
+    case 'no-key-ref': return 409
+    case 'unwired': return 503
+    default: return 502
+  }
+}
+
 /** 解析出「这次操作针对的账号」的凭据。 */
 async function resolveAccountCredential(deps, body) {
   const product = findProduct(deps, body.provider)
   if (product === undefined) return { status: 400, error: 'unknown provider' }
-  if ((product.backend ?? 'native') !== 'native') {
-    return { status: 409, error: `${product.displayName} 由 OFM 后端提供，请用宿主 RPC 查询积分` }
-  }
   const pool = deps.pool()
   if (pool === undefined) return { status: 503, error: 'account pool unavailable' }
   const id = String(body.id ?? '')
@@ -663,33 +779,13 @@ async function resolveAccountCredential(deps, body) {
   return { product, credential }
 }
 
-/**
- * OFM 侧车道不许走本插件的 HTTP 面。
- *
- * 那些车道的登录 / 续期 / 积分 / 模型开关全在宿主 channel-pack 里，本插件**刻意**
- * 不代理（否则要在 13 条车道与 12 个 RPC 方法之间各写一遍转发，且任何一条的产品
- * 怪癖都会在转发层再漂移一次）。页面直接调宿主 RPC，这里只负责把「走错了后端」
- * 这件事**明确报出来**，而不是给一个语焉不详的 503。
- *
- * @returns {boolean} true = 已回 409，调用方必须立即返回
- */
-function rejectOfmLane(deps, product, send) {
-  if ((product.backend ?? 'native') === 'native') return false
-  send(409, {
-    code: 'backend-ofm',
-    error: `${product.displayName} 由 OFM 后端（channel-pack）提供，本插件的 HTTP 面不代理它；`
-      + `页面用宿主 RPC（${deps.ofmRpcPath ?? '/api/channel-pack'}）操作这条车道。`,
-  })
-  return true
-}
-
 /** 按 id 找产品。 */
 function findProduct(deps, rawId) {
   const id = String(rawId ?? '')
   return deps.products.find((product) => product.id === id)
 }
 
-/** 6 位十六进制后缀（与 OFM 的 `ACCOUNT_REF_RE` 要求一致：≥6 位）。 */
+/** 8 位十六进制后缀（账号池的 `ACCOUNT_REF_RE` 要求 ≥6 位）。 */
 function randomSuffix() {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase()
 }
@@ -719,7 +815,7 @@ async function opencodeStatus(deps) {
     }
   }
   // 按 provider 分组：用户要能分辨「这 9 个是 opencode 免费层，那 706 个是我
-  // 自己挂在 opencode 里的 OFM 网关」。混成一个数字，排错时无从下手。
+  // 自己挂在 opencode 里的本地网关」。混成一个数字，排错时无从下手。
   const providers = new Map()
   for (const row of models) {
     const id = String(row.providerID ?? '?')
@@ -780,7 +876,7 @@ async function opencodeStart(deps, send) {
  * 操作（只读池内存）。混在一起会让账号列表被网络耗时拖住，而且一次查询失败
  * 会把整份列表一起打空 —— 于是「页面打不开」和「查不到余额」变成同一个现象。
  *
- * 与 OFM 的 `credits.balances` 同一条路由分工。
+ * 与「按车道整批查余额」同一个分工原则：慢的那一跳不与轻量的那一跳混在一起。
  *
  * @param {any} deps
  * @param {URLSearchParams} search `?provider=buddy&force=1`
@@ -811,7 +907,6 @@ async function claimAll(deps, body, send) {
   const product = findProduct(deps, body.provider)
   if (product === undefined) return send(400, { error: 'unknown provider' })
   if (product.kind === 'service') return send(409, { error: `${product.id} 是服务型车道，没有积分` })
-  if (rejectOfmLane(deps, product, send)) return
   const capability = product.credits ?? { balance: false, claim: false }
   if (capability.claim !== true) {
     return send(400, { error: capability.claimNote ?? `${product.displayName} 不支持每日签到` })
@@ -823,7 +918,7 @@ async function claimAll(deps, body, send) {
 /**
  * 自动领积分：读状态 / 开关 / 立刻跑一轮。
  *
- * 三种入参的语义分开（与 OFM 的 `usage.autoCheckin` 一致）：
+ * 三种入参的语义分开（沿用既有的那套约定）：
  * - 无 `enabled`、无 `run` → 只读；
  * - `run: true`            → 立刻跑一轮（忽略「今天已跑过」那道闸门）；
  * - `enabled: boolean`      → 写开关（打开时立刻尝试跑一轮）。

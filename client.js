@@ -4,7 +4,7 @@
  * ## 一个设置项，页内两个页签
  *
  * 侧边栏只有一行「免费模型」（`settings.section` id `free-model`，order 37）；
- * 进去之后是**页内页签**（与 OFM 的页内 `ofm_tabs` 同构）：
+ * 进去之后是**页内页签**：
  *
  * | 页签 | 内容 |
  * |---|---|
@@ -27,7 +27,7 @@
  *
  * 分成两个页签之后，同一时刻屏幕上只有一个主题。
  *
- * ## 账号页的信息架构（对齐 OFM 的渠道卡）
+ * ## 账号页的信息架构
  *
  * 每张卡从上到下：渠道名 + 能力徽章 + 路由归属 + 账号计数 → 端点 →
  * **汇总行（账号 / 模型 / 剩余积分）** → 动作行（新建账号 / 全部续期 /
@@ -39,11 +39,11 @@
  *
  * ## 页头的「每日自动领积分」开关
  *
- * 与 OFM 的 usage.autoCheckin 同形：一个总开关、一天只跑一次、状态里带上次结果。
- * 但它写的是**本插件自己的状态文件**（见 src/auto-checkin.js 的说明）——
- * 与 OFM 共用一份会把对方的「今天已跑」标记抹掉。
+ * 一个总开关、一天只跑一次、状态里带上次结果。
+ * 它写的是**本插件自己的状态文件**（见 src/auto-checkin.js 的说明）——
+ * 与别人共用一份会把对方的「今天已跑」标记抹掉。
  *
- * ## 写法约束（照抄 OFM 与 model-orchestrator 的既有取舍）
+ * ## 写法约束（沿用宿主里既有的那套取舍）
  *
  * - 手写 ModuleLoader bundle：无构建步骤；
  * - 只依赖 shell 已提供的 react，不 import Harness Client 包
@@ -65,8 +65,20 @@ window.__ModuleLoader__.load({
     const h = React.createElement
     const { useState, useEffect, useCallback } = React
 
+    /**
+     * 探测结论的全集（与后端 `src/lanes/keyed/probe.js` 的 PROBE_KINDS 对齐）。
+     *
+     * 为什么在前端也要列一份：`t()` 对**不存在的键**会原样返回键名，于是
+     * 「未知的新 kind」会渲染成 `keyedProbeSomeNewKind` 这种内部名字；列一份白名单
+     * 才能把「已知」与「未知」分开处理，两边的字典也才可能漏项可见。
+     *
+     * ⚠️ 放在工厂顶部而不是挨着 `probeText`：本文件记载过「const 声明放在组件之后
+     * 造成 TDZ 白屏」的教训（见文件头的写法约束），新常量一律先声明再使用。
+     */
+    const PROBE_KIND_SUFFIXES = ['Ok', 'NoKey', 'MissingConfig', 'InvalidKey', 'Forbidden', 'RateLimited', 'Quota', 'NotFound', 'BadRequest', 'ServerError', 'Network', 'Timeout']
+
     const NS = 'settings.freeModel'
-    /** 页内页签的记忆键（与 OFM 的 `ofm:tab` 同一手法，各插件各存一份）。 */
+    /** 页内页签的记忆键（各插件各存一份，互不覆盖）。 */
     const TAB_KEY = 'free-model:tab'
     const API = '/api/free-model'
 
@@ -74,7 +86,7 @@ window.__ModuleLoader__.load({
       nav: '免费模型',
       navAccounts: '账号渠道',
       title: '免费模型总台',
-      intro: '三条不花钱的车道：CodeBuddy、WorkBuddy 账号通道，加本机 OpenCode 免费层。不需要 dsh-our-free-model，装了则自动共享账号池。',
+      intro: '三条不花钱的车道：CodeBuddy、WorkBuddy 账号通道，加本机 OpenCode 免费层。宿主若提供了 accountPool，就共享同一份账号池。',
       laneReady: '就绪',
       laneNeedsAction: '需动作',
       laneDown: '不可用',
@@ -103,7 +115,7 @@ window.__ModuleLoader__.load({
       //   限流 = 等一两分钟。原先只有一个「上游拒绝」徽章，于是额度用完会被说成
       //   「结构性拒绝、换通道或升级 build」—— 方向完全错了。
       opencodeBlocked: '上游拒绝',
-      opencodeBlockedHint: '这台机器上 OpenCode 免费层被上游拒绝（403 FreeTierError：只接受 OpenCode 客户端自身的请求）。换 ofm/* 那些模型，或更新 opencode。',
+      opencodeBlockedHint: '这台机器上 OpenCode 免费层被上游拒绝（403 FreeTierError：只接受 OpenCode 客户端自身的请求）。换别的车道，或更新 opencode。',
       opencodeQuota: '额度用尽·08:00 恢复',
       opencodeQuotaHint: 'Opencode 免费层的**当日额度**已用完（按天重置，北京时间 08:00 / UTC 00:00 恢复）。在此之前重试与换同池其它 *-free 模型通常都无效；要立刻干活请换通道。',
       opencodeRateLimited: '限流',
@@ -131,12 +143,12 @@ window.__ModuleLoader__.load({
       rateLimited: '限流中',
       empty: '还没有账号。点「新建账号」会打开浏览器登录页。',
       poolAbsent: '账号池不可用（宿主未提供 accountPool）。',
-      poolHost: '账号池：OFM 共享池',
+      poolHost: '账号池：宿主共享池',
       poolLocal: '账号池：本地退化实现',
       routeOwned: '本插件接管',
-      routeYielded: 'OFM 内置通道在跑',
+      routeYielded: '路由已被占用',
       routeAbsent: '未挂载',
-      yieldNote: 'OFM 仍持有这两条路由（说明你还停在 2.5.7）。账号与凭据是同一份，功能不受影响；升级到 2.5.8 后由本插件接管。',
+      yieldNote: '这两条路由已被另一份同实现占着（多半是宿主里还有旧版通道在跑）。账号与凭据是同一份，功能不受影响。',
       loginPending: '已打开浏览器，请完成登录…',
       loginDone: '登录成功',
       loginFailed: '登录失败',
@@ -145,7 +157,7 @@ window.__ModuleLoader__.load({
       busy: '处理中…',
       error: '出错了',
       models: '模型',
-      modelsHint: '这里的开关与 OFM 的模型黑名单是同一份数据：关掉的模型不出现在模型选择器里，但已保存的会话仍能调用它。',
+      modelsHint: '这里的开关写进账号池的同一份模型黑名单：关掉的模型不出现在模型选择器里，但已保存的会话仍能调用它。',
       modelOn: '已开',
       modelOff: '已关',
       showOff: '显示已关',
@@ -187,29 +199,9 @@ window.__ModuleLoader__.load({
       autoEnabled: '已开启每日自动领积分',
       autoDisabled: '已关闭每日自动领积分',
       autoDisabledShort: '已关闭',
-      autoHint: '开关对账号车道生效：CodeBuddy 有签到接口，WorkBuddy 没有（自动领取时跳过它）。状态存在 channel-pack/free-model-auto-checkin.json，与 OFM 的开关互不影响。',
+      autoHint: '开关对账号车道生效：CodeBuddy 有签到接口，WorkBuddy 没有（自动领取时跳过它）。状态存在 channel-pack/free-model-auto-checkin.json，与别人的开关互不影响。',
 
       // ── 车道页 ──
-      // ── OFM 侧车道（11 条）与后端 ──
-      backendNative: '后端：本插件',
-      routeOfm: 'OFM 提供',
-      backendOfm: '后端：OFM',
-      backendMissing: '后端未就绪',
-      backendOfmNote: '这条车道的登录、续期、积分与模型开关由宿主的 dsh-our-free-model（channel-pack）提供；本页直接调它的 RPC，账号与凭据仍是同一份。',
-      backendMissingNote: '没检测到 dsh-our-free-model（channel-pack）后端：车道能看，但登录 / 续期 / 积分要先装它（本页的操作按钮此时不渲染）。',
-      capUnknownHint: '这条车道由 OFM 侧提供；能力的权威说明在它的产品定义里，本页不重复断言。',
-      ofmLoginOpening: '已打开登录页，请完成授权…',
-      ofmLoginWaiting: '等待授权（最长 4 分钟）…',
-      ofmLoginTimeout: '等待超时：授权似乎没有完成。可再点一次「新建账号」。',
-      ofmLoginTitle: '登录',
-      smsPhone: '手机号',
-      smsCode: '验证码',
-      smsOpen: '用手机号登录',
-      smsSend: '发送验证码',
-      smsSent: '验证码已发送',
-      smsSubmit: '提交并登录',
-      smsHint: '备用路径：默认是弹窗里的微信扫码；手机号验证码仅在扫码不可用时使用。',
-      ofmCallFailed: 'OFM 后端调用失败',
       noteLabel: '说明',
       localWhy: '这条车道单独一页：它的失败点与账号车道完全不同（二进制在不在、端口被占、serve 版本太旧），排错时不该和「账号要不要重新登录」混在一起看。',
       renewalNote: '续期只换令牌，不动账号索引；凭据写入仍然是宿主那一份。',
@@ -255,7 +247,7 @@ window.__ModuleLoader__.load({
 
       // 第三页：自带 key
       keyedTitle: '自带 key 的免费渠道',
-      keyedIntro: '注册即送额度、或有免费层的 OpenAI 兼容端点。有 key 就能用；没 key 时这一页只回答「去哪拿 key」，不放点了必然失败的按钮。',
+      keyedIntro: '注册即送额度、或有免费层的 OpenAI 兼容端点。这一页可以直接填 key：保存后立刻可用，还能一键测试 key 到底通不通。',
       keyedEmpty: '暂无自带 key 渠道（渠道目录里可以随时加）',
       keyedEmptyHint: '渠道目录是三层叠加的：随包 / 远程 / 本地覆盖文件。点上面的「检查目录」拉一次远程目录，或往本地覆盖文件里加一条。',
       keyedEnv: '凭据名',
@@ -264,8 +256,41 @@ window.__ModuleLoader__.load({
       keyedFree: '免费额度',
       keyedUnknown: '未确证',
       keyedUnknownHint: '这条记录有字段没有实证（多半是免费额度的具体数值）；运行时以实时模型目录为准。',
-      keyedNoTest: '这一页不提供「测试连通性」：没有 key 的车道点下去必然失败，只给「去哪拿 key」。',
       keyedModels: '{count} 个模型',
+      // ── 填 key / 测 key（0.4.1）─────────────────────────────────────────────
+      keyedConfigured: '已配 {count}',
+      keyedKeyState: 'key',
+      keyedKeySet: '已填写',
+      keyedKeyUnset: '未填写',
+      keyedKeyPlaceholder: '把 key 粘进来（回车即保存）',
+      keyedKeyReplace: '粘贴新 key 可替换现有的',
+      keyedKeySave: '保存 key',
+      keyedKeySaving: '保存中…',
+      keyedKeyShow: '显示',
+      keyedKeyHide: '隐藏',
+      keyedKeyClear: '清除 key',
+      keyedKeyClearing: '清除中…',
+      keyedKeyReadonly: '宿主把这个凭据标成只读：它来自环境变量或 .env 文件，页面上改不了。要换成自己的 key，先把那个环境变量去掉，或者改用别的条目名。',
+      keyedKeylessHint: '免 key 直连：这条车道不需要凭据，直接选它的模型即可。',
+      keyedSrcFile: '来自 DSH 凭据文件',
+      keyedSrcEnv: '来自环境变量',
+      keyedSavedNotMounted: 'key 已保存，但这条车道仍未挂载：',
+      keyedProbe: '测试 key',
+      keyedProbing: '测试中…',
+      keyedProbeModels: '上游返回 {count} 个模型',
+      // 探测结果的九种结论：**分开说**，因为处置完全不同（换 key / 等一会 / 换网络）。
+      keyedProbeOk: 'key 有效：上游接受了这把 key',
+      keyedProbeNoKey: '还没填 key：先保存一把再测',
+      keyedProbeMissingConfig: '这条车道现在测不了',
+      keyedProbeInvalidKey: 'key 被上游拒绝',
+      keyedProbeForbidden: 'key 有效，但这个接口没权限',
+      keyedProbeRateLimited: '被限流（不是 key 的问题）',
+      keyedProbeQuota: '额度不足',
+      keyedProbeNotFound: '端点不存在（目录里的地址可能过期了）',
+      keyedProbeBadRequest: '请求被拒（参数/模型名的问题）',
+      keyedProbeServerError: '上游故障（与 key 无关）',
+      keyedProbeNetwork: '连不上上游',
+      keyedProbeTimeout: '探测超时',
 
       // 第二页：本地与网关
       serviceProbe: '重新探测',
@@ -280,7 +305,7 @@ window.__ModuleLoader__.load({
       nav: 'Free models',
       navAccounts: 'Account lanes',
       title: 'Free model console',
-      intro: 'Three lanes that cost nothing: CodeBuddy and WorkBuddy account lanes, plus the local OpenCode free tier. dsh-our-free-model is optional — when present, the account pool is shared.',
+      intro: 'Three lanes that cost nothing: CodeBuddy and WorkBuddy account lanes, plus the local OpenCode free tier. When the host provides an accountPool, the same pool is shared.',
       laneReady: 'Ready',
       laneNeedsAction: 'Needs action',
       laneDown: 'Down',
@@ -305,7 +330,7 @@ window.__ModuleLoader__.load({
       opencodeSse: 'Streaming: SSE',
       opencodeSseOff: 'Streaming: polling (fallback)',
       opencodeBlocked: 'Upstream refused',
-      opencodeBlockedHint: 'On this machine the OpenCode free tier is refused upstream (403 FreeTierError: only OpenCode itself may call it). Switch to ofm/* models, or update opencode.',
+      opencodeBlockedHint: 'On this machine the OpenCode free tier is refused upstream (403 FreeTierError: only OpenCode itself may call it). Switch to another lane, or update opencode.',
       opencodeQuota: 'Daily quota used · resets 08:00',
       opencodeQuotaHint: 'The daily free quota is used up. It resets by day at 08:00 Beijing time (UTC 00:00). Retrying, or switching to another *-free model in the same pool, usually will not help until then — switch lanes instead.',
       opencodeRateLimited: 'Rate limited',
@@ -333,12 +358,12 @@ window.__ModuleLoader__.load({
       rateLimited: 'rate limited',
       empty: 'No accounts yet. “New account” opens the browser sign-in page.',
       poolAbsent: 'Account pool unavailable (the host did not provide accountPool).',
-      poolHost: 'pool: shared with OFM',
+      poolHost: 'pool: shared with the host',
       poolLocal: 'pool: local fallback',
       routeOwned: 'served by this plugin',
-      routeYielded: 'served by OFM built-in',
+      routeYielded: 'served elsewhere',
       routeAbsent: 'not mounted',
-      yieldNote: 'OFM still owns these routes (you are on 2.5.7). Accounts and credentials are the same data, so nothing changes; after upgrading to 2.5.8 this plugin takes over.',
+      yieldNote: 'These routes are served by another identical implementation (likely an older lane still running in the host). Accounts and credentials are the same data, so nothing changes.',
       loginPending: 'Browser opened — finish signing in…',
       loginDone: 'Signed in',
       loginFailed: 'Sign-in failed',
@@ -347,7 +372,7 @@ window.__ModuleLoader__.load({
       busy: 'working…',
       error: 'Something went wrong',
       models: 'Models',
-      modelsHint: 'These switches share the same blacklist as OFM: a disabled model leaves the picker, while saved sessions can still call it.',
+      modelsHint: 'These switches write the pool\'s shared model blacklist: a disabled model leaves the picker, while saved sessions can still call it.',
       modelOn: 'on',
       modelOff: 'off',
       showOff: 'show off',
@@ -387,27 +412,8 @@ window.__ModuleLoader__.load({
       autoEnabled: 'Daily auto check-in enabled',
       autoDisabled: 'Daily auto check-in disabled',
       autoDisabledShort: 'off',
-      autoHint: 'Applies to the account lanes: CodeBuddy has a check-in API, WorkBuddy does not (it is skipped). State lives in channel-pack/free-model-auto-checkin.json, independent of the OFM switch.',
+      autoHint: 'Applies to the account lanes: CodeBuddy has a check-in API, WorkBuddy does not (it is skipped). State lives in channel-pack/free-model-auto-checkin.json, independent of anyone else\'s switch.',
 
-      backendNative: 'backend: this plugin',
-      routeOfm: 'provided by OFM',
-      backendOfm: 'backend: OFM',
-      backendMissing: 'backend not ready',
-      backendOfmNote: 'Sign-in, renewal, credits and model switches for this lane come from the host dsh-our-free-model (channel-pack). This page calls its RPC directly; the accounts and credentials are still the same copy.',
-      backendMissingNote: 'No dsh-our-free-model (channel-pack) backend detected: the lane is listed, but sign-in / renewal / credits need it installed (action buttons are hidden meanwhile).',
-      capUnknownHint: 'This lane is provided by OFM; its product definition is the authority on capabilities, and this page does not restate them.',
-      ofmLoginOpening: 'Sign-in page opened — finish the authorization…',
-      ofmLoginWaiting: 'Waiting for authorization (up to 4 minutes)…',
-      ofmLoginTimeout: 'Timed out: the authorization does not look finished. Press “New account” again.',
-      ofmLoginTitle: 'Sign in',
-      smsPhone: 'Phone',
-      smsCode: 'Code',
-      smsOpen: 'Sign in with phone',
-      smsSend: 'Send code',
-      smsSent: 'Code sent',
-      smsSubmit: 'Submit and sign in',
-      smsHint: 'Fallback path: the default is the WeChat QR inside the popup; the phone code is only for when scanning is unavailable.',
-      ofmCallFailed: 'OFM backend call failed',
       noteLabel: 'Note',
       localWhy: 'This lane has its own page because its failure modes are completely different (missing binary, port taken, old serve build) — debugging it should not be mixed up with “does an account need to sign in again”.',
       renewalNote: 'Renewal only swaps tokens; the account index and the credential store stay the same.',
@@ -447,7 +453,7 @@ window.__ModuleLoader__.load({
       reasonLabel: 'Reason',
 
       keyedTitle: 'Free channels that use your own key',
-      keyedIntro: 'OpenAI-compatible endpoints with signup credits or a free tier. With a key they work; without one this page only answers “where do I get the key” — no buttons that are guaranteed to fail.',
+      keyedIntro: 'OpenAI-compatible endpoints with signup credits or a free tier. Paste your key right on this page: saving makes the lane usable immediately, and one button tests whether the key actually works.',
       keyedEmpty: 'No own-key channels yet (the channel catalog can add them any time)',
       keyedEmptyHint: 'The catalog stacks three layers: shipped / remote / local override file. Press “Check catalog” above to pull the remote layer, or add a record to the local file.',
       keyedEnv: 'Credential name',
@@ -456,8 +462,39 @@ window.__ModuleLoader__.load({
       keyedFree: 'Free tier',
       keyedUnknown: 'unconfirmed',
       keyedUnknownHint: 'Some fields of this record have no evidence (usually the exact free-tier numbers); the live model catalog wins at runtime.',
-      keyedNoTest: 'This page offers no “test connectivity”: a lane without a key would always fail, so it only points at “where to get the key”.',
       keyedModels: '{count} models',
+      keyedConfigured: '{count} configured',
+      keyedKeyState: 'key',
+      keyedKeySet: 'set',
+      keyedKeyUnset: 'not set',
+      keyedKeyPlaceholder: 'Paste the key (Enter saves)',
+      keyedKeyReplace: 'Paste a new key to replace the current one',
+      keyedKeySave: 'Save key',
+      keyedKeySaving: 'Saving…',
+      keyedKeyShow: 'Show',
+      keyedKeyHide: 'Hide',
+      keyedKeyClear: 'Clear key',
+      keyedKeyClearing: 'Clearing…',
+      keyedKeyReadonly: 'The host marks this credential read-only: it comes from the environment or a .env file. To use your own key, remove that variable first or reference it under another credential name.',
+      keyedKeylessHint: 'Keyless direct access: this lane needs no credential, just pick its models.',
+      keyedSrcFile: 'from the DSH credential file',
+      keyedSrcEnv: 'from the environment',
+      keyedSavedNotMounted: 'Key saved, but the lane is still not mounted: ',
+      keyedProbe: 'Test key',
+      keyedProbing: 'Testing…',
+      keyedProbeModels: 'upstream returned {count} models',
+      keyedProbeOk: 'key accepted by the upstream',
+      keyedProbeNoKey: 'no key stored yet: save one first',
+      keyedProbeMissingConfig: 'this lane cannot be tested right now',
+      keyedProbeInvalidKey: 'the upstream rejected this key',
+      keyedProbeForbidden: 'the key works but this endpoint is not permitted',
+      keyedProbeRateLimited: 'rate limited (not a key problem)',
+      keyedProbeQuota: 'quota exhausted',
+      keyedProbeNotFound: 'endpoint not found (the catalog URL may be stale)',
+      keyedProbeBadRequest: 'request refused (parameters or model name)',
+      keyedProbeServerError: 'upstream failure (unrelated to the key)',
+      keyedProbeNetwork: 'cannot reach the upstream',
+      keyedProbeTimeout: 'probe timed out',
 
       serviceProbe: 'Probe again',
       serviceProbing: 'Probing…',
@@ -468,68 +505,27 @@ window.__ModuleLoader__.load({
       serviceEmpty: 'No service channels.',
     }
 
-    async function call(path, body) {
-      const response = await fetch(API + path, body === undefined
-        ? { headers: { accept: 'application/json' } }
-        : {
-            method: 'POST',
-            headers: { 'content-type': 'application/json', accept: 'application/json' },
-            body: JSON.stringify(body),
-          })
+    /**
+     * 调本插件的 Host 面。
+     *
+     * @param {string} path   `/channels`、`/key` …
+     * @param {object} [body] JSON 请求体（GET/DELETE 时可省）
+     * @param {'GET'|'POST'|'DELETE'} [method] 默认「有 body 就 POST，没有就 GET」。
+     *        DELETE 必须显式指定：浏览器不会因为「有没有 body」自己换方法，
+     *        而 `/key` 的删除语义与保存**完全不同**（一个写凭据、一个删凭据）。
+     */
+    async function call(path, body, method) {
+      const verb = method ?? (body === undefined ? 'GET' : 'POST')
+      const response = await fetch(API + path, {
+        method: verb,
+        headers: body === undefined
+          ? { accept: 'application/json' }
+          : { 'content-type': 'application/json', accept: 'application/json' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      })
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`)
       return payload
-    }
-
-    /**
-     * 宿主 channel-pack 的 RPC：路径、信封、拆包。
-     *
-     * ## 为什么页面直接调它，而不是经本插件的 Host 面转发
-     *
-     * 11 条 OFM 侧车道的登录 / 续期 / 积分 / 模型开关**全部**在宿主 channel-pack
-     * 里（那里是它们的唯一实现）。在本插件的 Host 面再包一层转发，等于把 12 个方法
-     * × 13 条车道各写一遍胶水，且每条车道的产品怪癖（device_mid、captcha、
-     * 设备签名 generation…）都会在转发层再漂移一次。
-     *
-     * 页面本来就在同一个应用页里、拿着同一份会话：直接调它的 RPC 既短又准
-     * （OFM 自己的 Channel Pack 面板就是这么调的）。
-     *
-     * ⚠️ 路径与通道名必须与 OFM 的 `channel-pack-rpc.ts:CHANNEL_PACK_API_PATH` /
-     * `CHANNEL_PACK_ENDPOINT` 一致；本插件 Host 侧把同一对常量放在
-     * `src/lanes.js`（那里的注释与这里互相指向）。不一致的表现是「点了没反应」。
-     */
-    const OFM_RPC = '/api/channel-pack'
-    const OFM_ENDPOINT = 'channel-pack'
-    let ofmRpcSeq = 0
-
-    /**
-     * 调一次宿主 RPC，返回 value；失败**抛错**（文案直接展示给用户）。
-     *
-     * 信封形状（OFM 侧 `connection.fetch.register` 的 handler 定义）：
-     * 请求 `{type:'client-request', rpcId, method:'channel-pack', payload:{method, payload}}`，
-     * 响应 `{type:'server-response', rpcId, result:{ok, value|error}}`。
-     */
-    async function ofmCall(method, payload) {
-      ofmRpcSeq += 1
-      const response = await fetch(OFM_RPC, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify({
-          type: 'client-request',
-          rpcId: 'free-model-' + ofmRpcSeq,
-          method: OFM_ENDPOINT,
-          payload: { method: method, payload: payload === undefined ? {} : payload },
-        }),
-      })
-      const envelope = await response.json().catch(() => undefined)
-      if (!response.ok) throw new Error('HTTP ' + response.status + ' ' + OFM_RPC)
-      const result = envelope === undefined || envelope === null ? undefined : envelope.result
-      if (result === undefined || result === null) throw new Error('channel-pack RPC 无 result: ' + method)
-      if (result.ok === false) {
-        const error = result.error === undefined || result.error === null ? {} : result.error
-        throw new Error(typeof error.message === 'string' ? error.message : 'channel-pack RPC 失败: ' + method)
-      }
-      return result.value
     }
 
     function formatTime(ms, t) {
@@ -541,13 +537,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 一个模型行：名字 + 元数据 + 开关。
-     *
-     * 关掉的模型**照样列出**（只是变灰）—— 与 OFM 的 Channel Pack 面板同一条
-     * 理由：不列出来用户就没法重新打开。
-     */
-    /**
-     * 开关：与 OFM 的 `ofm_switch` 同一实现。
+     * 开关：沿用宿主主题里那套 on/off 视觉。
      *
      * 用 `<button role="switch">` + `<i>` 而不是 `<input type=checkbox>`：
      * 宿主主题给这条组合定义了完整的 on/off 视觉（含滑块位移与按压回弹），
@@ -585,8 +575,7 @@ window.__ModuleLoader__.load({
     /**
      * 一个模型行：开关 + id + 元数据。
      *
-     * 关掉的模型**照样列出**（只是变灰）—— 与 OFM 的 Channel Pack 面板同一条
-     * 理由：不列出来用户就没法重新打开。
+     * 关掉的模型**照样列出**（只是变灰）—— 不列出来用户就没法重新打开。
      */
     function ModelRow(props) {
       const { model, busy, onToggle, t } = props
@@ -626,16 +615,15 @@ window.__ModuleLoader__.load({
       return String(value)
     }
 
-    /** 一张渠道卡：标题 + 账号列表 + 每条的操作按钮。 */
     /**
      * 一张渠道卡：标题 + 页签 + 账号/模型两个面板。
      *
-     * 布局与 OFM 的 `ChannelCard` 对齐：卡片头一行（名字、端点、状态药丸、
-     * 计数），下面一条胶囊页签，再下面是内容区。所有控件都用本文件的
-     * Switch / Pill / Button，不引入宿主其它组件（它们的 API 会随版本移动）。
+     * 卡片头一行（名字、端点、状态药丸、计数），下面一条胶囊页签，再下面是内容区。
+     * 所有控件都用本文件的 Switch / Pill / Button，不引入宿主其它组件
+     * （它们的 API 会随版本移动）。
      */
     /**
-     * 余额徽章（与 OFM 的 \`ofm_creditbadge\` 同款）。
+     * 余额徽章。
      *
      * 三种状态必须分辨得开：
      * - 正在查 → 「余额查询中…」（显示 0 会让用户以为额度用完了）；
@@ -660,7 +648,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 一张账号车道卡（布局与 OFM 的 ChannelCard 对齐）。
+     * 一张账号车道卡。
      *
      * 从上到下四段各有分工：
      * - 头行：这是谁、能干什么（能力徽章）、路由归谁、几个号；
@@ -675,14 +663,7 @@ window.__ModuleLoader__.load({
       const {
         product, accounts, models, creditRow, balanceLoading, tab, onTab, busy, claimBusy, t,
         onAction, onModelAction, onLogin, onClaimAll, onRefreshBalances, onRenewAll,
-        // OFM 侧车道多带四个字段：
-        //   ready       —— 后端是否就绪（未就绪则一个动作按钮都不渲染）
-        //   backendNote —— 后端说明（页面上要能解释「为什么按钮不见 / 为什么能在这里管」）
-        //   sms*        —— 只有 Loomy 有的手机号备用路径
-        ready = true, backendNote, balanceNote, rowClaim = true,
-        sms, onSmsOpen, onSmsChange, onSmsSend, onSmsSubmit,
       } = props
-      const isOfm = product.backend === 'ofm'
       const [showOff, setShowOff] = useState(false)
       const capability = product.credits ?? { balance: false, claim: false }
       const enabledAccounts = accounts.filter((account) => account.enabled).length
@@ -690,16 +671,10 @@ window.__ModuleLoader__.load({
       const onCount = models.length - offCount
       const list = showOff ? models : models.filter((model) => !model.disabled)
 
-      // 路由归属决定状态点：本插件接管 = ok，OFM 内置在跑 = warn。
-      // OFM 侧车道单列一档：它们**本来**就由宿主提供，说「未挂载」会误导；
-      // 后端没跑时才是真的不可用（err）。
-      const routeTone = isOfm
-        ? (ready ? 'ok' : 'err')
-        : product.route === 'registered' ? 'ok' : product.route === 'yielded' ? 'warn' : undefined
-      const routeText = isOfm
-        ? (ready ? t('routeOfm') : t('backendMissing'))
-        : product.route === 'registered' ? t('routeOwned')
-          : product.route === 'yielded' ? t('routeYielded') : t('routeAbsent')
+      // 路由归属决定状态点：本插件接管 = ok，路由被别人占着 = warn，没挂上 = 无点。
+      const routeTone = product.route === 'registered' ? 'ok' : product.route === 'yielded' ? 'warn' : undefined
+      const routeText = product.route === 'registered' ? t('routeOwned')
+        : product.route === 'yielded' ? t('routeYielded') : t('routeAbsent')
 
       const rows = creditRow?.accounts ?? []
       const known = rows.filter((row) => Number.isFinite(row.balance?.total))
@@ -711,23 +686,14 @@ window.__ModuleLoader__.load({
           h('strong', { key: 'n' }, product.displayName),
           h(Pill, { key: 'cap', tone: 'ok' }, t('capFull')),
           h(Pill, { key: 'r', tone: routeTone, strong: true }, routeText),
-          // 后端药丸只给 OFM 侧车道：native 两条说「后端：本插件」是废话。
-          isOfm
-            ? h(Pill, { key: 'bk', tone: ready ? undefined : 'err', strong: true },
-                ready ? t('backendOfm') : t('backendMissing'))
-            : null,
           h('span', { key: 'c', className: 'ow-count' },
             enabledAccounts + '/' + accounts.length + ' ' + t('accounts')),
         ]),
         h('code', { key: 'ep', className: 'ow-ep' }, product.endpoint),
-        h('p', { key: 'caphint', className: 'ow-hint' }, isOfm ? t('capUnknownHint') : t('capFullHint')),
-        // 车道的产品说明（来源见 src/lanes.js 的注册表：每条都写明该渠道的坑）。
+        h('p', { key: 'caphint', className: 'ow-hint' }, t('capFullHint')),
+        // 车道的产品说明（来源见 src/lanes/registry.js 的注册表：每条都写明该渠道的坑）。
         typeof product.note === 'string' && product.note.length > 0
           ? h('p', { key: 'lnote', className: 'ow-hint' }, t('noteLabel') + '：' + product.note)
-          : null,
-        // 后端说明：能在这里管这条车道（ready）与为什么按钮全不见（!ready）都要说清。
-        typeof backendNote === 'string' && backendNote.length > 0
-          ? h('p', { key: 'bnote', className: 'ow-hint' }, backendNote)
           : null,
 
         h('div', { key: 'sum', className: 'ow-chanmeta' }, [
@@ -741,9 +707,7 @@ window.__ModuleLoader__.load({
             : null,
         ]),
 
-        // ⚠️ 后端未就绪时**不渲染**动作行：给一个点了必然失败的按钮，
-        // 用户的下一步动作是「反复点它」而不是「去装后端」。
-        ready ? h('div', { key: 'acts', className: 'ow-actions' }, [
+        h('div', { key: 'acts', className: 'ow-actions' }, [
           h(Button, { key: 'add', kind: 'primary', disabled: busy, onClick: onLogin }, t('addAccount')),
           accounts.length > 0
             ? h(Button, { key: 'rn', disabled: busy, onClick: onRenewAll, title: t('renewalNote') }, t('renewAll'))
@@ -756,45 +720,12 @@ window.__ModuleLoader__.load({
             ? h(Button, { key: 'cl', disabled: busy || claimBusy, onClick: onClaimAll },
                 claimBusy ? t('claimRun') : t('claim'))
             : null,
-        ]) : null,
-
-        // 手机号登录（只有 Loomy 有这条备用路径）：未展开时是一个按钮，
-        // 展开后是「手机号 + 发码 + 验证码 + 提交」四件套。
-        ready && product.smsFallback === true
-          ? h('div', { key: 'sms', className: 'ow-sms' }, sms === undefined
-            ? h(Button, { key: 'o', disabled: busy, onClick: onSmsOpen }, t('smsOpen'))
-            : [
-                h('span', { key: 'h', className: 'ow-hint' }, t('smsHint')),
-                h('input', {
-                  key: 'p', className: 'ow-input', type: 'tel', placeholder: t('smsPhone'),
-                  value: sms.phone ?? '', onChange: (event) => onSmsChange({ phone: event.target.value }),
-                }),
-                h(Button, {
-                  key: 's', disabled: busy || sms.busy === true || (sms.phone ?? '').length === 0,
-                  onClick: onSmsSend,
-                }, t('smsSend')),
-                h('input', {
-                  key: 'c', className: 'ow-input', inputMode: 'numeric', placeholder: t('smsCode'),
-                  value: sms.code ?? '', onChange: (event) => onSmsChange({ code: event.target.value }),
-                }),
-                h(Button, {
-                  key: 'b', kind: 'primary', disabled: busy || sms.busy === true || (sms.code ?? '').length === 0,
-                  onClick: onSmsSubmit,
-                }, t('smsSubmit')),
-                typeof sms.error === 'string' && sms.error.length > 0
-                  ? h('span', { key: 'e', className: 'ow-note error' }, sms.error)
-                  : null,
-              ])
-          : null,
+        ]),
 
         // 部分账号查不到余额时**明说**：否则卡片上的合计数看起来像「余额掉了」。
         creditRow !== undefined && failures > 0
           ? h('p', { key: 'berr', className: 'ow-balerr-line', role: 'status' },
               t('balancePartial').replace('{count}', String(failures)))
-          : null,
-        // 车道级余额失败（OFM 侧）：把后端给的原因原样显示 —— 藏进日志等于让用户猜。
-        typeof balanceNote === 'string' && balanceNote.length > 0
-          ? h('p', { key: 'bnerr', className: 'ow-balerr-line', role: 'status' }, balanceNote)
           : null,
 
         h('div', { key: 'tabs', className: 'ow-tabs' }, [
@@ -869,7 +800,7 @@ window.__ModuleLoader__.load({
                     }, account.enabled ? t('disable') : t('enable')),
                     h(Button, { key: 'r', disabled: busy, onClick: () => onAction({ action: 'refresh', id: account.id }) }, t('renew')),
                     h(Button, { key: 'c', disabled: busy, onClick: () => onAction({ action: 'credits', id: account.id }) }, t('credits')),
-                    capability.claim === true && rowClaim
+                    capability.claim === true
                       ? h(Button, { key: 'k', disabled: busy, onClick: () => onAction({ action: 'checkin', id: account.id }) }, t('checkin'))
                       : null,
                     h(Button, { key: 'p', disabled: busy, onClick: () => onAction({ action: 'probe', id: account.id }) }, t('probe')),
@@ -883,7 +814,7 @@ window.__ModuleLoader__.load({
     /**
      * 「每日自动领积分」条。
      *
-     * 与 OFM 的自动签到行同形：开关 + 状态药丸 + 上次结果 + 立即执行。
+     * 开关 + 状态药丸 + 上次结果 + 立即执行。
      * 状态药丸三态必须分辨得开 —— 「进行中」和「今天没领」在用户眼里是
      * 「等一下」与「去点一下」两种完全不同的动作。
      */
@@ -1260,17 +1191,30 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 一张「自带 key」渠道卡。
+     * 一条「自带 key」渠道卡。
      *
-     * ## 为什么这里**没有**「测试连通性」
+     * ## 0.4.1 的改动：这一页现在**能填 key、能测 key**
      *
-     * 没有 key 的车道点测试必然失败，而失败信息会被读成「这条渠道不可用」——
-     * 结论完全错了（它只是还没配 key）。所以这一页只回答两件事：
-     * **它要什么**（凭据名）与**去哪拿**（signupURL）。真正能测的时候（凭据就绪）
-     * 用户已经在会话里选到它的模型了，那里才是验证的地方。
+     * 上一版刻意只放「去拿 key」和「文档」两个链接，理由是「没有 key 的车道点测试
+     * 必然失败，而失败会被读成这条渠道不可用」。那个理由对**没 key** 成立的只有一半：
+     * 用户把 key 粘进来之后，最想知道的就是「我填对了没有」，而页面上根本没有入口。
+     *
+     * 现在的做法是三条一起：
+     *
+     * 1. **填**：输入框 + 保存，走 `POST /key`（写宿主凭据，返回脱敏值）；
+     * 2. **测**：走 `POST /key/probe`，结果按 `kind` 分类 ——
+     *    401 说的是「key 不对」、429 说的是「限流」、超时说的是「网络慢」，
+     *    **都不是「这条渠道不可用」**。所以旧理由不再成立；
+     * 3. **清**：走 `DELETE /key`，删掉宿主的凭据条目（环境变量回退随即重新生效）。
+     *
+     * ## 输入框的三条纪律
+     *
+     * - `type: 'password'` + 保存后**立刻清空**本地 state：明文 key 不进 DOM 快照；
+     * - 已配置时只显示脱敏值（`sk-ab…wxyz`），**永不回显原文**；
+     * - 回车即保存（粘贴 → Enter 是最短路径），但按钮同时存在（触屏没有回车）。
      */
     function KeyedCard(props) {
-      const { channel, t } = props
+      const { channel, t, keyState, probe, busy, error, onSave, onClear, onProbe } = props
       const capability = channel?.capability ?? { tools: null, vision: null }
       const tools = capability.tools ?? null
       const vision = capability.vision ?? null
@@ -1280,6 +1224,25 @@ window.__ModuleLoader__.load({
       const docs = safeHref(channel?.docsURL)
       const env = safeText(channel?.apiKeyEnv, 64)
       const freeTier = safeText(channel?.freeTier, 300)
+      const keyless = env === ''
+      const [draft, setDraft] = useState('')
+      const [reveal, setReveal] = useState(false)
+      const configured = keyState?.configured === true
+      const masked = safeText(keyState?.masked, 48)
+      const sourceText = describeKeySource(keyState?.source, t)
+      const canWrite = keyState === undefined ? true : keyState.writable !== false
+      const busySave = busy === 'save'
+      const busyClear = busy === 'clear'
+      const busyProbe = busy === 'probe'
+
+      const submit = () => {
+        if (draft.trim() === '' || busySave) return
+        const action = onSave
+        // ⚠️ 先清空再调用：无论保存成功与否，明文都**不再留在组件里**。
+        // 失败时用户在错误行里看到的是原因，不是自己刚才粘的字符串。
+        setDraft('')
+        if (typeof action === 'function') action(draft)
+      }
 
       return h('div', { className: 'ow-card ow-keyed', 'data-kind': 'keyed' }, [
         h('div', { key: 'head', className: 'ow-cardhead' }, [
@@ -1309,6 +1272,76 @@ window.__ModuleLoader__.load({
               h('code', { key: 'c', className: 'ow-mono' }, env),
             ])
           : null,
+        // ── 凭据面：已配置 / 从哪来 / 脱敏值 ─────────────────────────────────
+        keyless
+          ? h('p', { key: 'kl', className: 'ow-hint' }, t('keyedKeylessHint'))
+          : h('div', { key: 'keystate', className: 'ow-keyrow', 'data-configured': configured ? 'true' : 'false' }, [
+              h('span', { key: 'l', className: 'ow-dim' }, t('keyedKeyState') + '：'),
+              configured
+                ? h(Pill, { key: 'p', tone: 'ok' }, t('keyedKeySet'))
+                : h(Pill, { key: 'p', tone: 'warn' }, t('keyedKeyUnset')),
+              masked !== ''
+                ? h('code', { key: 'm', className: 'ow-mono ow-keymask' }, masked)
+                : null,
+              sourceText !== ''
+                ? h('span', { key: 's', className: 'ow-dim' }, sourceText)
+                : null,
+            ]),
+        // ── 填 key：输入 + 保存 + 清空 + 显示/隐藏 ──────────────────────────
+        keyless
+          ? null
+          : h('div', { key: 'keyform', className: 'ow-keyform' }, [
+              h('input', {
+                key: 'i',
+                className: 'ow-input ow-keyinput',
+                type: reveal ? 'text' : 'password',
+                autoComplete: 'off',
+                spellCheck: false,
+                placeholder: configured ? t('keyedKeyReplace') : t('keyedKeyPlaceholder'),
+                value: draft,
+                disabled: busySave || canWrite === false,
+                onChange: (event) => setDraft(event?.target?.value ?? ''),
+                onKeyDown: (event) => {
+                  if (event?.key === 'Enter') submit()
+                },
+              }),
+              h(Button, { key: 's', kind: 'primary', disabled: busySave || draft.trim() === '' || canWrite === false, onClick: submit },
+                busySave ? t('keyedKeySaving') : t('keyedKeySave')),
+              h(Button, { key: 'r', disabled: busySave, onClick: () => setReveal(!reveal) },
+                reveal ? t('keyedKeyHide') : t('keyedKeyShow')),
+              configured && canWrite
+                ? h(Button, { key: 'c', kind: 'danger', disabled: busyClear, onClick: () => { if (typeof onClear === 'function') onClear() } },
+                    busyClear ? t('keyedKeyClearing') : t('keyedKeyClear'))
+                : null,
+            ]),
+        // 宿主的 describe 说不能写时，明确解释一句（而不是给个禁用的输入框让人猜）。
+        canWrite === false && keyless === false
+          ? h('p', { key: 'ro', className: 'ow-hint' }, t('keyedKeyReadonly'))
+          : null,
+        // 保存/清除失败的原文（后端给的 reason 已经可读，这里只做「是谁失败了」的定位）。
+        typeof error === 'string' && error !== ''
+          ? h('p', { key: 'err', className: 'ow-statuserr', role: 'alert' }, safeText(error, 300))
+          : null,
+        // ── 探测：结果按 kind 分类，绝不把「key 不对」说成「渠道不可用」 ──────
+        keyless
+          ? null
+          : h('div', { key: 'probebox', className: 'ow-probebox' }, [
+              h('div', { key: 'row', className: 'ow-actions' }, [
+                h(Button, {
+                  key: 'b',
+                  disabled: busyProbe || canWrite === false,
+                  onClick: () => { if (typeof onProbe === 'function') onProbe() },
+                }, busyProbe ? t('keyedProbing') : t('keyedProbe')),
+              ]),
+              probe !== undefined && probe !== null
+                ? h('p', {
+                    key: 'res',
+                    className: probe.ok === true ? 'ow-probeok' : 'ow-probeerr',
+                    role: 'status',
+                    'data-kind': String(probe.kind ?? ''),
+                  }, probeText(probe, t))
+                : null,
+            ]),
         channel?.unknown === true
           ? h('p', { key: 'uh', className: 'ow-hint' }, t('keyedUnknownHint'))
           : null,
@@ -1329,6 +1362,43 @@ window.__ModuleLoader__.load({
       ])
     }
 
+    /** 凭据来源的人话（与后端 `describeSource` 同一套词汇）。 */
+    function describeKeySource(source, t) {
+      if (source === 'file') return t('keyedSrcFile')
+      if (source === 'env') return t('keyedSrcEnv')
+      if (source === 'keyless') return ''
+      return ''
+    }
+
+    /**
+     * 探测结果 → 一行文字。
+     *
+     * 数字与上游原话都在里面：用户要能自己判断「是不是我复制错了」。
+     * `ms` 也显示 —— 一个 40ms 的 401 说明是被直接拒的（key 形态不对），
+     * 一个 7000ms 的超时说明是网络，两者处置完全不同。
+     */
+    function probeText(probe, t) {
+      const kind = String(probe?.kind ?? '')
+      const suffix = probeKindSuffix(kind)
+      // 字典里**已知**的那几档走 i18n；未知 kind（未来版本/远程加的新分类）直接显示
+      // kind 本身 —— 显示 `keyedProbeSomeNewKind` 这种内部键名，用户读不懂。
+      const title = PROBE_KIND_SUFFIXES.includes(suffix) ? t('keyedProbe' + suffix) : (kind === '' ? '—' : kind)
+      const ms = typeof probe?.ms === 'number' && probe.ms > 0 ? '（' + String(probe.ms) + ' ms）' : ''
+      const reason = typeof probe?.reason === 'string' && probe.reason !== '' ? '：' + safeText(probe.reason, 260) : ''
+      const models = Array.isArray(probe?.models) && probe.models.length > 0
+        ? '；' + t('keyedProbeModels').replace('{count}', String(probe.models.length))
+        : ''
+      return title + ms + reason + models
+    }
+
+    /** `invalid-key` → `InvalidKey`（i18n key 的驼峰后缀）。 */
+    function probeKindSuffix(kind) {
+      return kind
+        .split('-')
+        .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+        .join('')
+    }
+
     /**
      * 第三页：自带 key 的免费渠道。
      *
@@ -1342,6 +1412,15 @@ window.__ModuleLoader__.load({
       const [channels, setChannels] = useState(props.channels)
       const [wired, setWired] = useState(props.wired === undefined ? true : props.wired)
       const [reason, setReason] = useState(props.reason ?? '')
+      // 凭据面状态（laneId → { configured, masked, source, writable }）。
+      // 与 `channels` 分开存：`/channels` 回答「能不能用」，它回答「key 填了没」。
+      const [keyStates, setKeyStates] = useState(props.keyStates ?? {})
+      // 探测结果（laneId → { ok, kind, reason, ms, models }）。
+      const [probes, setProbes] = useState(props.probes ?? {})
+      /** 每张卡各自的忙态（'save' | 'clear' | 'probe'），避免「点一张卡全页转圈」。 */
+      const [busy, setBusy] = useState({})
+      /** 每张卡各自的**错误行**（保存/清除失败的原文）。 */
+      const [errors, setErrors] = useState({})
 
       const reload = useCallback(async () => {
         try {
@@ -1349,6 +1428,7 @@ window.__ModuleLoader__.load({
           setChannels(Array.isArray(payload.channels) ? payload.channels : [])
           setWired(payload.wired !== false)
           setReason(typeof payload.reason === 'string' ? payload.reason : '')
+          if (payload.keyStates !== undefined && payload.keyStates !== null) setKeyStates(payload.keyStates)
         } catch (error) {
           setChannels([])
           setWired(false)
@@ -1369,7 +1449,77 @@ window.__ModuleLoader__.load({
         reportMeta({ text: String(channels.filter((row) => row.kind === 'keyed').length) })
       }, [channels, reportMeta])
 
+      const mark = useCallback((id, value) => {
+        setBusy((current) => ({ ...current, [id]: value }))
+      }, [])
+      const setErrorOf = useCallback((id, message) => {
+        setErrors((current) => ({ ...current, [id]: message }))
+      }, [])
+
+      /**
+       * 保存 key。
+       *
+       * ⚠️ 成功后**必须**重新拉 `/channels`：那条车道的 `state` / `reason` /
+       * `modelCount` 全都变了（可能刚被挂上，模型数从静态表的 3 条变成实时的 40 条）。
+       * 只更新本地 `keyStates` 会让卡片继续显示「未配置」。
+       */
+      const saveKeyOf = useCallback(async (id, value) => {
+        mark(id, 'save')
+        setErrorOf(id, '')
+        try {
+          const payload = await call('/key', { lane: id, key: value })
+          setKeyStates((current) => ({
+            ...current,
+            [id]: { ...(current?.[id] ?? {}), configured: true, masked: payload.masked ?? '', source: 'file', writable: true, reason: '' },
+          }))
+          if (payload.mounted !== true && typeof payload.mountReason === 'string' && payload.mountReason !== '') {
+            // 保存成功但没挂上（例如目录里还有 {ACCOUNT_ID} 占位符）：这不是错误，
+            // 但必须说出来，否则用户会以为「填了 key 就能用」。
+            setErrorOf(id, t('keyedSavedNotMounted') + payload.mountReason)
+          }
+          await reload()
+        } catch (error) {
+          setErrorOf(id, error.message)
+        } finally {
+          mark(id, '')
+        }
+      }, [mark, setErrorOf, reload, t])
+
+      const clearKeyOf = useCallback(async (id) => {
+        mark(id, 'clear')
+        setErrorOf(id, '')
+        try {
+          await call('/key', { lane: id }, 'DELETE')
+          setKeyStates((current) => ({ ...current, [id]: { ...(current?.[id] ?? {}), configured: false, masked: '', source: 'none' } }))
+          // 清除后旧的探测结果不再代表任何东西：留着会让人以为「刚才测过、是好的」。
+          setProbes((current) => {
+            const next = { ...current }
+            delete next[id]
+            return next
+          })
+          await reload()
+        } catch (error) {
+          setErrorOf(id, error.message)
+        } finally {
+          mark(id, '')
+        }
+      }, [mark, setErrorOf, reload])
+
+      const probeKeyOf = useCallback(async (id) => {
+        mark(id, 'probe')
+        setErrorOf(id, '')
+        try {
+          const payload = await call('/key/probe', { lane: id, force: true })
+          setProbes((current) => ({ ...current, [id]: payload }))
+        } catch (error) {
+          setProbes((current) => ({ ...current, [id]: { ok: false, kind: 'network', reason: error.message, ms: 0 } }))
+        } finally {
+          mark(id, '')
+        }
+      }, [mark, setErrorOf])
+
       const keyed = (channels ?? []).filter((row) => row.kind === 'keyed')
+      const configuredCount = keyed.filter((row) => keyStates?.[row.id]?.configured === true).length
 
       return h('div', { className: 'ow-root' }, [
         h('header', { key: 'hero', className: 'ow-hero' }, [
@@ -1380,7 +1530,9 @@ window.__ModuleLoader__.load({
             ]),
             h('div', { key: 'pills', className: 'ow-pills' }, [
               h(Pill, { key: 'c', strong: true }, String(keyed.length)),
-              h(Pill, { key: 'n', tone: 'warn' }, t('keyedNoTest')),
+              // 已配置数单独一颗：打开这一页第一件想知道的事就是「我配了几条」。
+              h(Pill, { key: 'k', tone: configuredCount > 0 ? 'ok' : undefined },
+                t('keyedConfigured').replace('{count}', String(configuredCount))),
             ]),
           ]),
         ]),
@@ -1396,7 +1548,18 @@ window.__ModuleLoader__.load({
                   h('p', { key: 'h', className: 'ow-hint' }, t('keyedEmptyHint')),
                 ])
               : h('div', { key: 'cards', className: 'ow-cards' },
-                  keyed.map((channel) => h(KeyedCard, { key: channel.id, channel, t }))),
+                  keyed.map((channel) => h(KeyedCard, {
+                    key: channel.id,
+                    channel,
+                    t,
+                    keyState: keyStates?.[channel.id],
+                    probe: probes?.[channel.id],
+                    busy: busy?.[channel.id] ?? '',
+                    error: errors?.[channel.id] ?? '',
+                    onSave: (value) => void saveKeyOf(channel.id, value),
+                    onClear: () => void clearKeyOf(channel.id),
+                    onProbe: () => void probeKeyOf(channel.id),
+                  }))),
 
         h('div', { key: 'foot', className: 'ow-foot' }, [
           h(Button, { key: 'r', onClick: () => void reload() }, t('refresh')),
@@ -1462,7 +1625,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 页内分页外壳（与 OFM 的页内 `ofm_tabs` 同一套做法）。
+     * 页内分页外壳。
      *
      * 设置侧边栏里**只有一项**「免费模型」；三类渠道（账号 / 本地与网关 / 自带 key）
      * 在这里用一排页签切换。理由：
@@ -1557,8 +1720,8 @@ window.__ModuleLoader__.load({
      *    所以它有独立的 loading 与错误位，不许把账号列表一起拖死；
      * 3. 各个动作（领取 / 续期 / 探测）—— 做完只刷受影响的那部分。
      *
-     * 第 2 步的道理与 OFM 的 \`credits.balances\` 完全一致：把余额塞进
-     * \`account.list\` 会让「打开页面」被网络耗时绑架，而一次查询失败就整页空白。
+     * 第 2 步的道理不变：把余额塞进账号列表那一跳，会让「打开页面」被网络耗时
+     * 绑架，而一次查询失败就整页空白。
      */
     function AccountsPage(props) {
       const t = props.t ?? ((key) => key)
@@ -1572,15 +1735,6 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState(false)
       const [claimBusy, setClaimBusy] = useState('')
       const [note, setNote] = useState(undefined)
-      // ── OFM 侧 11 条车道的读写状态（与 native 的两条分开存 —— 数据源、刷新节奏
-      //    与失败语义都不同；混在一个 state 里会分不清「哪条坏了」）──
-      const [ofmAccounts, setOfmAccounts] = useState({})
-      const [ofmModels, setOfmModels] = useState({})
-      const [ofmCredits, setOfmCredits] = useState({})
-      const [ofmBusy, setOfmBusy] = useState('')
-      /** 手机号登录（只有 Loomy 有这条备用路径）：{provider, accountId, phone, code, msgid, busy, error} */
-      const [sms, setSms] = useState(undefined)
-
       const reload = useCallback(async () => {
         try {
           const [nextSummary, nextAccounts, nextModels, nextAuto] = await Promise.all([
@@ -1705,7 +1859,7 @@ window.__ModuleLoader__.load({
         }
       }, [balanceProducts, loadBalances, t])
 
-      /** 全部续期：逐账号续，单个失败不中断（与 OFM 的 refreshAll 同语义）。 */
+      /** 全部续期：逐账号续，单个失败不中断。 */
       const runRenewAll = useCallback(async (provider) => {
         setBusy(true)
         setNote(undefined)
@@ -1763,7 +1917,7 @@ window.__ModuleLoader__.load({
         setNote({ kind: 'info', text: t('loginPending') })
         try {
           const started = await call('/login', { provider })
-          // 打开浏览器：与 OFM 的登录按钮同一手法（宿主不代理这一步）。
+          // 打开浏览器：授权在浏览器里完成，宿主不代理这一步。
           try { window.open(started.loginUrl, '_blank', 'noopener') } catch { /* 弹窗被拦：URL 在上游返回里 */ }
           const done = await call('/login/poll', { provider, state: started.state })
           setNote({ kind: 'ok', text: t('loginDone') + ' · ' + done.accountId })
@@ -1774,313 +1928,6 @@ window.__ModuleLoader__.load({
           setBusy(false)
         }
       }, [reload, t])
-
-      // ── OFM 侧 11 条车道（product.backend === 'ofm'）────────────────────────
-      //
-      // 数据全部来自宿主 channel-pack 的 RPC（ofmCall）。三条纪律：
-      //
-      // 1. **账号与模型目录一次拿全**：OFM 侧两者都读内存副本
-      //    （pool.list* 与 modelAdapters[x].listAllModels() 都不发网络请求），
-      //    11 条并发也不贵；
-      // 2. **余额慢、单独走**：每车道要逐账号打上游，故并发 2、渐进填充，
-      //    绝不阻塞账号列表渲染（与 native 那条第 2 跳同一理由）；
-      // 3. **后端没就绪时一个请求都不发**（summary.ofm.available !== true）。
-      const ofmReady = summary?.ofm?.available === true
-
-      /** 刷新单条 OFM 车道的账号 + 模型目录（动作之后调它，不整页重载）。 */
-      const refreshOfm = useCallback(async (provider) => {
-        try {
-          const value = await ofmCall('account.list', { provider: provider })
-          const rows = Array.isArray(value?.accounts) ? value.accounts : []
-          setOfmAccounts((current) => ({ ...current, [provider]: rows }))
-        } catch { /* 保持旧数据：一次读失败不该把列表清空 */ }
-        try {
-          const value = await ofmCall('model.list', { provider: provider })
-          const rows = Array.isArray(value?.models)
-            ? value.models.map((model) => ({ ...model, provider: provider }))
-            : []
-          setOfmModels((current) => ({ ...current, [provider]: rows }))
-        } catch { /* 同上 */ }
-      }, [])
-
-      const loadOfm = useCallback(async () => {
-        if (!ofmReady) return undefined
-        const lanes = (summary?.products ?? []).filter((product) => product.backend === 'ofm')
-        if (lanes.length === 0) return undefined
-        const accountsNext = {}
-        const modelsNext = {}
-        await Promise.all(lanes.map(async (lane) => {
-          try {
-            const value = await ofmCall('account.list', { provider: lane.id })
-            accountsNext[lane.id] = Array.isArray(value?.accounts) ? value.accounts : []
-          } catch {
-            // 单条车道读失败只影响它自己：别把另外十条的列表一起打空。
-            accountsNext[lane.id] = []
-          }
-          try {
-            const value = await ofmCall('model.list', { provider: lane.id })
-            modelsNext[lane.id] = Array.isArray(value?.models)
-              ? value.models.map((model) => ({ ...model, provider: lane.id }))
-              : []
-          } catch {
-            modelsNext[lane.id] = []
-          }
-        }))
-        setOfmAccounts(accountsNext)
-        setOfmModels(modelsNext)
-        return accountsNext
-      }, [ofmReady, summary])
-
-      const loadOfmBalance = useCallback(async (provider) => {
-        try {
-          const value = await ofmCall('credits.balances', { provider: provider })
-          const rows = Array.isArray(value?.accounts) ? value.accounts : []
-          setOfmCredits((current) => ({ ...current, [provider]: { accounts: rows } }))
-        } catch (error) {
-          // 「查不到」也要落进 state：页面才有东西显示原因，而不是永远转圈。
-          setOfmCredits((current) => ({ ...current, [provider]: { accounts: [], error: error.message } }))
-        }
-      }, [])
-
-      /** 后台把多条车道的余额查完（并发 2：上游对同账号有频率限制）。 */
-      const loadOfmBalances = useCallback(async (laneProducts) => {
-        const queue = [...laneProducts]
-        const worker = async () => {
-          for (;;) {
-            const lane = queue.shift()
-            if (lane === undefined) return
-            await loadOfmBalance(lane.id)
-          }
-        }
-        await Promise.all([worker(), worker()])
-      }, [loadOfmBalance])
-
-      // 首屏：拉账号与目录 → 有账号的车道再后台查余额（渐进填充）。
-      useEffect(() => {
-        if (!ofmReady) return
-        let cancelled = false
-        void loadOfm().then((accountsNext) => {
-          if (cancelled || accountsNext === undefined) return
-          const withAccounts = (summary?.products ?? []).filter((product) => product.backend === 'ofm'
-            && (product.credits ?? {}).balance === true
-            && (accountsNext[product.id] ?? []).length > 0)
-          void loadOfmBalances(withAccounts)
-        })
-        return () => { cancelled = true }
-      }, [ofmReady, loadOfm, loadOfmBalances, summary])
-
-      /** OFM 侧的一次账号动作（enable / disable / remove / refresh / credits / checkin / probe）。 */
-      const runOfmAction = useCallback(async (product, request) => {
-        setOfmBusy(product.id)
-        setNote(undefined)
-        try {
-          if (request.action === 'enable' || request.action === 'disable') {
-            await ofmCall('account.update', {
-              accountId: request.id,
-              patch: { enabled: request.action === 'enable' },
-            })
-            await refreshOfm(product.id)
-          } else if (request.action === 'remove') {
-            await ofmCall('account.delete', { accountId: request.id })
-            await refreshOfm(product.id)
-          } else if (request.action === 'refresh') {
-            await ofmCall('account.refresh', { accountId: request.id })
-            await refreshOfm(product.id)
-            setNote({ kind: 'ok', text: t('renew') + ' · ' + request.id })
-          } else if (request.action === 'credits') {
-            await loadOfmBalance(product.id)
-          } else if (request.action === 'checkin') {
-            // ⚠️ 宿主只提供**按车道**的领取端点（credits.claimAll）——
-            // 逐账号的 outcome 在返回值里，故这里领整条车道再念汇总。
-            const payload = await ofmCall('credits.claimAll', { provider: product.id })
-            setNote({
-              kind: payload?.summary?.failed > 0 ? 'error' : 'ok',
-              text: product.displayName + ' · ' + describeClaim(payload, t),
-            })
-            await loadOfmBalance(product.id)
-          } else if (request.action === 'probe') {
-            const value = await ofmCall('account.test', { accountId: request.id })
-            const ok = value?.ok === true
-            setNote({
-              kind: ok ? 'ok' : 'error',
-              text: (ok ? t('probeOk') : t('probeFail')) + ' · ' + (value?.modelId ?? '')
-                + (value?.message === undefined ? '' : ' · ' + value.message),
-            })
-          }
-        } catch (error) {
-          setNote({ kind: 'error', text: t('ofmCallFailed') + ': ' + error.message })
-        } finally {
-          setOfmBusy('')
-        }
-      }, [loadOfmBalance, refreshOfm, t])
-
-      /** OFM 侧的一次模型动作（toggle / all / reset）。 */
-      const runOfmModelAction = useCallback(async (product, request) => {
-        setOfmBusy(product.id)
-        setNote(undefined)
-        try {
-          if (request.action === 'toggle') {
-            await ofmCall('model.setDisabled', {
-              provider: product.id,
-              modelId: request.model,
-              disabled: request.disabled === true,
-            })
-          } else if (request.action === 'all') {
-            await ofmCall('model.setAllDisabled', { provider: product.id, disabled: request.disabled === true })
-          } else if (request.action === 'reset') {
-            // 「全部恢复」= 清空黑名单（与 native 的 reset 同语义）。
-            await ofmCall('model.setAllDisabled', { provider: product.id, disabled: false })
-          }
-          await refreshOfm(product.id)
-        } catch (error) {
-          setNote({ kind: 'error', text: t('ofmCallFailed') + ': ' + error.message })
-        } finally {
-          setOfmBusy('')
-        }
-      }, [refreshOfm, t])
-
-      const runOfmClaimAll = useCallback(async (product) => {
-        setClaimBusy(product.id)
-        setNote(undefined)
-        try {
-          const payload = await ofmCall('credits.claimAll', { provider: product.id })
-          setNote({ kind: payload?.summary?.failed > 0 ? 'error' : 'ok', text: describeClaim(payload, t) })
-        } catch (error) {
-          setNote({ kind: 'error', text: t('ofmCallFailed') + ': ' + error.message })
-        } finally {
-          setClaimBusy('')
-          await loadOfmBalance(product.id)
-        }
-      }, [loadOfmBalance, t])
-
-      const runOfmRenewAll = useCallback(async (product) => {
-        setOfmBusy(product.id)
-        setNote(undefined)
-        let failed = 0
-        const rows = ofmAccounts[product.id] ?? []
-        try {
-          for (const account of rows) {
-            try {
-              await ofmCall('account.refresh', { accountId: account.id })
-            } catch {
-              failed += 1
-            }
-          }
-          setNote({
-            kind: failed > 0 ? 'error' : 'ok',
-            text: product.displayName + ': ' + (rows.length - failed) + '/' + rows.length,
-          })
-          await refreshOfm(product.id)
-        } finally {
-          setOfmBusy('')
-        }
-      }, [ofmAccounts, refreshOfm, t])
-
-      const ofmSleep = (ms) => new Promise((resolve) => { window.setTimeout(resolve, ms) })
-
-      /**
-       * OFM 侧新建账号：两步式（先拿 loginUrl 立刻开窗，再轮询完成）。
-       *
-       * ⚠️ 与 OFM 自己的面板同一套时序 —— 登录页必须**在用户手势的窗口内**打开，
-       * 等授权完成再开必被弹窗拦截（本仓库在 codearts 上踩过「主页面被跳转」）。
-       */
-      const startOfmLogin = useCallback(async (product) => {
-        setOfmBusy(product.id)
-        setNote({ kind: 'info', text: t('ofmLoginOpening') })
-        try {
-          const started = await ofmCall('account.create', { provider: product.id })
-          const accountId = started?.accountId
-          if (started?.loginMode === 'sms') {
-            // 后端明说这条车道要短信：渲染表单而不是开窗（loginUrl 此时是空串）。
-            setSms({ provider: product.id, accountId: accountId, phone: '', code: '', msgid: '', busy: false, error: '' })
-            setNote(undefined)
-            return
-          }
-          const loginUrl = started?.loginUrl
-          if (typeof loginUrl === 'string' && loginUrl.length > 0) {
-            try { window.open(loginUrl, '_blank', 'noopener') } catch { /* 被拦：地址在宿主侧日志 */ }
-          }
-          setNote({ kind: 'info', text: t('ofmLoginWaiting') })
-          const deadline = Date.now() + 240000
-          let finished = false
-          while (Date.now() < deadline) {
-            await ofmSleep(1500)
-            const poll = await ofmCall('login.poll', { provider: product.id, accountId: accountId })
-            if (poll?.done !== true) continue
-            finished = true
-            if (poll.success === false) {
-              setNote({ kind: 'error', text: t('loginFailed') + ': ' + (poll.error ?? '') })
-            } else {
-              setNote({ kind: 'ok', text: t('loginDone') + ' · ' + accountId })
-            }
-            break
-          }
-          if (!finished) setNote({ kind: 'error', text: t('ofmLoginTimeout') })
-          await refreshOfm(product.id)
-        } catch (error) {
-          setNote({ kind: 'error', text: t('loginFailed') + ': ' + error.message })
-        } finally {
-          setOfmBusy('')
-        }
-      }, [refreshOfm, t])
-
-      /**
-       * 打开手机号登录表单（只有 Loomy 有这条备用路径）。
-       *
-       * ⚠️ 必须先 account.create 拿到 accountId：宿主的 login.sendSms /
-       * login.submitSms 都要求「池里已存在该条目」。account.create 同时会起一轮
-       * 微信扫码流程，那条流程若无人扫码自然超时（无害）；短信提交成功则把凭据写进
-       * **同一个** ref，不会产生两个账号。
-       */
-      const openSmsForm = useCallback(async (product) => {
-        setOfmBusy(product.id)
-        setNote(undefined)
-        try {
-          const started = await ofmCall('account.create', { provider: product.id })
-          setSms({ provider: product.id, accountId: started?.accountId, phone: '', code: '', msgid: '', busy: false, error: '' })
-        } catch (error) {
-          setNote({ kind: 'error', text: t('ofmCallFailed') + ': ' + error.message })
-        } finally {
-          setOfmBusy('')
-        }
-      }, [t])
-
-      const sendSmsCode = useCallback(async () => {
-        if (sms === undefined) return
-        setSms({ ...sms, busy: true, error: '' })
-        try {
-          const value = await ofmCall('login.sendSms', {
-            provider: sms.provider,
-            accountId: sms.accountId,
-            phone: sms.phone,
-          })
-          setSms((current) => current === undefined ? current : { ...current, busy: false, msgid: value?.msgid ?? '', error: '' })
-          setNote({ kind: 'ok', text: t('smsSent') })
-        } catch (error) {
-          setSms((current) => current === undefined ? current : { ...current, busy: false, error: error.message })
-        }
-      }, [sms, t])
-
-      const submitSmsCode = useCallback(async () => {
-        if (sms === undefined) return
-        setSms({ ...sms, busy: true, error: '' })
-        try {
-          const value = await ofmCall('login.submitSms', {
-            provider: sms.provider,
-            accountId: sms.accountId,
-            code: sms.code,
-          })
-          if (value?.done === true) {
-            setSms(undefined)
-            setNote({ kind: 'ok', text: t('loginDone') })
-            await refreshOfm(sms.provider)
-          } else {
-            setSms((current) => current === undefined ? current : { ...current, busy: false, error: value?.error ?? '' })
-          }
-        } catch (error) {
-          setSms((current) => current === undefined ? current : { ...current, busy: false, error: error.message })
-        }
-      }, [refreshOfm, sms, t])
 
       if (summary === undefined) {
         return h('div', { className: 'ow-root' }, h('p', { className: 'ow-dim' }, t('busy')))
@@ -2101,7 +1948,7 @@ window.__ModuleLoader__.load({
       const autoTone = auto?.running === true ? 'warn' : auto?.enabled !== true ? 'warn' : auto?.ranToday === true ? 'ok' : undefined
 
       return h('div', { className: 'ow-root' }, [
-        // ── 顶部玻璃面板：与 OFM 的 hero 同款（标题 + 副标题 + 右侧药丸） ──
+        // ── 顶部玻璃面板：标题 + 副标题 + 右侧药丸 ────────────────────────
         h('header', { key: 'hero', className: 'ow-hero' }, [
           h('div', { key: 'head', className: 'ow-pagehead' }, [
             h('div', { key: 't', className: 'ow-pagetitle' }, [
@@ -2140,59 +1987,28 @@ window.__ModuleLoader__.load({
         }),
         h('p', { key: 'ah', className: 'ow-hint' }, t('autoHint')),
 
-        // ── 卡片网格：13 条账号车道（2 条 native + 11 条 OFM 侧）──────────────
+        // ── 卡片网格：两条账号车道（CodeBuddy / WorkBuddy）──────────────────────
         //
-        // ⚠️ 卡片本身不关心后端：数据与回调都**在这里**按 product.backend 分派好，
-        // 于是 ProductCard 只有一处「后端未就绪」的判断，不需要知道 RPC 的存在。
-        h('div', { key: 'cards', className: 'ow-cards' }, summary.products.map((product) => {
-          const isOfm = product.backend === 'ofm'
-          const ready = !isOfm || ofmReady
-          const laneAccounts = isOfm
-            ? (ofmAccounts[product.id] ?? [])
-            : accounts.filter((account) => account.provider === product.id)
-          const laneModels = isOfm
-            ? (ofmModels[product.id] ?? [])
-            : modelRows.filter((model) => model.provider === product.id)
-          const creditRow = isOfm ? ofmCredits[product.id] : credits[product.id]
-          return h(ProductCard, {
-            key: product.id,
-            product,
-            ready,
-            backendNote: isOfm ? (ofmReady ? t('backendOfmNote') : t('backendMissingNote')) : undefined,
-            accounts: laneAccounts,
-            models: laneModels,
-            creditRow,
-            // 车道级余额失败的原因（OFM 侧：整条车道的查询错误；native 侧走 failures）。
-            balanceNote: isOfm && typeof creditRow?.error === 'string' ? creditRow.error : undefined,
-            // ⚠️ OFM 侧**没有**逐账号的领取端点（宿主只有 credits.claimAll，按车道），
-            // 故那一侧不渲染账号行上的「领积分」—— 否则点了会领掉整条车道，
-            // 与按钮所在的「这一行」不符。车道级的「一键领取」照旧。
-            rowClaim: !isOfm,
-            // OFM 侧余额是**按车道**整批取的（宿主端点就是车道维度），
-            // 没有「单个车道正在加载」这个状态，故恒 false。
-            balanceLoading: isOfm ? false : balanceLoading,
-            tab: tabs[product.id] ?? 'accounts',
-            onTab: (next) => setTabs((current) => ({ ...current, [product.id]: next })),
-            busy: busy || ofmBusy === product.id,
-            claimBusy: claimBusy === product.id,
-            t,
-            sms: isOfm && sms !== undefined && sms.provider === product.id ? sms : undefined,
-            onSmsOpen: () => void openSmsForm(product),
-            onSmsChange: (patch) => setSms((current) => current === undefined ? current : { ...current, ...patch }),
-            onSmsSend: () => void sendSmsCode(),
-            onSmsSubmit: () => void submitSmsCode(),
-            onAction: (request) => void (isOfm
-              ? runOfmAction(product, request)
-              : runAction({ ...request, provider: product.id })),
-            onModelAction: (request) => void (isOfm
-              ? runOfmModelAction(product, request)
-              : runModelAction(product.id, request)),
-            onLogin: () => void (isOfm ? startOfmLogin(product) : startLogin(product.id)),
-            onClaimAll: () => void (isOfm ? runOfmClaimAll(product) : runClaimAll(product.id)),
-            onRefreshBalances: () => void (isOfm ? loadOfmBalance(product.id) : loadBalances([product], true)),
-            onRenewAll: () => void (isOfm ? runOfmRenewAll(product) : runRenewAll(product.id)),
-          })
-        })),
+        // 数据与回调在这里一并取好交给卡片：卡片只管渲染，不自己发请求。
+        h('div', { key: 'cards', className: 'ow-cards' }, summary.products.map((product) => h(ProductCard, {
+          key: product.id,
+          product,
+          accounts: accounts.filter((account) => account.provider === product.id),
+          models: modelRows.filter((model) => model.provider === product.id),
+          creditRow: credits[product.id],
+          balanceLoading,
+          tab: tabs[product.id] ?? 'accounts',
+          onTab: (next) => setTabs((current) => ({ ...current, [product.id]: next })),
+          busy,
+          claimBusy: claimBusy === product.id,
+          t,
+          onAction: (request) => void runAction({ ...request, provider: product.id }),
+          onModelAction: (request) => void runModelAction(product.id, request),
+          onLogin: () => void startLogin(product.id),
+          onClaimAll: () => void runClaimAll(product.id),
+          onRefreshBalances: () => void loadBalances([product], true),
+          onRenewAll: () => void runRenewAll(product.id),
+        }))),
 
         h('div', { key: 'foot', className: 'ow-foot' }, [
           h(Button, {
@@ -2458,7 +2274,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 积分的紧凑写法（与 OFM 的 kilo 同口径）。
+     * 积分的紧凑写法（千位用 K、百万位用 M）。
      *
      * 积分动辄上万，逐位显示会把卡片撑歪；但**小数值不能被抹成 0** ——
      * 「还剩 3 积分」和「还剩 0 积分」对用户是两件事。
@@ -2516,11 +2332,10 @@ window.__ModuleLoader__.load({
      * 早先写的是 `--dsh-*`，那一族**在宿主里根本不存在**，于是每条都退到
      * 硬编码回退色 —— 浅色主题下卡片发灰、强调色对不上，且换配色时整页不跟。
      *
-     * ## 与 OFM 的视觉对齐
+     * ## 与宿主主题的视觉对齐
      *
-     * 玻璃层 / 卡片圆角 / 内高光 / 悬停上浮 / 药丸点这些手法与 OFM 的
-     * `ofm_glass` / `ofm_card` / `ofm_pill` / `ofm_switch` 同一套取值，
-     * 让两页并排看是同一个产品，而不是"插件里嵌了个野页面"。
+     * 玻璃层 / 卡片圆角 / 内高光 / 悬停上浮 / 药丸点这些手法沿用宿主设置页的
+     * 那套取值，让本页与隔壁设置项并排看是同一个产品，而不是"插件里嵌了个野页面"。
      */
     const CSS = `
 .ow-root {
@@ -2532,7 +2347,7 @@ window.__ModuleLoader__.load({
   line-height: 1.55;
 }
 
-/* ── 顶部：与 OFM 的 hero 同款玻璃面板 ─────────────────────────────────── */
+/* ── 顶部：玻璃面板（标题 + 副标题 + 右侧药丸）──────────────────────────── */
 .ow-hero {
   position: relative;
   display: flex;
@@ -2615,7 +2430,7 @@ window.__ModuleLoader__.load({
   border-color: var(--dsw-alias-state-error-primary);
 }
 
-/* ── 开关：与 OFM 的 ofm_switch 同一组取值 ─────────────────────────────── */
+/* ── 开关 ─────────────────────────────────────────────────────────────── */
 .ow-switch {
   display: inline-flex;
   align-items: center;
@@ -2730,9 +2545,6 @@ window.__ModuleLoader__.load({
 .ow-actions .ow-btn { padding: 3px 9px; font-size: 11.5px; font-weight: 520; }
 .ow-empty { margin: 0; padding: 10px 2px; font-size: 12px; color: var(--dsw-alias-label-tertiary); }
 
-/* ── 手机号登录（Loomy 的备用路径）──────────────────────────────────────── */
-.ow-sms { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 2px 0 4px; }
-.ow-sms .ow-hint { flex: 1 1 100%; margin: 0; }
 .ow-input {
   flex: 0 0 auto;
   width: 132px;
@@ -2926,9 +2738,29 @@ window.__ModuleLoader__.load({
 /* ── 自带 key 卡 ─────────────────────────────────────────────────────────── */
 .ow-keyed .ow-keyenv { margin: 0; font-size: 11.5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ow-keyed a.ow-btn { text-decoration: none; display: inline-flex; align-items: center; }
+
+/* 0.4.1：凭据面（已填/未填 + 脱敏值 + 来源） */
+.ow-keyrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px; }
+.ow-keymask {
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 82%, transparent);
+  user-select: all;
+}
+/* 填 key 的那一行：输入框吃掉剩余宽度，按钮不换行挤在一起 */
+.ow-keyform { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ow-keyinput { flex: 1 1 220px; min-width: 160px; font-family: var(--dsw-font-family-mono, ui-monospace, monospace); font-size: 11.5px; }
+.ow-probebox { display: flex; flex-direction: column; gap: 6px; }
+.ow-probeok { margin: 0; font-size: 11px; line-height: 1.6; color: var(--dsw-alias-state-success-primary); overflow-wrap: anywhere; }
+.ow-probeerr { margin: 0; font-size: 11px; line-height: 1.6; color: var(--dsw-alias-state-warning-primary, #f0a441); overflow-wrap: anywhere; }
+/* 探测结果按 kind 分色：401/403 是真错误，429/超时是「等一会」——两者不该同色 */
+.ow-probeerr[data-kind="invalid-key"],
+.ow-probeerr[data-kind="forbidden"],
+.ow-probeerr[data-kind="quota"] { color: var(--dsw-alias-state-error-primary); }
 .ow-servicemodels { margin: 0; font-size: 10.5px; overflow-wrap: anywhere; }
 
-/* 尊重系统的减少动效偏好：与 OFM 同一条约定。 */
+/* 尊重系统的减少动效偏好。 */
 @media (prefers-reduced-motion: reduce) {
   .ow-btn, .ow-row, .ow-mrow, .ow-tab, .ow-pill { transition: none !important; }
   .ow-btn:hover:not(:disabled) { transform: none; }
@@ -2959,6 +2791,8 @@ window.__ModuleLoader__.load({
         // 2026-10-25 夜间新增：三页签外壳的两个新页 + 顶部条 + 两张新卡
         KeyedPage, KeyedCard, LocalPage, ServiceLaneCard, StatusBar, StatePill,
         safeText, safeHref, stateTone, stateLabel,
+        // 0.4.1：探测结果 → 文案的两个纯函数（离线可断言，不需要 DOM）
+        probeText, probeKindSuffix, describeKeySource,
       },
       inject: ['slots', 'locale'],
       apply(ctx) {
@@ -2978,12 +2812,12 @@ window.__ModuleLoader__.load({
           return zh[key] ?? key
         }
         /**
-         * **一个**设置项，页内自己分页（与 OFM 同构）。
+         * **一个**设置项，页内自己分页。
          *
          * 侧边栏只占一行「免费模型」；账号车道与本地车道在页内用页签切换 ——
          * 两者都是「免费模型」这个功能的组成部分，不该在系统导航里各占一行。
          *
-         * 顺序仍排在 OFM（order 35）之后：先看官方总览，再看这里的补位车道。
+         * order 37：排在宿主自带的那几项设置之后。
          */
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',

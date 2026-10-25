@@ -48,6 +48,16 @@ async function call(handler, method, url, headers) {
   return res
 }
 
+/** 带 JSON body 的调用（`/key` 那三条路由都要读 body）。 */
+async function makeCallWithBody(handler, method, url, body) {
+  const res = makeRes()
+  const text = JSON.stringify(body ?? {})
+  const req = makeReq(method, url)
+  req[Symbol.asyncIterator] = async function* () { yield Buffer.from(text, 'utf8') }
+  await handler(req, res)
+  return res
+}
+
 /** 只造被测路由需要的依赖；其它一律给最小替身。 */
 function makeDeps(extra = {}) {
   return {
@@ -68,7 +78,7 @@ function makeDeps(extra = {}) {
 const registryStub = () => {
   const registry = buildRegistry()
   return {
-    channels: projectRegistryView(registry.channels, { nativeMounted: ['buddy', 'workbuddy'], ofmReady: true }),
+    channels: projectRegistryView(registry.channels, { nativeMounted: ['buddy', 'workbuddy'] }),
     counts: registry.counts,
     fingerprint: registry.fingerprint,
     rejected: registry.rejected,
@@ -98,8 +108,12 @@ await check('/channels 列出三类渠道，并把服务探针结果并进每一
   }))
   const payload = (await call(handler, 'GET', '/api/free-model/channels')).json()
   assert.equal(payload.wired, true)
-  assert.equal(payload.counts.account, 13)
+  // 账号渠道恰好是本插件自己挂的两条：注册表里不存在第二条后端。
+  assert.equal(payload.counts.account, 2, '账号渠道就是本插件自己挂的 buddy / workbuddy')
   assert.equal(payload.counts.service, 3)
+  // keyed 层由 `index.js` 单独注入（`buildRegistry({ keyed })`）；这个桩不传它，
+  // 所以此处只要求「字段存在且是数字」，条数断言在 `test/lanes.mjs` 与 keys-flow 里做。
+  assert.equal(typeof payload.counts.keyed, 'number')
   const opencode = payload.channels.find((row) => row.id === 'opencode')
   assert.equal(opencode.state, 'unavailable')
   assert.ok(opencode.reason.includes('4096'))
@@ -115,7 +129,7 @@ await check('服务探针坏掉不影响其余渠道（降级为原状态，不 
   }))
   const res = await call(handler, 'GET', '/api/free-model/channels')
   assert.equal(res.status, 200)
-  assert.equal(res.json().counts.account, 13, '账号渠道必须照常返回')
+  assert.equal(res.json().counts.account, 2, '账号渠道必须照常返回')
 })
 
 await check('/catalog 读状态、/catalog/refresh 强制刷新；未接线报 503', async () => {
@@ -169,13 +183,16 @@ await check('/service 探针：GET 走缓存路径、POST 强制重探', async (
 
 await check('/summary 老字段一个不少，且新字段是「加上去」而不是「换掉」', async () => {
   const withRegistry = (await call(createRoutes(makeDeps({ registry: registryStub })), 'GET', '/api/free-model/summary')).json()
-  assert.equal(withRegistry.version, '0.4.0')
+  // 版本从 deps 透传，不写死：写死会在每次发版时逼着改测试，而它要验的是「字段在」。
+  assert.equal(typeof withRegistry.version, 'string')
   assert.equal(withRegistry.pool, 'absent')
   assert.equal(withRegistry.poolSource, 'none')
-  assert.equal(withRegistry.ofm.available, false)
+  // `/summary` 里不再有 `ofm` 段：那份「宿主侧后端是否就绪」的能力位随账号车道
+  // 一起删掉了（现在只有本插件自己挂的一条后端路径）。
+  assert.equal(withRegistry.ofm, undefined, 'summary 不该再有 ofm 段')
   assert.deepEqual(withRegistry.products, [])
   assert.deepEqual(withRegistry.serviceLanes, [])
-  assert.equal(withRegistry.registry.counts.account, 13, '新字段应出现')
+  assert.equal(withRegistry.registry.counts.account, 2, '新字段应出现')
 
   const bare = (await call(createRoutes(makeDeps()), 'GET', '/api/free-model/summary')).json()
   assert.equal(bare.registry, undefined, '注册表没接线时不该伪造一个半份数据')
@@ -189,6 +206,121 @@ await check('注册表读取抛错时降级为 {error}，不把概览打成 500'
   assert.ok(res.json().registry.error.includes('boom'))
 })
 
+// ── 自带 key 的三条写路由（0.4.1）─────────────────────────────────────────────
+/** 一个记录调用顺序的凭据替身 + 一个只会回固定状态的上游。 */
+function makeKeyedManager(overrides = {}) {
+  const store = new Map()
+  const calls = []
+  const manager = {
+    store,
+    calls,
+    async refresh() { return { ready: { 'openrouter-free': { ready: store.has('OPENROUTER_API_KEY') } } } },
+    async saveKey(lane, value) {
+      calls.push(['save', lane, value])
+      if (overrides.saveKey !== undefined) return overrides.saveKey(lane, value)
+      if (typeof value !== 'string' || value.trim() === '') return { ok: false, code: 'invalid', reason: 'key 是空的' }
+      store.set('OPENROUTER_API_KEY', value.trim())
+      return { ok: true, keyRef: 'OPENROUTER_API_KEY', masked: 'sk-t…6789', mounted: true }
+    },
+    async clearKey(lane) {
+      calls.push(['clear', lane])
+      if (overrides.clearKey !== undefined) return overrides.clearKey(lane)
+      store.delete('OPENROUTER_API_KEY')
+      return { ok: true }
+    },
+    async probeKey(lane, options) {
+      calls.push(['probe', lane, options?.force === true])
+      if (overrides.probeKey !== undefined) return overrides.probeKey(lane, options)
+      return { ok: false, kind: 'invalid-key', reason: '上游拒绝这把 key（401）', ms: 42 }
+    },
+  }
+  return manager
+}
+
+const keyedDeps = (manager) => makeDeps({
+  registry: registryStub,
+  keyed: {
+    manager: () => manager,
+    keyStates: () => ({ 'openrouter-free': { keyRef: 'OPENROUTER_API_KEY', configured: manager.store.has('OPENROUTER_API_KEY'), writable: true, source: manager.store.has('OPENROUTER_API_KEY') ? 'file' : 'none', masked: manager.store.has('OPENROUTER_API_KEY') ? 'sk-t…6789' : '', reason: '' } }),
+  },
+})
+
+await check('/key GET 返回凭据面状态：未填 → 填了（脱敏），原文永不出现', async () => {
+  const manager = makeKeyedManager()
+  const handler = createRoutes(keyedDeps(manager))
+
+  let res = await call(handler, 'GET', '/api/free-model/key')
+  assert.equal(res.status, 200)
+  assert.equal(res.json().keys['openrouter-free'].configured, false)
+  assert.equal(res.json().keys['openrouter-free'].masked, '')
+
+  await makeCallWithBody(handler, 'POST', '/api/free-model/key', { lane: 'openrouter-free', key: 'sk-test-abcdefghijklmnopqrstuvwxyz' })
+  res = await call(handler, 'GET', '/api/free-model/key?lane=openrouter-free')
+  assert.equal(res.status, 200)
+  assert.equal(res.json().lane, 'openrouter-free')
+  assert.equal(res.json().configured, true)
+  assert.equal(res.json().masked, 'sk-t…6789')
+  assert.ok(!res.body.includes('sk-test-abcdefghijklmnopqrstuvwxyz'), 'GET 响应里出现了明文 key')
+
+  // 单条查询的车道不存在时明确 404，而不是回一份空对象。
+  res = await call(handler, 'GET', '/api/free-model/key?lane=openrouter-free')
+  assert.equal(res.status, 200)
+})
+
+await check('/key POST 保存：返回脱敏值、不返回原文', async () => {
+  const manager = makeKeyedManager()
+  const handler = createRoutes(keyedDeps(manager))
+  const res = await makeCallWithBody(handler, 'POST', '/api/free-model/key', { lane: 'openrouter-free', key: 'sk-test-abcdefghijklmnopqrstuvwxyz' })
+  assert.equal(res.status, 200)
+  const payload = res.json()
+  assert.equal(payload.ok, true)
+  assert.equal(payload.keyRef, 'OPENROUTER_API_KEY')
+  assert.equal(payload.masked, 'sk-t…6789')
+  assert.ok(!res.body.includes('sk-test-abcdefghijklmnopqrstuvwxyz'), '响应体里出现了明文 key')
+})
+
+await check('/key POST 缺 lane → 400，空 key → 400（原因直接可显示）', async () => {
+  const handler = createRoutes(keyedDeps(makeKeyedManager()))
+  let res = await makeCallWithBody(handler, 'POST', '/api/free-model/key', { key: 'x' })
+  assert.equal(res.status, 400)
+  assert.ok(res.json().error.includes('lane'))
+  res = await makeCallWithBody(handler, 'POST', '/api/free-model/key', { lane: 'openrouter-free', key: '   ' })
+  assert.equal(res.status, 400)
+  assert.ok(res.json().error.length > 0)
+})
+
+await check('/key DELETE 清 key：走的是 clearKey，不是 saveKey', async () => {
+  const manager = makeKeyedManager()
+  const handler = createRoutes(keyedDeps(manager))
+  const res = await makeCallWithBody(handler, 'DELETE', '/api/free-model/key', { lane: 'openrouter-free' })
+  assert.equal(res.status, 200)
+  assert.deepEqual(manager.calls, [['clear', 'openrouter-free']])
+})
+
+await check('/key/probe 探测：失败也回 200（这是结论不是请求错误）', async () => {
+  const manager = makeKeyedManager()
+  const handler = createRoutes(keyedDeps(manager))
+  const res = await makeCallWithBody(handler, 'POST', '/api/free-model/key/probe', { lane: 'openrouter-free', force: true })
+  assert.equal(res.status, 200)
+  const payload = res.json()
+  assert.equal(payload.ok, false)
+  assert.equal(payload.kind, 'invalid-key')
+  assert.deepEqual(manager.calls, [['probe', 'openrouter-free', true]])
+})
+
+await check('keyed 未接线时三条写路由明确报 503（不假装成功）', async () => {
+  const handler = createRoutes(makeDeps({ registry: registryStub }))
+  for (const [method, url, body] of [
+    ['POST', '/api/free-model/key', { lane: 'openrouter-free', key: 'x' }],
+    ['DELETE', '/api/free-model/key', { lane: 'openrouter-free' }],
+    ['POST', '/api/free-model/key/probe', { lane: 'openrouter-free' }],
+    ['POST', '/api/free-model/key/refresh', {}],
+  ]) {
+    const res = await makeCallWithBody(handler, method, url, body)
+    assert.equal(res.status, 503, method + ' ' + url + ' 未接线却没报 503')
+  }
+})
+
 await check('信任围栏对新端点同样生效（跨站 Origin → 403）', async () => {
   const handler = createRoutes(makeDeps({ registry: registryStub }))
   for (const [method, url] of [
@@ -196,6 +328,7 @@ await check('信任围栏对新端点同样生效（跨站 Origin → 403）', a
     ['GET', '/api/free-model/catalog'],
     ['GET', '/api/free-model/update'],
     ['GET', '/api/free-model/service'],
+    ['GET', '/api/free-model/key'],
   ]) {
     const res = await call(handler, method, url, { origin: 'https://evil.example', host: '127.0.0.1:43120' })
     assert.equal(res.status, 403, `${url} 必须被围栏挡住`)

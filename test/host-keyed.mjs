@@ -66,9 +66,16 @@ try {
   const entry = await import('../index.js')
   const keyedEntry = await import('../src/lanes/keyed/index.js')
 
-  /** 宿主 credentials 的替身：**故意什么都没有**，模拟「用户还没填任何 key」。 */
+  /**
+   * 宿主 credentials 的替身：**故意什么都没有**，模拟「用户还没填任何 key」。
+   *
+   * ⚠️ 两个真实修过的坑就靠这里的记录来防回归：
+   * 1. **传进去的名字必须是裸名**（宿主的 ref 文法就是环境变量名，`ref:NAME` 解不出来）；
+   * 2. 读凭据时**不许**把值打到日志或自证文件里。
+   */
+  const resolveCalls = []
   const credentials = {
-    async resolve() { return undefined },
+    async resolve(ref) { resolveCalls.push(String(ref)); return undefined },
     async set() {},
     async describe() { return { configured: false } },
     async unset() {},
@@ -161,6 +168,17 @@ try {
       && keyed.every((row) => typeof row.docsURL === 'string' && row.docsURL !== ''))
   check('已下线的渠道没有进可挂载集合（github-models）',
     rows.every((row) => row.id !== 'github-models'), 'github-models 不该出现在描述符里')
+
+  /**
+   * 回归：凭据名必须以**裸名**交给宿主（2026-10-25 实测纠正过的一个静默 bug）。
+   *
+   * 旧实现给宿主传 `ref:OPENROUTER_API_KEY`，而宿主只认 `OPENROUTER_API_KEY`，
+   * 结果是**静默 undefined**：用户在 .credentials.yaml 里配好了 key，页面永远说
+   * 未配置，日志里一个字都没有。这条断言就是钉住那个「不许再拼前缀」的约定。
+   */
+  check('凭据读取传的是裸名（不带 ref: 前缀）',
+    resolveCalls.length > 0 && resolveCalls.every((name) => !/^ref:/i.test(name)),
+    '出现过带前缀的调用：' + resolveCalls.filter((n) => /^ref:/i.test(n)).slice(0, 3).join(','))
 
   /**
    * 装配自证（`$DSH_HOME/free-model/apply-ok.json`）。

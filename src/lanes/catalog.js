@@ -56,10 +56,13 @@ const ACCEPTED_KINDS = Object.freeze([...CHANNEL_KINDS, ...Object.keys(KIND_ALIA
  * 渠道记录里允许出现的 `backend`。
  *
  * - `native`   本插件自己挂适配器（有账号/服务在本插件手里）
- * - `ofm`      宿主 `dsh-our-free-model` 的 channel-pack 提供，页面走它的 RPC
  * - `gateway`  别的插件已经注册了路由（本插件只观测，**不重复注册**）
+ *
+ * ⚠️ 0.5.0 起删掉过一档「由另一个插件的 RPC 代理」：那些账号车道已经整体
+ * 搬到独立插件里，本插件的注册表里不再有「不是自己挂、也不是别人已挂」的记录。
+ * 保留一个用不上的枚举值，只会让校验器放过一条页面根本渲染不出来的记录。
  */
-export const CHANNEL_BACKENDS = Object.freeze(['native', 'ofm', 'gateway'])
+export const CHANNEL_BACKENDS = Object.freeze(['native', 'gateway'])
 
 /** 目录层名（页面要能说清「这条是随包来的还是刚更新的」）。 */
 export const CATALOG_LAYERS = Object.freeze(['shipped', 'remote', 'local'])

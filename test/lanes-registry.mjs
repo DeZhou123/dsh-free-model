@@ -27,12 +27,9 @@ import {
 } from '../src/lanes/catalog.js'
 import {
   NATIVE_ACCOUNT_IDS,
-  OFM_RPC_ENDPOINT,
-  OFM_RPC_PATH,
   buildRegistry,
   channelById,
   nativeAccountRecords,
-  ofmAccountRecords,
   projectRegistryView,
   serviceRecords,
 } from '../src/lanes/registry.js'
@@ -207,17 +204,20 @@ check('静态自检能指出「未确证」与缺 apiKeyEnv 的记录', () => {
 
 // ── 注册表 ──────────────────────────────────────────────────────────────────
 
-check('注册表三类渠道齐全，账号 13 条且 native 只占 2 条', () => {
+check('注册表三类渠道齐全，账号车道全部由本插件自己挂（native）', () => {
   const registry = buildRegistry()
-  assert.equal(registry.counts.account, 13)
+  // ⚠️ 不再断言账号「13 条」：那 11 条 OFM 车道已拆成独立插件 `dsh-ofm-lanes`，
+  // 本插件只保留自己真正挂载的两条。条数写死会让两条产品线互相打架，而这条
+  // 断言要验的是「注册表把账号 / 服务两类都产出了，且账号记录都是 native」。
+  assert.equal(registry.counts.account, NATIVE_ACCOUNT_IDS.length)
   assert.equal(registry.counts.service, SERVICE_LANES.length)
-  assert.equal(registry.counts.total, 13 + SERVICE_LANES.length)
+  assert.equal(registry.counts.total, NATIVE_ACCOUNT_IDS.length + SERVICE_LANES.length)
   assert.deepEqual(
     nativeAccountRecords().map((row) => row.id).sort(),
     [...NATIVE_ACCOUNT_IDS].sort(),
   )
-  assert.equal(ofmAccountRecords().length, 11)
-  assert.ok(ofmAccountRecords().every((row) => row.backend === 'ofm'))
+  assert.ok(registry.channels.filter((row) => row.kind === 'account').every((row) => row.backend === 'native'),
+    '账号记录必须全是 native（OFM 那 11 条在另一个插件里）')
 })
 
 check('注册表按 账号 → 自带 key → 服务 的顺序排列（页面卡片顺序稳定）', () => {
@@ -235,11 +235,6 @@ check('坏的自带 key 记录被丢掉且记账，其余照常进表', () => {
   assert.ok(registry.rejected.some((line) => line.includes('bad')))
 })
 
-check('RPC 常量与宿主 channel-pack 一致（不一致的表现是「登录按钮没反应」）', () => {
-  assert.equal(OFM_RPC_PATH, '/api/channel-pack')
-  assert.equal(OFM_RPC_ENDPOINT, 'channel-pack')
-})
-
 check('注册表导出可查（channelById）', () => {
   const registry = buildRegistry()
   assert.equal(channelById(registry.channels, 'buddy').displayName, 'CodeBuddy (腾讯)')
@@ -252,7 +247,6 @@ check('四态投影：ready / needs-action / unavailable / unknown 各就各位'
   const registry = buildRegistry({ keyed: [KEYED_SAMPLE, { ...KEYED_SAMPLE, id: 'keyless-x', kind: 'keyed', apiKeyEnv: null }] })
   const rows = projectRegistryView(registry.channels, {
     nativeMounted: ['buddy'],
-    ofmReady: false,
     serviceProbes: {
       opencode: { state: 'ready', reason: '12 个模型' },
       freellmapi: { state: 'needs-action', reason: '缺凭据' },
@@ -263,7 +257,6 @@ check('四态投影：ready / needs-action / unavailable / unknown 各就各位'
 
   assert.equal(byId.buddy.state, 'ready')
   assert.equal(byId.workbuddy.state, 'unavailable', '没挂载的 native 车道必须是 unavailable 且说清原因')
-  assert.equal(byId.codearts.state, 'unavailable', 'OFM 后端没就绪时 11 条必须报 unavailable')
   assert.equal(byId.opencode.state, 'ready')
   assert.equal(byId.freellmapi.state, 'needs-action')
   assert.equal(byId.ollama.state, 'unknown', '没探过的服务车道只能是 unknown，不许猜成 ready')
@@ -272,10 +265,17 @@ check('四态投影：ready / needs-action / unavailable / unknown 各就各位'
   assert.equal(byId['keyless-x'].state, 'ready', '免 key 渠道没有 ready 记录时也应显示为可用')
 })
 
-check('OFM 后端就绪时那 11 条转为 ready', () => {
-  const rows = projectRegistryView(buildRegistry().channels, { nativeMounted: [], ofmReady: true })
-  const codearts = rows.find((row) => row.id === 'codearts')
-  assert.equal(codearts.state, 'ready')
+check('未挂载的账号车道一律 unavailable，且原因能指向下一步', () => {
+  // ⚠️ 那条「OFM 后端就绪 → 11 条转 ready」的断言随拆分一起下线了：那 11 条车道
+  // 已搬到独立插件 dsh-ofm-lanes，本插件里不再有 `backend: 'ofm'` 的账号记录。
+  // 现在账号车道只有一种就绪判据 —— 本插件手上有没有它的适配器。
+  const rows = projectRegistryView(buildRegistry().channels, { nativeMounted: [] })
+  const accounts = rows.filter((row) => row.kind === 'account')
+  assert.ok(accounts.length >= 2, '账号车道不该凭空消失')
+  for (const row of accounts) {
+    assert.equal(row.state, 'unavailable', row.id + ' 未挂载却不是 unavailable')
+    assert.ok(row.reason.length > 8, row.id + ' 的原因太短，用户读不出下一步')
+  }
 })
 
 check('投影不带出探针与内部字段（页面拿不到执行面）', () => {

@@ -3,6 +3,112 @@
 格式：`## [版本] · 日期` → `### 新增 / 改动 / 修复 / 证据`。
 写下来的规矩：**每条都要能被验证**（命令、文件、实测输出），做不到就标 `未实测`。
 
+## [0.5.0] · 2026-10-25
+
+> 主题：**把「宿主 channel-pack 的那 11 条账号车道」整体移出本插件**，改由独立插件
+> `dsh-ofm-lanes` 提供。本插件只留自己挂载的两条腾讯车道 + 服务车道 + 自带 key 车道。
+
+### 改动
+
+- **移出**：`src/lanes.js`（11 条车道的元数据 + `/api/channel-pack` RPC 常量）整个文件删除；
+  `src/lanes/registry.js` 的 `ofmAccountRecords()`、`hostCategoryOf()`、`backend === 'ofm'`
+  就绪分支；`src/routes.js` 的 `rejectOfmLane()`、route 投影的 `'ofm'` 档、
+  `/summary` 里的 `ofm: { available, rpcPath }`；`index.js` 的 `ofmBackend` / `ofmRpcPath`
+  deps 与装配自证字段。`GET /api/free-model/summary` 的 `products` 从 13 条降到 2 条
+  （账号车道只剩本插件自己挂的两条），装配自证里 `channels.account` 从 13 变 2。
+- **页面**：`client.js` 删除 `ofmCall()` 与整段 OFM 侧读写逻辑（11 条车道的账号 / 模型 /
+  余额 / 登录 / 短信备用路径）、`ProductCard` 里只服务于那一侧的分支
+  （`isOfm` / `ready` / `backendNote` / `balanceNote` / `rowClaim` / 短信表单）与对应 CSS、
+  中英字典里 30 余条词条。账号页现在只渲染 `buddy` / `workbuddy` 两张卡。
+- **`backend` 枚举收缩**为 `native` / `gateway`：本插件的注册表里不再有「不是自己挂、
+  也不是别人已挂」的记录，保留一个用不上的取值只会让校验器放过页面渲染不出来的渠道。
+- **文档**：README 删掉「账号渠道：13 条车道」「两条后端，页面自己选」
+  「宿主没装时（降级）」「为什么不把这 11 条也自己挂一遍」等整节，改为说明拆分去向与
+  仍然成立的命名冲突 / 双 auth 实例两个理由；仓库描述与 topics 同步去掉相关表述。
+
+### 未变
+
+- 账号池仍然晚绑定：宿主提供 `accountPool` 就直接用它的池，缺席时退化为 `LocalPool`，
+  两种形态读写**同一份** `$DSH_HOME/channel-pack/state.json`。
+- `src/core/**`、`src/opencode/**`、`src/lanes/keyed/**`、`src/lanes/service.js`、
+  `src/lanes/catalog.js`、`src/lanes/remote.js` 的既有行为未动。
+
+### 证据
+
+- `npm run check` → `OK  语法门：73 个文件 node --check 全过（产品 43 / 测试 27 / 脚本 3）`
+- `npm test` → 17 个套件全绿、零 fail（`通过 24 / 12 / 9 / 16 / 13 / 25 / 41 / 22 / 22 / 52 / 44 / 11 / 15 / 29 / 22 / 17 项`）
+- `grep -rn "ofm" index.js client.js src/routes.js src/lanes/registry.js` → 0 命中；
+  `test/lanes.mjs` 已删除。
+
+## [0.4.1] · 2026-10-25
+
+> 主题：**自带 key 那一页从「只告诉你去哪拿 key」变成「能填、能测、能清」**。
+> 顺带修掉一个静默 bug：插件读凭据时给宿主补了 `ref:` 前缀，而宿主只认裸名。
+
+### 新增
+
+- **`src/lanes/keyed/keys.js`（凭据面）**：`validateKeyInput`（非空 / 长度 / 控制字符 /
+  空白）、`maskKey`（`sk-t…6789`，**永不回显原文**）、`saveLaneKey` / `clearLaneKey`
+  （写宿主凭据的同名条目）、`laneKeyState`（已配置 / 来源 / 能否写 / 脱敏值）。
+  一切读写都走注入的函数，**不自己读 `.credentials.yaml`** —— 宿主换 `DSH_HOME`
+  时自己读会静默读错文件。
+- **`src/lanes/keyed/probe.js`（这才是「测试连通性」的正确做法）**：优先 `GET {baseURL}/models`，
+  声明了 `modelsURL` 的按它探，都没有的退回一次 1-token 补全。结果按
+  `ok / no-key / invalid-key / forbidden / quota / rate-limited / not-found / bad-request /
+  server-error / network / timeout` **十一种**分开报。
+  关键区分：**401 说的是「key 不对」，429 说的是「key 是对的、等一会」，超时说的是「网络」**
+  —— 合成一个「失败」就等于告诉用户「这条渠道坏了」，方向完全错。
+  没有 key 时**不构造请求**；上游错误体先遮蔽疑似凭据再回显。
+- **`src/lanes/keyed/manage.js`（运行时管理器）**：持有 `laneId → { adapter, handle }`，
+  于是「现在填 key」能落在**当前运行态**上：已挂载的走 `adapter.setApiKey()`（不重注册，
+  否则撞 `DUPLICATE_ADAPTER`），未挂载的就绪后立刻挂上。清除 key 时**路由故意保留**
+  ——适配器抛 `MISSING_CREDENTIAL` 并带上「去哪拿 key」，比让模型从选择器里静默消失好。
+- **HTTP 面**：`GET /key`（凭据面状态，**不含原文**）、`POST /key`（保存，回脱敏值）、
+  `DELETE /key`（清除）、`POST /key/probe`（探测）、`POST /key/refresh`（重算就绪）。
+  探测失败仍是 **200**：那是「探测完成、结论是不通过」，不是请求错误。
+- **页面**：每张卡多三段 —— 凭据面（已填/未填 + 脱敏值 + 来源）、填 key 表单
+  （`type=password`、回车即保存、显示/隐藏、清除）、探测按钮与分类结果。
+  输入框在提交**前**就清空本地 state：明文不进 DOM 快照。
+  页头多一颗「已配 N」的药丸。
+
+### 修复
+
+- **凭据读取给宿主补了 `ref:` 前缀（静默失效，2026-10-25 本机实测确认）**。
+  `index.js` 原先把名字拼成 `ref:${name}` 再交给 `ctx.credentials.resolve()`。
+  实测对照：
+
+  ```text
+  resolve('DEEPSEEK_API_KEY')      → { value: 'sk-e8b…', source: 'file' }
+  resolve('ref:DEEPSEEK_API_KEY')  → undefined
+  ```
+
+  宿主的引用文法就是环境变量名本身（`@deepseek-ai/dsh-credentials` 的
+  `REF_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/`），`ref:` 是**本插件目录里**的记号。
+  后果不是报错而是**静默 undefined**：用户在 `.credentials.yaml` 里配好了 key，
+  页面永远说「未配置」，日志里一个字都没有。现在 `readCredential` /
+  `writeCredential` / `unsetCredential` / `describeCredential` 统一先剥前缀再传裸名，
+  并由 `test/host-keyed.mjs` 的「凭据读取传的是裸名」一条钉住。
+- `mountKeyedLanes` 的 `keyedFailed` 落盘时改成只记 id：原来是 `{id, reason}`，
+  而 reason 里带 baseURL 与凭据名，自证文件不该有这些。
+
+### 证据（本机实测）
+
+| 断言 | 怎么验的 |
+|---|---|
+| `ref:` 前缀让 resolve 静默返回 undefined | 直接实例化 `LocalCredentialProvider` 读真实的 `~/.dsh/.credentials.yaml`，两种形态对照打印 |
+| 20 条 keyed 车道里 0 条 baseURL 未确证 | `node test/keyed/catalog-shape.mjs` |
+| 没 key 的车道一条都没挂上 | `node test/host-keyed.mjs`（真实宿主包跑 `apply()`） |
+| 401 / 429 / 超时 / 网络各自分类 | `node --import ./test/hooks.mjs test/keyed/keys-flow.mjs` |
+| 保存不泄漏原文、GET 不回显 | `node --import ./test/hooks.mjs test/routes-channels.mjs` |
+| 离线全量 | `npm test`（含新增 keys-flow，18 个套件全绿） |
+
+### 未实测 / 边界
+
+- **真实上游探测未在本轮跑**：探针代码走的是真实 `fetch`，但离线套件全部用桩，
+  `npm run test:live` 依然需要用户自己填一把真 key 才会打公网。
+- 清除 key 不会撤销已挂载的路由（刻意的）：模型在选择器里仍在，选它会得到一条
+  「去拿 key」的错误 —— 换到的可读性优于「模型莫名消失」。
+
 ## [0.4.0] · 2026-10-25
 
 > 主题：从「三条车道」变成**渠道总台** —— 三类渠道一种形状、渠道清单可远程更新、
