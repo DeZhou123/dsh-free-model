@@ -22,6 +22,10 @@
       },
       "unknown": true,
       "openCatalog": true,
+      "balance": {
+        "url": "https://openrouter.ai/api/v1/credits",
+        "rowKind": "balance"
+      },
       "note": "免费型号随时上下架，静态表只是兜底（运行时以 /models 实时结果为准）；模型 id 里那个 \":free\" 后缀是价格档位，忘掉它就会按付费模型计费。",
       "freeTier": "id 带 \":free\" 后缀的模型计费为 0（实测 pricing.prompt/completion = \"0\"）；每日次数按账户余额档限制，余额 ≥10 美元时额度更高",
       "docsURL": "https://openrouter.ai/docs/api-reference/overview",
@@ -479,6 +483,10 @@
         "claim": false
       },
       "unknown": true,
+      "balance": {
+        "url": "https://api.moonshot.cn/v1/users/me/balance",
+        "rowKind": "balance"
+      },
       "note": "一次性赠送 ≠ 免费层：用完就是 402，页面要按「额度用尽」报，不要报成限流。",
       "freeTier": "新账号送一次性体验额度（不是每日免费层）；余额用完即 402，需充值",
       "docsURL": "https://platform.moonshot.cn/docs/",
@@ -615,6 +623,10 @@
         "claim": false
       },
       "unknown": true,
+      "balance": {
+        "url": "https://api.siliconflow.cn/v1/user/info",
+        "rowKind": "balance"
+      },
       "note": "国内直连即可；免费型号清单在站内按标签滚动，静态表只兜底。国际版是 api.siliconflow.com，key 不通用。",
       "freeTier": "一批「免费」标记的模型（多为中小尺寸）零计费调用；另有新用户赠送额度，具体型号见站内标签",
       "docsURL": "https://docs.siliconflow.cn/",
@@ -1224,6 +1236,22 @@
           "maxTokens": 65536,
           "vision": false,
           "tools": true
+        },
+        {
+          "id": "google/gemma-4-31B-turbo-TEE",
+          "name": "Gemma 4 31B Turbo (TEE)",
+          "contextWindow": 131072,
+          "maxTokens": 65536,
+          "vision": true,
+          "tools": true
+        },
+        {
+          "id": "zai-org/GLM-5.1-TEE",
+          "name": "GLM 5.1 (TEE)",
+          "contextWindow": 202752,
+          "maxTokens": 65535,
+          "vision": false,
+          "tools": true
         }
       ],
       "extra": {
@@ -1252,6 +1280,10 @@
       },
       "unknown": true,
       "openCatalog": true,
+      "balance": {
+        "url": "https://api.novita.ai/v3/user/balance",
+        "rowKind": "balance"
+      },
       "note": "目录里混着 -p 后缀的型号（推测是 premium/峰值档），挑不带后缀的先试。⚠️ 它的 /models 路径是 /v3/openai/models（不是 /v3/models）。",
       "freeTier": "新号赠小额试用额度，之后按 token 计费。",
       "docsURL": "https://novita.ai/docs/api-reference/introduction",

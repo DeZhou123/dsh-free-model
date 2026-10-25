@@ -62,12 +62,14 @@ export const MORE_KEYED_CHANNELS = [
       + 'GLM-5.3、DeepSeek-V4.1-Flash-1017、qwen3.8-max-0902、MiniMax-H3）',
     unknown: true,
     unknownFields: ['freeTier'],
+    // 这几条 id 是 2026-10-26 从它自己的实时目录里抄下来的，所以**不标** unknown：
+    // 窗口拿不到仍写 0（未知），但「这个 id 存在」这件事是实证的。
     models: [
-      { id: 'DeepSeek-V4.1-Flash-1017', name: 'DeepSeek V4.1 Flash', contextWindow: 0, maxTokens: 0, vision: false, tools: true, unknown: true },
-      { id: 'GLM-5.3', name: 'GLM 5.3', contextWindow: 0, maxTokens: 0, vision: false, tools: true, unknown: true },
-      { id: 'GLM-5.3-Flash', name: 'GLM 5.3 Flash', contextWindow: 0, maxTokens: 0, vision: false, tools: true, unknown: true },
-      { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', contextWindow: 0, maxTokens: 0, vision: false, tools: true, unknown: true },
-      { id: 'qwen3.8-max-0902', name: 'Qwen3.8 Max', contextWindow: 0, maxTokens: 0, vision: false, tools: true, unknown: true },
+      { id: 'DeepSeek-V4.1-Flash-1017', name: 'DeepSeek V4.1 Flash', contextWindow: 0, maxTokens: 0, vision: false, tools: true },
+      { id: 'GLM-5.3', name: 'GLM 5.3', contextWindow: 0, maxTokens: 0, vision: false, tools: true },
+      { id: 'GLM-5.3-Flash', name: 'GLM 5.3 Flash', contextWindow: 0, maxTokens: 0, vision: false, tools: true },
+      { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', contextWindow: 0, maxTokens: 0, vision: false, tools: true },
+      { id: 'qwen3.8-max-0902', name: 'Qwen3.8 Max', contextWindow: 0, maxTokens: 0, vision: false, tools: true },
     ],
   },
   {
@@ -115,6 +117,8 @@ export const MORE_KEYED_CHANNELS = [
     unknown: true,
     unknownFields: ['freeTier'],
     models: [
+      // 窗口取自 2026-10-26 的实时目录（每条的 providers[].context_length 里最大的那个）；
+      // 拿不到窗口的（Kimi K3）保持 0 = 未知 —— 编一个数会让宿主的压缩时机判断错。
       { id: 'deepseek-ai/DeepSeek-V4.1-Flash-1017', name: 'DeepSeek V4.1 Flash', contextWindow: 1048576, maxTokens: 0, vision: true, tools: true },
       { id: 'Qwen/Qwen3.8-27B', name: 'Qwen3.8 27B', contextWindow: 1000000, maxTokens: 0, vision: true, tools: true },
       { id: 'zai-org/GLM-5.3-Flash', name: 'GLM 5.3 Flash', contextWindow: 1048576, maxTokens: 0, vision: true, tools: true },
@@ -149,6 +153,8 @@ export const MORE_KEYED_CHANNELS = [
       { id: 'moonshotai/Kimi-K3-TEE', name: 'Kimi K3 (TEE)', contextWindow: 1048576, maxTokens: 65535, vision: true, tools: true },
       { id: 'Qwen/Qwen3.8-27B-TEE', name: 'Qwen3.8 27B (TEE)', contextWindow: 262144, maxTokens: 65536, vision: true, tools: true },
       { id: 'deepseek-ai/DeepSeek-V3.2-TEE', name: 'DeepSeek V3.2 (TEE)', contextWindow: 131072, maxTokens: 65536, vision: false, tools: true },
+      { id: 'google/gemma-4-31B-turbo-TEE', name: 'Gemma 4 31B Turbo (TEE)', contextWindow: 131072, maxTokens: 65536, vision: true, tools: true },
+      { id: 'zai-org/GLM-5.1-TEE', name: 'GLM 5.1 (TEE)', contextWindow: 202752, maxTokens: 65535, vision: false, tools: true },
     ],
   },
   {
