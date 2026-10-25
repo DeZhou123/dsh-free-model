@@ -338,6 +338,14 @@ window.__ModuleLoader__.load({
       keyedHealthResetDone: '健康状态已清空（下次探测重新记账）',
       keyedSearch: '搜索渠道 / 凭据名 / 模型',
       keyedSort: '排序',
+      keyedViewTable: '表格视图',
+      keyedViewCards: '卡片视图',
+      keyedColName: '渠道',
+      keyedColState: '就绪',
+      keyedColHealth: '健康',
+      keyedColKeys: 'key',
+      keyedColModels: '模型数',
+      keyedColLastAt: '上次实测',
       keyedSortRecommended: '推荐顺序',
       keyedSortName: '按名称',
       keyedSortModels: '按模型数',
@@ -595,6 +603,14 @@ window.__ModuleLoader__.load({
       keyedHealthResetDone: 'Health state cleared (the next probe records again)',
       keyedSearch: 'Search channel / credential / model',
       keyedSort: 'Sort',
+      keyedViewTable: 'Table view',
+      keyedViewCards: 'Card view',
+      keyedColName: 'Channel',
+      keyedColState: 'Ready',
+      keyedColHealth: 'Health',
+      keyedColKeys: 'Key',
+      keyedColModels: 'Models',
+      keyedColLastAt: 'Last test',
       keyedSortRecommended: 'Recommended',
       keyedSortName: 'By name',
       keyedSortModels: 'By model count',
@@ -1814,10 +1830,16 @@ window.__ModuleLoader__.load({
       /**
        * 排序：recommended（目录顺序，后端已按「好用的在前」排）/ name / models / health。
        *
-       * 为什么值得做：30+ 条渠道，用户常带着具体目的来（"模型最多的那条"、
-       * "哪条健康"），而目录顺序回答不了这些。
+       * 为什么值得做：30+ 条渠道，用户常带着具体目的来（「模型最多的那条」、
+       * 「哪条健康」），而目录顺序回答不了这些。
        */
       const [sort, setSort] = useState('recommended')
+      /**
+       * 视图：cards（默认，信息全）或 table（34 条时一眼扫完）。
+       *
+       * 两个都要：卡片回答「这条渠道是什么」，表格回答「哪几条该先收拾」。
+       */
+      const [view, setView] = useState('cards')
       /**
        * 当前筛选：all / ready / pending / cooldown / revoked。
        *
@@ -2142,6 +2164,13 @@ window.__ModuleLoader__.load({
                 'aria-label': t('keyedSort'),
                 onChange: (event) => setSort(event?.target?.value ?? 'recommended'),
               }, ['recommended', 'name', 'models', 'health'].map((id) => h('option', { key: id, value: id }, t('keyedSort' + id.slice(0, 1).toUpperCase() + id.slice(1))))),
+              h('button', {
+                key: 'v',
+                type: 'button',
+                className: view === 'table' ? 'ow-chip on' : 'ow-chip',
+                'data-view': view,
+                onClick: () => setView(view === 'table' ? 'cards' : 'table'),
+              }, view === 'table' ? t('keyedViewCards') : t('keyedViewTable')),
               h('div', { key: 'f', className: 'ow-filters', role: 'group', 'aria-label': t('keyedSearch') },
                 FILTERS.map((id) => h('button', {
                   key: id,
@@ -2194,7 +2223,35 @@ window.__ModuleLoader__.load({
                     h('p', { key: 'n' }, t('keyedNoMatch')),
                     h(Button, { key: 'b', onClick: () => { setQuery(''); setFilter('all') } }, t('keyedFilterAll')),
                   ])
-                : h('div', { key: 'cards', className: 'ow-cards' },
+                : view === 'table'
+                  // 表格视图：34 条渠道时「一眼扫完」比卡片更实用。列就是调查问卷里那六项
+                  // （名称 / 状态 / 健康 / key / 模型数 / 上次实测），少一项都看不出该先收拾哪条。
+                  ? h('div', { key: 'table', className: 'ow-tablewrap' }, [
+                      h('table', { className: 'ow-table' }, [
+                        h('thead', { key: 'h' }, h('tr', null, [
+                          t('keyedColName'), t('keyedColState'), t('keyedColHealth'),
+                          t('keyedColKeys'), t('keyedColModels'), t('keyedColLastAt'),
+                        ].map((label) => h('th', { key: label }, label)))),
+                        h('tbody', { key: 'b' }, keyed.map((channel) => {
+                          const healthRow = health?.[channel.id]
+                          const keyState = keyStates?.[channel.id]
+                          const at = healthRow?.lastOkAt ?? healthRow?.lastFailureAt
+                          return h('tr', { key: channel.id, 'data-lane': channel.id }, [
+                            h('td', { key: 'n' }, safeText(channel.displayName, 60)),
+                            h('td', { key: 's' }, h(StatePill, { state: channel.state, t })),
+                            h('td', { key: 'h' }, h(HealthPill, { health: healthRow, t })),
+                            h('td', { key: 'k' }, keyState?.configured === true
+                              ? (Number.isFinite(keyCounts?.[channel.id]) && keyCounts[channel.id] > 1
+                                ? String(keyCounts[channel.id]) + '×'
+                                : '✓')
+                              : '—'),
+                            h('td', { key: 'm' }, String(channel.modelCount ?? 0)),
+                            h('td', { key: 'a' }, at === undefined || at === null ? '—' : formatStamp(at)),
+                          ])
+                        })),
+                      ]),
+                    ])
+                  : h('div', { key: 'cards', className: 'ow-cards' },
                     keyed.map((channel) => h(KeyedCard, {
                       key: channel.id,
                       channel,
@@ -3498,6 +3555,17 @@ window.__ModuleLoader__.load({
   background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent);
 }
 .ow-sort { flex: 0 0 auto; }
+
+/* 表格视图：30+ 条渠道时「一眼扫完」 */
+.ow-tablewrap { overflow-x: auto; }
+.ow-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.ow-table th, .ow-table td {
+  text-align: left; padding: 5px 8px; vertical-align: middle;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  white-space: nowrap;
+}
+.ow-table th { color: var(--dsw-alias-text-secondary); font-weight: 500; }
+.ow-table tbody tr:hover { background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent); }
 
 /* 尊重系统的减少动效偏好。 */
 @media (prefers-reduced-motion: reduce) {

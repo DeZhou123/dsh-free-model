@@ -874,6 +874,16 @@ check('卡片显示「上次实测」时刻（否则三天前的 401 与五分�
   const withoutTime = KeyedCard({ channel: keyedRow, t, health: { state: 'unknown' } })
   assert.ok(!flat(withoutTime).includes('keyedLastAt'), '没测过时不该编一个时刻')
 })
+
+check('表格视图：切换按钮存在，切到表格后一堆卡片不见了（34 条时一眼扫完）', () => {
+  const cards = KeyedPage({ t, channels: [keyedRow], wired: true, keyStates: {}, probes: {}, health: {} })
+  const toggle = collectElements(cards, (node) => typeof node.props?.['data-view'] === 'string')
+  assert.equal(toggle.length, 1, '缺一个视图切换按钮，实际 ' + toggle.length)
+  assert.equal(toggle[0].props['data-view'], 'cards', '默认应当是卡片视图')
+  assert.ok(flat(cards).includes('keyedViewTable'), '卡片视图下按钮文案应当指向「表格视图」')
+  // 表格视图的列是契约：少一列就看不出该先收拾哪条。
+  assert.ok(flat(cards).includes('keyedSort'), '缺少排序下拉')
+})
 // ── 汇总 ────────────────────────────────────────────────────────────────────
 check('语言包：三页签与新文案都有词条（缺词条会显示成变量名）', () => {
   const src = readFileSync(join(ROOT, 'client.js'), 'utf8')
