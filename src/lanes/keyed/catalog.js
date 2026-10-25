@@ -139,8 +139,10 @@ const KEYED_CHANNELS_BASE = [
     signupURL: 'https://console.groq.com/keys',
     freeTier: '免费层按模型给每分钟/每天的请求数与 token 上限（RPM/RPD/TPM/TPD），不付费即可调用；超了是 429 而不是扣费',
     region: 'global',
-    note: '速度是它的卖点，代价是限速很硬：免费档上并发稍高就会连续 429，等一会儿会恢复（属于限流，不是额度用尽）。',
-    evidence: '2026-10-25 GET https://api.groq.com/openai/v1/models → 401 {"error":{"code":"invalid_api_key"}}（端点存在且 OpenAI 形状）',
+    note: '速度是它的卖点，代价是限速很硬：免费档上并发稍高就会连续 429，等一会儿会恢复（属于限流，不是额度用尽）。'      + '⚠️ 本机 2026-10-26 实测到另一种失败：**Cloudflare 边缘 403 Forbidden**（server: cloudflare，带 key 与不带 key 完全相同，'
+      + '  '/'models 与 /chat/completions 都一样）。那不是 key 的问题、也不是额度 —— 是这台机器被边缘挡在鉴权之前，'
+      + '  换网络/等风控解除再试。**探测通过（401）与真实对话（403）可能不一致**，两个结果都要看。',    evidence: '2026-10-25 GET https://api.groq.com/openai/v1/models → 401 {"error":{"code":"invalid_api_key"}}（端点存在且 OpenAI 形状）。'
+      + ' 2026-10-26 真实对话冒烟：POST /chat/completions（openai/gpt-oss-120b）→ 403 Forbidden / 307ms，cf-ray 落在 SIN，带 key 与否同码',
     unknown: true,
     unknownFields: ['models', 'freeTier'],
     models: [
@@ -554,8 +556,8 @@ export const KEYLESS_CHANNELS = [
     signupURL: 'https://enter.pollinations.ai',
     freeTier: '完全免费、无需注册：文本每次请求间隔≥30 秒（同一 IP 串行），超了回 402 + Retry-After；带自己的 key 可解除按 IP 限速',
     region: 'global',
-    note: '⚠️ 限速是「一次只跑一个、间隔 30 秒」，所以它只适合当兜底车道；上游**用 402 表示「等一下再来」**，与别家的「额度用尽」撞码，页面要按 Retry-After 区分。模型只有 GPT-OSS 20B 一个。',
-    evidence: '2026-10-25 GET https://text.pollinations.ai/models → 200，返回 [{"name":"openai-fast","tier":"anonymous","tools":true,...}]；官方 APIDOCS.md 原文确认 "POST https://text.pollinations.ai/openai (or /v1/chat/completions)" 且 "Free · no signup · rate-limited"',
+    note: '⚠️ 限速是「一次只跑一个、间隔 30 秒」，所以它只适合当兜底车道；上游**用 402 表示「等一下再来」**，与别家的「额度用尽」撞码，页面要按 Retry-After 区分。模型只有 GPT-OSS 20B 一个。⚠️ 2026-10-26 实测它**忽略 max_tokens**（要 8 个 token 回了 534 个），所以一次请求可能跑十几秒 —— 适合兜底，不适合当主模型。',
+    evidence: '2026-10-25 GET https://text.pollinations.ai/models → 200，返回 [{"name":"openai-fast","tier":"anonymous","tools":true,...}]；'      + '官方 APIDOCS.md 原文确认 POST /openai（或 /v1/chat/completions）且 Free · no signup · rate-limited。'      + ' 2026-10-26 真实对话冒烟：POST /chat/completions（openai-fast）→ **200** / 13862ms / 上游回中文文本；'      + '同轮实测它**忽略 max_tokens=8**（回了 534 个 completion token）——所以它慢，且别指望用它压成本',
     supportsModelList: false,
     modelsURL: 'https://text.pollinations.ai/models',
     // 串行限速（同一 IP 间隔 ≥30 秒）：适配器据此**不做自己的重试**，只尊重 Retry-After。
