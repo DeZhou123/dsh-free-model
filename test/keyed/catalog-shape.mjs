@@ -182,6 +182,22 @@ check('openCatalog 标记：恰好这 9 条 /models 可匿名读（2026-10-26 �
   }
 })
 
+
+check('每条渠道的文本字段都是可用于展示的字符串（不许 NaN / undefined 混进来）', () => {
+  // ⚠️ 事故现场（2026-10-26，由 B 车道的取证任务抓出来）：
+  // 写 groq.note 时用了 `'...' + '/' + 'models ...'` 这种拼接 —— 语法合法、node --check 过、
+  // 全部测试也过，但运行时 `'str' / 'str'` 是**除法**，结果是 NaN，而且把后半段整句吞掉。
+  // 页面上会把 NaN 直接渲染给用户。这一条断言就是给这类「合法但不生效」的写法兜底。
+  const bad = []
+  for (const lane of ALL_CHANNELS) {
+    for (const field of ['displayName', 'note', 'evidence', 'freeTier', 'docsURL', 'signupURL']) {
+      const value = lane[field]
+      if (typeof value !== 'string' || value.trim() === '') { bad.push(lane.id + '.' + field + ' 不是非空字符串'); continue }
+      if (/\bNaN\b|\bundefined\b|\[object Object\]/.test(value)) bad.push(lane.id + '.' + field + ' 里有 ' + value.match(/\bNaN\b|\bundefined\b|\[object Object\]/)[0])
+    }
+  }
+  assert.deepEqual(bad, [], '有渠道的文本字段不可展示：' + bad.join('; '))
+})
 check('带占位符的渠道必须声明 supportsModelList:false（它的 /models 地址本来就是假的）', () => {
   // 2026-10-26 实测补的纪律：cloudflare-workers-ai 的 baseURL 里有 {ACCOUNT_ID}，
   // 而它的 /models 连匿名 GET 都不接受（两轮 405）。没声明时，每次打开模型选择器
