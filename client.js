@@ -1787,6 +1787,52 @@ window.__ModuleLoader__.load({
     /** 筛选档位（顺序 = 胶囊顺序：全部 → 能用 → 待配 → 冷却 → 吊销）。 */
     const FILTERS = ['all', 'ready', 'pending', 'cooldown', 'revoked']
 
+    /**
+     * 一条渠道属于哪一档（筛选与排序共用）。
+     *
+     * 判据顺序刻意是 **健康优先**：一条渠道刚被 401 判死时，它的「就绪」仍是 true
+     * （凭据确实填着），把 ready 放在前面会让「已吊销」永远筛不出来。
+     */
+    function bucketOfChannel(row, keyStates, health) {
+      const state = health?.[row.id]?.state
+      if (state === 'revoked') return 'revoked'
+      if (state === 'cooldown') return 'cooldown'
+      return keyStates?.[row.id]?.configured === true || row.state === 'ready' ? 'ready' : 'pending'
+    }
+
+    /**
+     * 搜索是否命中一条渠道（渠道名 / 凭据名 / 端点 / 模型样例）。
+     *
+     * ⚠️ 模型样例用的是 `modelSample`（后端只给前 8 条），不是 `models`：
+     * `/channels` 的投影里根本没有全量模型清单 —— 写 `row.models` 会让「搜模型名」永远搜不到。
+     */
+    function matchesQuery(row, query) {
+      const needle = String(query ?? '').trim().toLowerCase()
+      if (needle === '') return true
+      const haystack = [
+        row.id,
+        row.displayName,
+        row.apiKeyEnv,
+        row.endpoint,
+        ...(Array.isArray(row.modelSample) ? row.modelSample : []),
+      ]
+        .filter((value) => typeof value === 'string')
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(needle)
+    }
+
+    /** 排序函数表（导出给测试；`recommended` = 目录顺序，即不排）。 */
+    function sortersFor(bucketOf) {
+      const rank = { ready: 0, cooldown: 1, pending: 2, revoked: 3 }
+      return {
+        recommended: null,
+        name: (left, right) => String(left.displayName).localeCompare(String(right.displayName), 'zh-Hans-CN'),
+        models: (left, right) => (right.modelCount ?? 0) - (left.modelCount ?? 0),
+        health: (left, right) => (rank[bucketOf(left)] ?? 9) - (rank[bucketOf(right)] ?? 9),
+      }
+    }
+
     /** 筛选档位 → 文案（未知档位原样返回，不露内部键名）。 */
     function filterLabel(id, t) {
       if (id === 'all') return t('keyedFilterAll')
@@ -2116,53 +2162,17 @@ window.__ModuleLoader__.load({
 
       const keyedAll = (channels ?? []).filter((row) => row.kind === 'keyed')
 
-      /**
-       * 一行渠道属于哪一档（用于筛选与汇总）。
-       *
-       * 判据顺序刻意是 **健康优先**：一条渠道刚被 401 判死时，它的「就绪」仍是
-       * true（凭据确实填着），把 ready 放在前面会让"已吊销"永远筛不出来。
-       */
-      const bucketOf = (row) => {
-        const state = health?.[row.id]?.state
-        if (state === 'revoked') return 'revoked'
-        if (state === 'cooldown') return 'cooldown'
-        return keyStates?.[row.id]?.configured === true || row.state === 'ready' ? 'ready' : 'pending'
-      }
 
+      // 判据抽成纯函数（`bucketOfChannel` / `matchesQuery` / `sortersFor`）：它们是这一页
+      // 最容易出错、也最该被测的部分，而内联在组件里就只能靠渲染测试间接覆盖。
+      const bucketOf = (row) => bucketOfChannel(row, keyStates, health)
       const counts = { all: keyedAll.length, ready: 0, pending: 0, cooldown: 0, revoked: 0 }
       for (const row of keyedAll) counts[bucketOf(row)] += 1
 
-      // 搜索：渠道名 / 凭据名 / 端点 / 模型 id 任一处命中即可。
-      // 模型 id 也算，是因为「我记得有个 glm-5.3 的免费渠道」是最常见的找法，
-      // 而那时用户并不记得渠道叫什么。
-      const needle = query.trim().toLowerCase()
-      const rank = { ready: 0, cooldown: 1, pending: 2, revoked: 3 }
-      const sorters = {
-        recommended: null,
-        name: (left, right) => String(left.displayName).localeCompare(String(right.displayName), 'zh-Hans-CN'),
-        models: (left, right) => (right.modelCount ?? 0) - (left.modelCount ?? 0),
-        health: (left, right) => (rank[bucketOf(left)] ?? 9) - (rank[bucketOf(right)] ?? 9),
-      }
       const keyed = keyedAll
         .slice()
-        .sort(sorters[sort] ?? (() => 0))
-        .filter((row) => {
-        if (filter !== 'all' && bucketOf(row) !== filter) return false
-        if (needle === '') return true
-        // ⚠️ 用 `modelSample`（后端只给前 8 条），不是 `models`：`/channels` 的投影
-        // 里根本没有全量模型清单 —— 写 `row.models` 会让「搜模型名」这条永远搜不到。
-        const haystack = [
-          row.id,
-          row.displayName,
-          row.apiKeyEnv,
-          row.endpoint,
-          ...(Array.isArray(row.modelSample) ? row.modelSample : []),
-        ]
-          .filter((value) => typeof value === 'string')
-          .join(' ')
-          .toLowerCase()
-        return haystack.includes(needle)
-      })
+        .sort(sortersFor(bucketOf)[sort] ?? (() => 0))
+        .filter((row) => (filter === 'all' || bucketOf(row) === filter) && matchesQuery(row, query))
 
       const configuredCount = keyedAll.filter((row) => keyStates?.[row.id]?.configured === true).length
 
@@ -3652,6 +3662,8 @@ window.__ModuleLoader__.load({
         probeText, probeKindSuffix, describeKeySource,
         // 0.6.0：健康徽章 + 筛选胶囊（同样是纯函数 → 文案，离线可断言）
         HealthPill, healthLabel, healthExtra, filterLabel, formatDuration, FILTERS, lowBalance, balanceText,
+        // 0.6.0：筛选/排序的**纯函数**（从组件里抽出来，好让测试直接钉住判据）
+        bucketOfChannel, matchesQuery, sortersFor,
       },
       inject: ['slots', 'locale'],
       apply(ctx) {

@@ -896,6 +896,49 @@ check('冷却到期会自动刷新（否则「还有 42 秒」永远停在那）
   assert.ok(walk(tree, 'KeyedPage-cooldown') > 5, '冷却态渲染失败')
   assert.ok(flat(tree).includes('keyedHealthCooldown'), '缺少冷却文案')
 })
+
+// ── 0.6.0：筛选/排序的纯函数（从组件里抽出来的那三个）──────────────────────
+const { bucketOfChannel, matchesQuery, sortersFor } = module.__test
+
+check('bucketOfChannel：健康优先于就绪（刚被 401 判死的渠道不能被算成「就绪」）', () => {
+  const keyStates = { lane: { configured: true } }
+  assert.equal(bucketOfChannel({ id: 'lane', state: 'ready' }, keyStates, {}), 'ready')
+  assert.equal(bucketOfChannel({ id: 'lane', state: 'ready' }, keyStates, { lane: { state: 'revoked' } }), 'revoked')
+  assert.equal(bucketOfChannel({ id: 'lane', state: 'ready' }, keyStates, { lane: { state: 'cooldown' } }), 'cooldown')
+  // 没配 key 且没判死 → 待配置
+  assert.equal(bucketOfChannel({ id: 'other', state: 'needs-action' }, {}, {}), 'pending')
+})
+
+check('matchesQuery：渠道名 / 凭据名 / 端点 / 模型样例都能命中，空查询放行', () => {
+  const row = {
+    id: 'zai',
+    displayName: 'Z.ai（智谱国际站）',
+    apiKeyEnv: 'ZAI_API_KEY',
+    endpoint: 'https://api.z.ai/api/paas/v4',
+    modelSample: ['glm-5.3-flash', 'glm-4.7-flash'],
+  }
+  for (const needle of ['zai', 'Z.ai', 'ZAI_API_KEY', 'api.z.ai', 'glm-5.3', 'GLM-4.7']) {
+    assert.equal(matchesQuery(row, needle), true, needle + ' 应当命中')
+  }
+  assert.equal(matchesQuery(row, 'groq'), false)
+  assert.equal(matchesQuery(row, ''), true, '空查询必须放行（否则一打开页面列表就空）')
+  assert.equal(matchesQuery(row, '   '), true, '只有空白也算空查询')
+})
+
+check('sortersFor：health 档按 就绪→冷却→待配→吊销 排，models 档按模型数降序', () => {
+  const rows = [
+    { id: 'a', displayName: 'B名', modelCount: 1 },
+    { id: 'b', displayName: 'A名', modelCount: 9 },
+    { id: 'c', displayName: 'C名', modelCount: 5 },
+  ]
+  const buckets = { a: 'revoked', b: 'ready', c: 'cooldown' }
+  const bucketOf = (row) => buckets[row.id]
+  const sorters = sortersFor(bucketOf)
+  assert.equal(sorters.recommended, null, '推荐顺序 = 目录顺序（不排）')
+  assert.deepEqual(rows.slice().sort(sorters.models).map((r) => r.id), ['b', 'c', 'a'])
+  assert.deepEqual(rows.slice().sort((l, r) => l.displayName.localeCompare(r.displayName, 'zh-Hans-CN')).map((r) => r.id), ['b', 'a', 'c'])
+  assert.deepEqual(rows.slice().sort(sorters.health).map((r) => r.id), ['b', 'c', 'a'])
+})
 // ── 汇总 ────────────────────────────────────────────────────────────────────
 check('语言包：三页签与新文案都有词条（缺词条会显示成变量名）', () => {
   const src = readFileSync(join(ROOT, 'client.js'), 'utf8')
