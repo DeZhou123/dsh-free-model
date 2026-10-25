@@ -133,7 +133,16 @@ export function classifyFailure(input, options) {
 
   // ② 额度 / 余额：冷却到「下一个本地整点 + quotaHours」。这是**绝对时刻**，
   //    与退避无关 —— 退避解决的是「太快」，额度解决的是「没有」。
-  if (status === 402 || isQuotaKind(kind) || isQuotaCode(code)) {
+  //
+  // ⚠️ **402 不是只有「额度用尽」一种含义**（2026-10-26 复核修）：Pollinations 这类
+  // 按 IP 串行限速的渠道用 **402 + Retry-After** 表示「等 30 秒再来」，适配器已经把它
+  // 翻译成 `rate-limited`。这种情况下 402 不能进额度档（否则「等 30 秒」会被锁 6~7 小时），
+  // 要交给下面的限流档。上层翻译过的 kind 比裸状态码更接近上游语义。
+  //
+  // 反过来，`{kind:'quota', status:429}` 仍必须走额度档：适配器专门把「429 但正文说
+  // 额度/余额」翻成 quota（adapter.js 的 429 分支），状态码不能把它抢回限流档。
+  const rateLimitedKind = kind.includes('rate-limit') || kind.includes('rate_limit') || code === 'RATE_LIMIT'
+  if ((status === 402 && !rateLimitedKind) || isQuotaKind(kind) || isQuotaCode(code)) {
     const until = nextHourBoundary(at) + quotaHours * HOUR_MS
     return {
       state: 'cooldown',
@@ -146,7 +155,7 @@ export function classifyFailure(input, options) {
   }
 
   // ③ 限流：retry-after 优先（服务端说了算），否则 60 秒起步，退避由账本做。
-  if (status === 429 || kind.includes('rate-limit') || kind.includes('rate_limit') || code === 'RATE_LIMIT') {
+  if (status === 429 || rateLimitedKind) {
     const base = retryAfterMs === undefined
       ? BASE_RATE_LIMIT_MS
       : Math.min(retryAfterMs, DEFAULT_MAX_COOLDOWN_MS)
@@ -390,15 +399,19 @@ export function createHealthStore(deps) {
     for (const [laneId, record] of loaded.lanes) lanes.set(laneId, record)
   }
 
-  function serializeAll() {
+  function serializeLanes(map) {
     const payload = {
       version: 1,
       generatedAt: now(),
       lanes: Object.fromEntries(
-        [...lanes.entries()].map(([laneId, record]) => [laneId, serializable(record)]),
+        [...map.entries()].map(([laneId, record]) => [laneId, serializable(record)]),
       ),
     }
     return JSON.stringify(payload, null, 2)
+  }
+
+  function serializeAll() {
+    return serializeLanes(lanes)
   }
 
   /**
@@ -418,16 +431,34 @@ export function createHealthStore(deps) {
     // `reset()` 必须**权威**：它写的就是「没有记录」。合并会把刚清掉的记录读回来 ——
     // 那等于「清不掉」，而且只会在「盘上有旧记录」时出现（测试里就是这么暴露的）。
     const merge = options?.merge !== false
+    // 单条 reset 的权威范围**只有那一条车道**：传了 authorityLane 就「读盘 → 删这一条 →
+    // 其余原样写回」，不拿本进程内存整份覆盖盘（否则 manage.js 的 saveKey → reset(laneId)
+    // 会把另一个宿主窗口刚记下的渠道全部删掉）。不传 = 全清，才允许整份覆盖。
+    const authorityLane = typeof options?.authorityLane === 'string' && options.authorityLane !== ''
+      ? options.authorityLane
+      : undefined
     try {
       mkdirSync(dirname(file), { recursive: true })
-      for (const [laneId, onDisk] of (merge ? readStateFile(file).lanes : new Map())) {
-        const mine = lanes.get(laneId)
-        if (mine === undefined || (Number.isFinite(onDisk.decidedAt) && onDisk.decidedAt > (mine.decidedAt ?? 0))) {
-          lanes.set(laneId, onDisk)
+      if (merge) {
+        for (const [laneId, onDisk] of readStateFile(file).lanes) {
+          const mine = lanes.get(laneId)
+          if (mine === undefined || (Number.isFinite(onDisk.decidedAt) && onDisk.decidedAt > (mine.decidedAt ?? 0))) {
+            lanes.set(laneId, onDisk)
+          }
         }
       }
+      let payload
+      if (!merge && authorityLane !== undefined) {
+        // 只写「盘上的其余记录」：不拿本进程内存补齐，否则可能把另一个窗口
+        // 刚清掉的车道又写回去。本进程内存里其它车道的记录会在下一次正常写盘时合并。
+        const out = readStateFile(file).lanes
+        out.delete(authorityLane)
+        payload = serializeLanes(out)
+      } else {
+        payload = serializeAll()
+      }
       const tmp = file + '.tmp-' + process.pid
-      writeFileSync(tmp, serializeAll(), 'utf8')
+      writeFileSync(tmp, payload, 'utf8')
       renameSync(tmp, file)
       return true
     } catch (error) {
@@ -608,10 +639,16 @@ export function createHealthStore(deps) {
   }
 
   function reset(laneId) {
-    if (laneId === undefined) lanes.clear()
-    else lanes.delete(String(laneId))
-    // 清空是**权威动作**：不许被盘上的旧记录合并回来（见 writeStateFile 的 options.merge）。
-    writeStateFile({ merge: false })
+    if (laneId === undefined) {
+      lanes.clear()
+      // 全清是**权威动作**：整份覆盖，不许被盘上的旧记录合并回来（见 writeStateFile）。
+      writeStateFile({ merge: false })
+      return
+    }
+    const id = String(laneId)
+    lanes.delete(id)
+    // 单条清空只对**这一条**权威：盘上其余车道（包括另一个宿主窗口刚记下的）原样保留。
+    writeStateFile({ merge: false, authorityLane: id })
   }
 
   return {

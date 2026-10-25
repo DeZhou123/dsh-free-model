@@ -22,6 +22,7 @@
 import assert from 'node:assert/strict'
 import { createKeyedManager, healthKindOf } from '../../src/lanes/keyed/manage.js'
 import { createHealthStore } from '../../src/lanes/health.js'
+import { laneById, staticModels } from '../../src/lanes/keyed/catalog.js'
 
 let passed = 0
 const failures = []
@@ -267,6 +268,99 @@ await check('闸门与页面判据同源：被关掉的渠道在**发请求前**
   // 断言闸门**不是**只问健康：健康账本对这条车道一无所知（unknown），但开关说了不可用。
   assert.equal(manager.healthSnapshot().lanes.groq, undefined, '这条车道不该有健康记录')
   void seen
+})
+
+
+// ── 0.6.0 复核：探测链路的两条 P0（probesInflight / /models 404）──────────────
+
+await check('probeKey 并发去重：连续两次只发一次上游，且返回同一个结论', async () => {
+  // 0.6.0 的 `probesInflight` 从未声明：probeKey 一进来就 ReferenceError。
+  // 这条用例同时钉住「不抛」与「force 不绕过去重」（force 只跳过**结果**缓存）。
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const calls = { n: 0 }
+  const fetchImpl = async () => {
+    calls.n += 1
+    await gate
+    return { ok: true, status: 200, headers: { get: () => null }, text: async () => '{"data":[]}' }
+  }
+  const health = createHealthStore({ persist: false, now: harness.now })
+  const manager = createKeyedManager({
+    health,
+    readCredential: async () => 'sk-test',
+    fetchImpl,
+    register: () => () => {},
+  })
+  const first = manager.probeKey('groq', { force: true })
+  const second = manager.probeKey('groq', { force: true })
+  release()
+  const [a, b] = await Promise.all([first, second])
+  assert.equal(calls.n, 1, '两次并发 probeKey 发了 ' + calls.n + ' 次上游')
+  assert.equal(a, b, '并发探测没有复用同一个结论对象')
+  assert.equal(a.ok, true)
+})
+
+await check('探测 /models 404 不记账：没有目录端点 ≠ 渠道坏了（health 仍是 unknown）', async () => {
+  const health = createHealthStore({ persist: false, now: harness.now })
+  const manager = createKeyedManager({
+    health,
+    readCredential: async () => 'sk-test',
+    // groq 没声明 supportsModelList:false → probe 走 GET /models
+    fetchImpl: async () => ({
+      ok: false,
+      status: 404,
+      headers: { get: () => null },
+      text: async () => '{"error":"not found"}',
+    }),
+    register: () => () => {},
+  })
+  const result = await manager.probeKey('groq', { force: true })
+  assert.equal(result.ok, false)
+  assert.equal(result.kind, 'not-found')
+  assert.equal(result.mode, 'models', '这条用例要覆盖 /models 探测（不是 chat 探测）')
+  assert.equal(health.get('groq').state, 'unknown', '把「没有 /models 端点」记成了渠道故障')
+  assert.equal(manager.availability('groq').available, true, '探测一次 /models 就把渠道冻住了')
+})
+
+await check('真实对话链路：429 + Retry-After: 300 进账本后冷却 ≈ 300 秒（#notify 不丢字段）', async () => {
+  // repro-3.log §2：`#notify` 只带 kind/status/advice/detail，Retry-After 在出口处丢掉，
+  // 账本只能按 60 秒基准猜。这条用例走**真实的 manager.onOutcome → 挂载的适配器**，
+  // 保证两处转发（adapter #notify + manage onOutcome）都真的接上了。
+  const stored = {}
+  const health = createHealthStore({ persist: false, now: harness.now })
+  let mounted
+  const fetchImpl = async (url) => ({
+    ok: false,
+    status: 429,
+    headers: { get: (name) => (String(name).toLowerCase() === 'retry-after' ? '300' : null) },
+    text: async () => (String(url).endsWith('/models')
+      ? '{"error":"rate limited"}'
+      : '{"error":{"message":"Rate limit exceeded"}}'),
+  })
+  const manager = createKeyedManager({
+    health,
+    readCredential: async (name) => stored[name],
+    writeCredential: async (name, value) => { stored[name] = value },
+    unsetCredential: async (name) => { delete stored[name] },
+    register: (route, adapter) => { mounted = adapter; return () => {} },
+    fetchImpl,
+  })
+  const saved = await manager.saveKey('groq', 'sk-test')
+  assert.equal(saved.mounted, true, '没挂上适配器，测不到真实链路：' + JSON.stringify(saved))
+  assert.ok(mounted !== undefined, 'register 没拿到适配器')
+  const model = staticModels(laneById('groq'))[0]?.id
+  try {
+    for await (const _chunk of mounted.stream({ model, messages: [{ role: 'user', content: 'hi' }] })) {
+      // 429 不该有 chunk
+    }
+  } catch {
+    // 预期失败：这里只关心账本拿到了什么
+  }
+  const record = health.get('groq')
+  assert.equal(record.state, 'cooldown')
+  const cooldown = record.until - NOW
+  assert.ok(Math.abs(cooldown - 300_000) <= 5_000,
+    'Retry-After: 300 没进账本，实际冷却 ' + cooldown + 'ms')
 })
 
 

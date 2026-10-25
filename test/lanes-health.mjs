@@ -126,6 +126,36 @@ await check('429 带 retryAfterMs → 用服务端的值，且被上限截断', 
   assert.equal(clamp.cooldownMs, 30 * MINUTE, 'retry-after 不能超过 30 分钟上限')
 })
 
+await check('402 + 限流 kind（Pollinations 的「等 30 秒」）→ 按限流而不是额度', () => {
+  // 上游语义是「等 30 秒」，适配器已翻译成 rate-limited（adapter.js 的 402 分支）。
+  // 账本若先看状态码，会锁到「下一个整点 + 6h」—— 这是 repro-3.log §1 的 6 小时。
+  const result = classifyFailure({ kind: 'rate-limited', status: 402, retryAfterMs: 30 * SECOND })
+  assert.equal(result.state, 'cooldown')
+  assert.equal(result.retryable, true, '限流应该可重试，不是额度耗尽')
+  assert.ok(result.cooldownMs <= 60 * SECOND, '402 带 Retry-After 却冷却了 ' + result.cooldownMs + 'ms')
+  assert.equal(result.cooldownMs, 30 * SECOND, '应当尊重上游的 30 秒')
+  // 纯 402（没有限流 kind）仍然按额度处理 —— 不能把额度问题误判成限流。
+  const quota = classifyFailure({ status: 402 })
+  assert.equal(quota.retryable, false)
+  assert.ok(quota.cooldownMs > HOUR, '纯 402 仍应冷却到整点 + 6h')
+})
+
+await check('429 + retryAfterMs=300s → 300_000ms（服务端说了算）', () => {
+  const result = classifyFailure({ kind: 'rate-limited', status: 429, retryAfterMs: 300 * SECOND })
+  assert.equal(result.state, 'cooldown')
+  assert.ok(Math.abs(result.cooldownMs - 300 * SECOND) <= SECOND,
+    '300 秒的 Retry-After 没被尊重：' + result.cooldownMs)
+})
+
+await check('429 + 额度 kind（正文说额度）仍按额度，不被状态码抢回限流', () => {
+  // 适配器专门把「429 但正文说额度/余额」翻成 quota（adapter.js 的 429 分支），
+  // 账本不能因为 status===429 就把它当成「等一会」——那会白等 60 秒而不是换车道。
+  const result = classifyFailure({ kind: 'quota', status: 429 })
+  assert.equal(result.state, 'cooldown')
+  assert.equal(result.retryable, false, '额度问题不该被当成限流重试')
+  assert.ok(result.cooldownMs > HOUR, '额度冷却应到整点 + 6h，实际 ' + result.cooldownMs)
+})
+
 await check('5xx / timeout / network / stream-cut → cooldown 30s', () => {
   for (const input of [
     { status: 500 },
@@ -442,6 +472,29 @@ await check('reset 是权威动作：清空之后不许被盘上的旧记录合�
     store.reset()
     const onDisk = JSON.parse(readFileSync(file, 'utf8'))
     assert.deepEqual(Object.keys(onDisk.lanes), [], 'reset 之后盘上还有记录：' + JSON.stringify(onDisk.lanes))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await check('单条 reset 只权威于那一条：其它窗口记下的渠道仍在盘上（repro-4）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'health-reset-one-'))
+  const file = join(dir, 'health.json')
+  try {
+    // 窗口 A 先记下自己要 reset 的那条（盘上有 lane-a）
+    const a = createHealthStore({ file, now: () => 3_000_000 })
+    a.recordFailure('lane-a', { kind: 'server-error', status: 500 })
+    // 窗口 B 在 A 启动之后记下两条：一条永久吊销 + 一条 6h 冷却
+    const b = createHealthStore({ file, now: () => 3_000_001 })
+    b.recordFailure('lane-b', { kind: 'invalid-key', status: 401 })
+    b.recordFailure('lane-c', { kind: 'quota', status: 402 })
+    // 用户在 A 里保存 key → manage.js 的 health.reset(laneId)
+    a.reset('lane-a')
+    const onDisk = JSON.parse(readFileSync(file, 'utf8'))
+    assert.deepEqual(Object.keys(onDisk.lanes).sort(), ['lane-b', 'lane-c'],
+      '单条 reset 把别的窗口的记录删掉了：' + JSON.stringify(Object.keys(onDisk.lanes)))
+    assert.equal(onDisk.lanes['lane-b'].state, 'revoked', 'B 的吊销结论变了')
+    assert.equal(onDisk.lanes['lane-c'].state, 'cooldown', 'B 的冷却结论变了')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

@@ -166,6 +166,54 @@
   顺带修了一个潜伏的客户端 bug：`call()` 只读 `response.json()`，一个 `text/plain` 路由会被
   吞成空对象、看起来「成功但没有内容」。
 
+
+### 补记 5（同一夜，06:20：openrouter 静态兜底扩容 + 一处 P0 回归修复）
+
+#### ① `openrouter-free` 静态表扩容：3 条 → 8 条（全部逐项核对）
+
+实时目录 467 条、其中 `:free` 17 条；从这 17 条里补 5 条进静态兜底，字段（context_length /
+`top_provider.max_completion_tokens` / `architecture.input_modalities` / `supported_parameters`）
+**逐项与实时目录核对一致**，5 条 pricing 实测均为 `"0"/"0"`：
+`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3.5-lightning:free`、
+`dots-studio/dots-3-note-preview:free`、`cohere/north-mini-code:free`、`poolside/laguna-s-2.1:free`。
+
+同批**排除并留证**（写进 `evidence`，免得下一个人再试一遍）：
+`thinkingmachines/inkling:free` 与 `inkling-small:free` → 403「only available on agentic harnesses」
+（目录里有、普通 API 调不通）；`nvidia/nemotron-3-super-120b-a12b:free` → 404 Provider returned error；
+`google/gemma-4-31b-it:free`、`gemma-4-26b-a4b-it:free`、`poolside/laguna-xs-2.1:free`、
+`liquid/lfm-2.5-2.6b:free` → 429 上游暂时限流（目录里有，之后可复探）。
+
+独立复核（本机，不带凭据）：`GET https://openrouter.ai/api/v1/models` → **200 / 467 条**，
+上列 5 条逐条与静态表**逐字段相同**、pricing 全为 0；被排除的 3 条确实在实时目录里（证明
+排除理由是「调不通」而不是「不存在」）。
+
+#### ② P0 回归：`probesInflight` 声明缺失 → 「测试 key / 批量探测」直接 `ReferenceError`
+
+- **怎么坏的**：0.6.0 加并发去重时，`manage.js` 里三处**使用**（`get` / `set` / `delete`）都写进去了，
+  而 `const probesInflight = new Map()` 那一行没落盘。`node --check` 过、语法门过、
+  12 个套件也全过 —— 因为**没有任何测试走到那条路径**（`probeKey` 的 force 分支）。
+- **HEAD 已复现**：`git show HEAD:src/lanes/keyed/manage.js` 里只有 396/425/429 三处使用、无声明。
+- **修后行为实测**：见下方「证据」——等于把「打一次真探测」这条路重新接上。
+
+同批修掉的三处（都在同一条健康/探测链上，逐个给过行为实测）：
+
+| 改动 | 为什么 |
+|---|---|
+| `402 + kind:rate-limited` 归**限流**档（不是额度档） | Pollinations 这类按 IP 串行限速的渠道用 `402 + Retry-After` 表示「等 30 秒」；进额度档会把「等 30 秒」锁成 6~7 小时 |
+| `429 + kind:quota` 仍归**额度**档 | 适配器专门把「429 但正文说额度」翻成 quota，状态码不能把它抢回限流档 |
+| 单条 `reset(laneId)` 的权威范围只有那一条 | 原来 `merge:false` 会拿本进程内存**整份覆盖**盘 —— `saveKey → reset(lane)` 会把另一个宿主窗口刚记下的渠道全删掉 |
+| `Retry-After` 一路透传到账本（`adapter.#notify` → `manage.onOutcome`） | 漏掉它就只剩 60 秒基准，上游明确要等 300 秒时会被提前重试 |
+| `GET {baseURL}/models` 的 404 **不记账**（只有 `mode:'chat'` 的 404 才记） | 30 多条渠道里有一批本来就没有目录端点；记成 6 小时长冷却会在第一次探测后把它们冻住 |
+
+### 证据（本轮补记，逐条可复跑）
+
+| 断言 | 怎么验的 |
+|---|---|
+| 5 条新模型与实时目录逐字段一致、pricing 为 0 | 独立脚本 `GET /api/v1/models` 后按 id 比对（本机实跑，输出见 `_overnight/FINAL-VERIFY.txt` 同批记录） |
+| `402+rate-limited` 短冷却 / 裸 `402` 长冷却 / `429+quota` 长冷却 | `classifyFailure` 三例各打印一次（状态 + 冷却长度） |
+| 单条 reset 只清那一条 | 造一份盘上含两条（mine/other）的健康文件，`reset('mine')` 后读回：只剩 `other` |
+| `probeKey` 不再 ReferenceError | 起一个 manager（桩凭据 + 桩 fetch 回 401），`probeKey('groq', {force:true})` → `{ok:false, kind:'invalid-key'}` |
+| 全量门 | `npm run check`（83 文件）✓ · `npm test` 12 套 `fail=0` ✓ · `npm run test:host` 27 项 ✓ |
 ### 未实测 / 边界
 
 - **新渠道的真实对话未在本轮跑**：10 条新增里 8 条需要 key（本机没有），

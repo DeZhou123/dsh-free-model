@@ -886,6 +886,9 @@ export class KeyedAdapter extends LlmAdapter {
         ...(classified === undefined ? {} : {
           kind: classified.kind,
           ...(Number.isFinite(classified.status) ? { status: classified.status } : {}),
+          // 服务端说了算的等待时间要一路带到健康账本：`#notify` 是唯一出口，
+          // 这里漏掉它，账本只能按 60 秒基准猜（429 + Retry-After: 300 的实际问题）。
+          ...(Number.isFinite(classified.retryAfterMs) ? { retryAfterMs: classified.retryAfterMs } : {}),
           advice: classified.advice,
           detail: classified.detail,
         }),

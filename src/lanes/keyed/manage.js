@@ -91,6 +91,14 @@ export function createKeyedManager(deps = {}) {
   const mounted = new Map()
   /** laneId → { result, at, ok } */
   const probes = new Map()
+  /**
+   * laneId → 正在飞的那次探测（并发去重）。
+   *
+   * ⚠️ 0.6.0 漏了这一行：`probeKey` 里三处使用（get/set/delete）都在，声明却丢了，
+   * 于是整个「测试 key / 批量探测」入口一进来就 `ReferenceError: probesInflight is not defined`。
+   * 与 `probes`（**结果**缓存）是两个不同的东西：`force` 只跳过结果缓存，不该跳过去重。
+   */
+  const probesInflight = new Map()
   /** 最近一次 descriptors() 的结果（页面的行数据就是它）。 */
   let records = []
   /** laneId → 凭据面状态（已配置/来源/能否写/脱敏值）。 */
@@ -151,6 +159,9 @@ export function createKeyedManager(deps = {}) {
     health.recordFailure(laneId, {
       kind,
       ...(Number.isFinite(event.status) ? { status: event.status } : {}),
+      // 适配器解析出的 Retry-After 必须原样带进账本：丢了它就只剩 60 秒基准，
+      // 上游明确要求等 300 秒时会被提前重试（0.6.0 复核 repro-3 §2）。
+      ...(Number.isFinite(event.retryAfterMs) ? { retryAfterMs: event.retryAfterMs } : {}),
       reason: typeof event.detail === 'string' ? event.detail : (event.advice ?? ''),
     })
   }
@@ -411,7 +422,7 @@ export function createKeyedManager(deps = {}) {
       // 「冷却中」的红字，方向完全错。
       if (result.ok === true) {
         health.recordSuccess(laneId)
-      } else if (isUpstreamVerdict(result.kind)) {
+      } else if (isUpstreamVerdict(result.kind, result.mode)) {
         health.recordFailure(laneId, {
           kind: result.kind,
           ...(Number.isFinite(result.status) ? { status: result.status } : {}),
@@ -645,8 +656,15 @@ export function healthKindOf(kind) {
  * 只有真把请求发出去、并拿到上游结论的那几档才算：`ok` 走成功分支，这里列失败侧。
  * `no-key` / `missing-config` 是**我们自己**的配置问题，不记；
  * `bad-request` 是参数问题，也不该让渠道进冷却（`health.classifyFailure` 会把它判成 ok）。
+ *
+ * `not-found` 要看探测模式：`GET {baseURL}/models` 的 404 只说明**这条渠道没有目录端点**
+ * （probe.js 的注释自己就写着「这不代表 key 无效」），不代表 baseURL 过期；
+ * 把它记成 6 小时长冷却，会把 30 多条正常渠道里的 32 条在第一次探测后冻住。
+ * 只有 `mode === 'chat'`（真的发了一次补全）的 404 才可能是端点过期，才值得记账。
  */
-function isUpstreamVerdict(kind) {
+function isUpstreamVerdict(kind, mode) {
+  const value = String(kind ?? '')
+  if (value === 'not-found' && mode !== 'chat') return false
   return [
     'invalid-key',
     'forbidden',
@@ -656,7 +674,7 @@ function isUpstreamVerdict(kind) {
     'server-error',
     'network',
     'timeout',
-  ].includes(String(kind ?? ''))
+  ].includes(value)
 }
 
 /** 错误 → 一行可显示的文本（绝不回显可能的凭据）。 */
