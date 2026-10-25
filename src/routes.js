@@ -171,6 +171,60 @@ export function createRoutes(deps) {
         const outcome = await manager.probeAllKeys({ onlyConfigured, force })
         return send(200, { ok: true, ...outcome })
       }
+      // ── 诊断快照（0.6.0）：一段可复制的纯文本，给「报问题」用 ────────────────
+      //
+      // 为什么值得单做：这个插件的问题往往要「渠道 + 健康 + 键 + 目录层」四类信息一起看，
+      // 而用户报问题时只能截图 —— 截图里看不到时间戳、看不到被拒记录的原因串。
+      // 这里给一段**不含任何凭据**的文本（只有键的形态：配了几把、来自哪种来源）。
+      if (method === 'GET' && routePath === '/diagnose') {
+        const lines = []
+        const summary = buildSummary(deps)
+        const registry = deps.registry === undefined ? undefined : safeCall(() => deps.registry())
+        lines.push('# dsh-free-model 诊断快照')
+        lines.push('生成时间：' + new Date().toISOString())
+        lines.push('插件版本：' + String(summary.version ?? '?'))
+        if (summary.applied !== undefined && summary.applied !== null) {
+          lines.push('上次装配：' + String(summary.applied.appliedAt ?? '?') + '（phase=' + String(summary.applied.phase ?? '?') + '，路由 ' + String((summary.applied.mountedRoutes ?? []).length) + ' 条）')
+        }
+        if (registry !== undefined && registry.counts !== undefined) {
+          lines.push('渠道：' + JSON.stringify(registry.counts))
+          lines.push('目录指纹：' + String(registry.fingerprint ?? '?'))
+        }
+        if (Array.isArray(registry?.rejected) && registry.rejected.length > 0) {
+          lines.push('被拒的目录记录（' + registry.rejected.length + ' 条）：')
+          for (const line of registry.rejected.slice(0, 10)) lines.push('  · ' + String(line).slice(0, 200))
+        }
+        const manager = deps.keyed?.manager?.()
+        if (manager !== undefined) {
+          const snapshot = safeCall(() => manager.snapshot())
+          const keyCounts = summary.keyCounts ?? {}
+          const health = safeCall(() => manager.healthSnapshot())
+          lines.push('')
+          lines.push('## 自带 key 车道（' + String((snapshot?.records ?? []).length) + ' 条）')
+          for (const row of snapshot?.records ?? []) {
+            const keys = keyCounts[row.id] ?? 0
+            const verdict = manager.availability(row.id)
+            const status = health?.lanes?.[row.id]
+            lines.push('  ' + [
+              String(row.id).padEnd(20),
+              ('ready=' + String(row.ready === true)),
+              ('keys=' + String(keys)),
+              ('avail=' + String(verdict.state)),
+              ('health=' + String(status?.state ?? 'unknown')),
+              (status?.text === undefined ? '' : String(status.text).slice(0, 60)),
+            ].join(' | '))
+          }
+          const suspects = safeCall(() => manager.catalogDiagnostics())
+          const stale = Object.entries(suspects ?? {}).filter(([, row]) => row?.suspect).map(([id]) => id)
+          if (stale.length > 0) lines.push('目录零交集（静态表可能过期）：' + stale.join(', '))
+          const off = safeCall(() => manager.disabledLanes()) ?? []
+          if (off.length > 0) lines.push('被关掉的渠道：' + off.join(', '))
+        }
+        const text = lines.join('\n') + '\n'
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
+        res.end(text)
+        return
+      }
       // ── 渠道开关（0.6.0）：关掉一条渠道，而不是删掉它的 key ──────────────────
       //
       // 「关掉」的语义：启动时不挂它的适配器（模型选择器里干净）+ 运行时闸门拒绝请求。

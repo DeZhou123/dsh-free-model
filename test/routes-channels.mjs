@@ -412,6 +412,23 @@ await check('/key/try：走 manager.probeChat，未接线 503、缺 lane 400', a
   const off = await makeCallWithBody(createRoutes(makeDeps({ registry: registryStub })), 'POST', '/api/free-model/key/try', { lane: 'x' })
   assert.equal(off.status, 503)
 })
+
+await check('/diagnose：返回纯文本诊断快照，且**不含任何凭据值**', async () => {
+  const handler = createRoutes(makeDeps({
+    registry: registryStub,
+    version: '0.6.0',
+    applyMarker: () => ({ plugin: 'dsh-free-model', version: '0.6.0', appliedAt: '2026-10-25T20:08:38.999Z', phase: 'full', mountedRoutes: ['buddy', 'groq'] }),
+  }))
+  const res = await call(handler, 'GET', '/api/free-model/diagnose')
+  assert.equal(res.status, 200)
+  const body = String(res.body)
+  assert.ok(body.startsWith('# dsh-free-model 诊断快照'), '缺少标题：' + body.slice(0, 80))
+  assert.ok(body.includes('插件版本：0.6.0'))
+  assert.ok(body.includes('上次装配：2026-10-25T20:08:38.999Z'))
+  assert.ok(body.includes('渠道：'), '缺少渠道计数')
+  assert.equal(/sk-[A-Za-z0-9]{6}/.test(body), false, '诊断文本里出现了像 key 的串')
+})
+
 await check('未知路由仍是 404（新端点的加入不许把兜底打掉）', async () => {
   const res = await call(createRoutes(makeDeps()), 'GET', '/api/free-model/nope')
   assert.equal(res.status, 404)

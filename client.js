@@ -235,6 +235,10 @@ window.__ModuleLoader__.load({
       updTitle: '插件',
       updCheck: '检查更新',
       updApplied: '上次装配：{at}',
+      diagTitle: '诊断',
+      diagButton: '生成诊断快照',
+      diagHint: '（一段不含凭据的纯文本：版本 / 装配时刻 / 每条车道的就绪、健康、键数与来源）',
+      diagCopy: '复制',
       updAppliedRoutes: '路由 {count} 条',
       updChecking: '检查中…',
       updNew: '有新版本 {latest}',
@@ -680,7 +684,15 @@ window.__ModuleLoader__.load({
         }
         throw error
       }
-      const payload = await response.json().catch(() => ({}))
+      // 诊断快照是 text/plain：先把正文读成文本，能 JSON 才当 JSON 用。
+      // （原来只读 json()，一个 text/plain 路由会被 catch 成空对象、看起来「成功但没有内容」。）
+      const raw = await response.text().catch(() => '')
+      let payload = {}
+      try {
+        payload = raw === '' ? {} : JSON.parse(raw)
+      } catch {
+        payload = { text: raw }
+      }
       if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`)
       return payload
     }
@@ -1238,6 +1250,8 @@ window.__ModuleLoader__.load({
       const [applied, setApplied] = useState(props.applied)
       const [update, setUpdate] = useState(props.update)
       const [busy, setBusy] = useState('')
+      /** 诊断快照（纯文本）。按需拉、可复制 —— 报问题时把这一段贴出来就够了。 */
+      const [diagnostics, setDiagnostics] = useState('')
 
       // 首屏只读缓存（不强制刷新）：打开设置页就打两次网络是不可接受的。
       useEffect(() => {
@@ -1279,6 +1293,28 @@ window.__ModuleLoader__.load({
           setBusy('')
         }
       }, [])
+
+      /** 拉诊断快照（text/plain，所以走 call 的文本分支）。 */
+      const loadDiagnostics = useCallback(async () => {
+        setBusy('diag')
+        try {
+          const payload = await call('/diagnose')
+          setDiagnostics(typeof payload?.text === 'string' ? payload.text : '')
+        } catch (error) {
+          setDiagnostics(t('error') + ': ' + error.message)
+        } finally {
+          setBusy('')
+        }
+      }, [t])
+
+      /** 复制诊断快照：用 clipboard，失败就提示用户手动选中（不吞掉失败）。 */
+      const copyDiagnostics = useCallback(async () => {
+        try {
+          await navigator.clipboard.writeText(diagnostics)
+        } catch {
+          // 剪贴板不可用（非安全上下文 / 权限被拒）：内容已经显示在页面上，手动复制即可。
+        }
+      }, [diagnostics])
 
       const counts = catalog?.counts ?? {}
       const catalogWired = catalog !== undefined && catalog.wired !== false
@@ -1351,6 +1387,21 @@ window.__ModuleLoader__.load({
               t('updApplied').replace('{at}', formatStamp(applied.appliedAt))
               + (Array.isArray(applied.mountedRoutes) ? ' · ' + t('updAppliedRoutes').replace('{count}', String(applied.mountedRoutes.length)) : ''))
           : null,
+        h('div', { key: 'diagbar', className: 'ow-statusrow' }, [
+          h('span', { key: 'l', className: 'ow-statuslabel' }, t('diagTitle')),
+          h(Button, {
+            key: 'g',
+            disabled: busy === 'diag',
+            onClick: () => void loadDiagnostics(),
+          }, busy === 'diag' ? t('busy') : t('diagButton')),
+          diagnostics === ''
+            ? h('span', { key: 'h', className: 'ow-dim' }, t('diagHint'))
+            : h(Button, { key: 'c', onClick: () => void copyDiagnostics() }, t('diagCopy')),
+        ]),
+        diagnostics === ''
+          ? null
+          : h('pre', { key: 'diag', className: 'ow-diag' }, safeText(diagnostics, 6000)),
+
         // 有新版本：给仓库链接 + **可复制的安装命令**。本页绝不代跑升级命令 ——
         // 升级会替换正在运行的插件代码，那是用户自己的决定。
         update?.updateAvailable === true
@@ -3644,6 +3695,15 @@ window.__ModuleLoader__.load({
 }
 .ow-sort { flex: 0 0 auto; }
 .ow-disabledpill { opacity: .7; }
+
+/* 诊断快照：等宽 + 可选中（报问题的用户要能整段复制） */
+.ow-diag {
+  margin: 6px 0 0; padding: 8px 10px; max-height: 260px; overflow: auto;
+  font-family: var(--dsw-font-family-mono, ui-monospace, monospace); font-size: 10.5px; line-height: 1.5;
+  white-space: pre-wrap; user-select: text;
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent);
+}
 
 /* 表格视图：30+ 条渠道时「一眼扫完」 */
 .ow-tablewrap { overflow-x: auto; }
