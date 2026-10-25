@@ -187,6 +187,45 @@ src/lanes/registry.js     唯一事实来源：三类渠道 → 同一种记录�
 远程数据只被当作**数据**读：没有 eval、没有动态 import，每条记录都要过校验器，
 不合格的整条丢弃并记账 —— 一条 baseURL 写错的渠道会表现成「插件坏了」，比少一条渠道糟得多。
 
+
+### 加一条自己的渠道（不用改代码，也不用发版）
+
+往 `$DSH_HOME/free-model/channels.local.json` 写一条就行 —— 它是三层目录里优先级最高的一层
+（随包 ← 远程 ← **本地**），同 `id` 会**整条替换**上层。最常用于：自己搭的 OpenAI 兼容网关、
+公司内部的推理端点、把某条上游换域名后的免费渠道改对。
+
+```json
+{
+  "catalogVersion": 1,
+  "channels": [
+    {
+      "id": "my-gateway",
+      "displayName": "我自己的网关",
+      "kind": "keyed",
+      "baseURL": "https://gateway.example.com/v1",
+      "apiKeyEnv": "MY_GATEWAY_KEY",
+      "docsURL": "https://gateway.example.com/docs",
+      "signupURL": "https://gateway.example.com/keys",
+      "freeTier": "自建，成本自己算",
+      "region": "cn",
+      "note": "公司内网，只在内网可达",
+      "models": [
+        { "id": "internal-llm-70b", "name": "Internal 70B", "contextWindow": 32768, "maxTokens": 4096, "vision": false, "tools": true }
+      ]
+    }
+  ]
+}
+```
+
+三条硬规则（**违反会被整条拒掉，并在页面上告诉你为什么**）：
+
+1. `catalogVersion` 必须是 `1`（与本插件认识的格式版本一致）；远程与本地**同一把尺子**：
+   字节上限 256KB、格式版本不符整份拒绝；
+2. `baseURL` 走 / `http(s)`、**不许带 query/hash、不许内嵌凭据**；`keyed` 渠道必须给 `baseURL` 且
+   至少 1 条 `models`；`apiKeyEnv` 只认大写字母/数字/下划线（宿主的凭据文法）；
+3. 写错了不会静默：页面上会出现一行「有 N 条渠道记录没通过校验（已忽略，不影响其它渠道）」并列出原因。
+
+写完**不用重启**：打开设置页看那张卡在不在；不在就照着页面上的拒绝原因改。
 ### ⚠️ 仓库是私有的，远程目录默认拉不到（三条路）
 
 `raw.githubusercontent.com/<owner>/<repo>/…` 对**私有仓库一律 404**（本机 2026-10-25 实测），
