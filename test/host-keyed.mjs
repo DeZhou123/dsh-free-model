@@ -275,6 +275,29 @@ try {
     check('/channels/toggle 缺 enabled → 400', badToggle.status === 400, 'status=' + badToggle.status)
   }
 
+
+  // ── 回归：/channels 必须真的带上渠道注册表（2026-10-26 的一次静默降级）────────
+  //
+  // 事故现场：给 createRoutes 加 applyMarker 时，编辑把 `registry: channelsView,`
+  // 那一行**替换**掉了。后果不是报错 —— `/channels` 少了整个依赖 → `wired: false` →
+  // 页面显示「渠道注册表未接线 / 共 0 条」，而 apply-ok.json 里明明写着 keyed 35 条。
+  // 用户看到的是「插件没装上」，实际只是少了一行依赖。
+  //
+  // 为什么只有这一层抓得到：离线套件用的是自己造的 deps（`registry: registryStub`），
+  // 永远看不见 `index.js` 里那一行在不在。**只有真装配出来的 handler 能回答这个问题。**
+  const channelsRes = await callApi('GET', '/api/free-model/channels')
+  const channelsBody = channelsRes.json() ?? {}
+  check('/channels 在真实装配下是 wired（注册表接线没被误删）',
+    channelsBody.wired === true,
+    'wired=' + String(channelsBody.wired) + ' reason=' + String(channelsBody.reason ?? ''))
+  const keyedRows = (channelsBody.channels ?? []).filter((row) => row.kind === 'keyed')
+  check('/channels 的 keyed 行数等于目录条数（不是 0）',
+    keyedRows.length >= 30,
+    'keyed 行数=' + keyedRows.length + '（0 说明 registry 依赖又丢了）')
+  check('/channels 的 keyStates 也带出来了（凭据面与渠道面同一次下发）',
+    typeof channelsBody.keyStates === 'object' && channelsBody.keyStates !== null,
+    'keyStates=' + String(typeof channelsBody.keyStates))
+
   console.log(`\n通过 ${passed} 项`)
   if (process.exitCode === undefined) console.log('全部通过')
 } finally {

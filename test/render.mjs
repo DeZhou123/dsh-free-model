@@ -981,6 +981,31 @@ check('套餐窗口按钮只在声明了 windows 端点的渠道上出现（订�
   const withoutWin = KeyedCard({ channel: keyedRow, t })
   assert.equal(flat(withoutWin).includes('keyedWindows'), false, '没声明 windows 却给了按钮（点了必然说没有端点）')
 })
+
+// ── 0.6.0：本地覆盖文件路径的三种形状（用户在页面上看到 [object Object]）────────
+const { localOverridePath } = module.__test
+
+check('localOverridePath：字符串 / {path} / 缺失 三种形状都能归成可显示文本', () => {
+  assert.equal(localOverridePath({ localFile: 'C:/x/channels.local.json' }), 'C:/x/channels.local.json')
+  assert.equal(localOverridePath({ localFile: { path: 'C:/x/channels.local.json', exists: false } }), 'C:/x/channels.local.json')
+  assert.equal(localOverridePath({ localFile: { file: '/a/b.json' } }), '/a/b.json')
+  assert.equal(localOverridePath({ localFile: undefined }), '')
+  assert.equal(localOverridePath({}), '')
+  assert.equal(localOverridePath(undefined), '')
+  // 认不出形状时**不返回** String(raw) —— 那正是 [object Object] 的来源。
+  assert.equal(localOverridePath({ localFile: { unknown: 1 } }), '')
+})
+
+check('状态条遇到对象形状的 localFile 不会渲染 [object Object]', () => {
+  const tree = StatusBar({
+    t: tTemplate, version: '0.6.0',
+    catalog: { wired: true, ok: true, counts: {}, sha256: 'abc', from: 'shipped', localFile: { path: 'C:/x/channels.local.json' } },
+    update: { ok: true, current: '0.6.0', latest: '0.6.0', updateAvailable: false, from: 'none', reason: '' },
+  })
+  const body = flat(tree)
+  assert.equal(body.includes('[object Object]'), false, '页面上出现了 [object Object]：' + body.slice(0, 200))
+  assert.ok(body.includes('C:/x/channels.local.json'), '路径没显示出来：' + body.slice(0, 200))
+})
 // ── 汇总 ────────────────────────────────────────────────────────────────────
 check('语言包：三页签与新文案都有词条（缺词条会显示成变量名）', () => {
   const src = readFileSync(join(ROOT, 'client.js'), 'utf8')

@@ -1191,6 +1191,27 @@ window.__ModuleLoader__.load({
      * @param {number} [max] 最大字符数
      * @returns {string} 可以直接放进 element child 的字符串
      */
+    /**
+     * 从 `/catalog` 的响应里取出「本地覆盖文件路径」。
+     *
+     * 后端这一格有三种可能形状（纯字符串 / `{ path }` / 缺失），而旧渲染只认字符串 ——
+     * 对象形状会渲染成 `[object Object]`。归一只在这里做一次，渲染处只管用。
+     *
+     * @param {unknown} catalog `/catalog` 的响应
+     * @returns {string} 空串表示「没有可显示的东西」
+     */
+    function localOverridePath(catalog) {
+      const raw = catalog?.localFile
+      if (typeof raw === 'string') return raw.trim()
+      if (raw !== null && typeof raw === 'object') {
+        for (const key of ['path', 'file', 'name']) {
+          const value = raw[key]
+          if (typeof value === 'string' && value.trim() !== '') return value.trim()
+        }
+      }
+      return ''
+    }
+
     function safeText(value, max = 200) {
       if (typeof value !== 'string') return ''
       // eslint-disable-next-line no-control-regex
@@ -1387,9 +1408,22 @@ window.__ModuleLoader__.load({
           ? h('p', { key: 'cr', className: 'ow-statuserr', role: 'status' },
               t('catReason') + safeText(catalog.reason, 300))
           : null,
-        catalogWired && typeof catalog?.localFile === 'string' && catalog.localFile !== ''
-          ? h('p', { key: 'lf', className: 'ow-dim ow-statusfoot' },
-              t('catLocalFile') + '：' + h('code', { className: 'ow-mono' }, safeText(catalog.localFile, 200)))
+        // 本地覆盖文件路径。
+        //
+        // ⚠️ 三种形状都要认（2026-10-26 用户在页面上看到 `[object Object]` 才发现的）：
+        // 后端这一格历史上换过形状 —— 纯字符串 / `{ path }` / 干脆没有。旧代码只认字符串，
+        // 于是对象形状会被 `h('code', ...)` 直接渲染成 `[object Object]`（safeText 对非字符串
+        // 返回空串，而这里**没走** safeText 的空串分支，走的是三元里那个 `!== ''` 判断）。
+        // 现在先归一再渲染：认不出形状就整行不显示（宁可少一行，不要显示垃圾）。
+        localOverridePath(catalog) !== ''
+          // ⚠️ **不能**写成 `t(...) + '：' + h('code', ...)` —— 字符串 + React 元素做 `+` 运算，
+          // 结果永远是 `[object Object]`（2026-10-26 用户在页面上亲眼看到的就是这个）。
+          // 这个 bug 从 0.4.0 起就在，只是那一行被「路径对不对」的问题盖住了没人注意。
+          // 正确写法是把标签与元素都放进**子节点数组**，让渲染器各自处理。
+          ? h('p', { key: 'lf', className: 'ow-dim ow-statusfoot' }, [
+              t('catLocalFile') + '：',
+              h('code', { key: 'c', className: 'ow-mono' }, safeText(localOverridePath(catalog), 200)),
+            ])
           : null,
 
         // ── 右：插件版本 + 更新 ──
@@ -3863,6 +3897,8 @@ window.__ModuleLoader__.load({
         HealthPill, healthLabel, healthExtra, filterLabel, formatDuration, FILTERS, lowBalance, balanceText,
         // 0.6.0：筛选/排序的**纯函数**（从组件里抽出来，好让测试直接钉住判据）
         bucketOfChannel, matchesQuery, sortersFor,
+        // 0.6.0：把「后端形状 → 可显示文本」的归一函数暴露出来，好让测试直接钉住
+        localOverridePath,
       },
       inject: ['slots', 'locale'],
       apply(ctx) {

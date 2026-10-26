@@ -703,6 +703,13 @@ export function apply(ctx, config = {}) {
     },
     // 渠道全景（三类渠道 + 目录层）。`/summary` 保持老语义，新接口另开一条：
     // 详见 `src/routes.js` 里 `channelsOverview` 的说明。
+    //
+    // ⚠️ **这一行曾被一次「加字段」误删**（2026-10-26 实测）：当时是在下面插 applyMarker，
+    // 编辑时把 `registry: channelsView,` 当成被替换的那一行删掉了。后果不是报错，而是
+    // `/channels` 少了整个依赖 → `wired: false` → 页面显示「渠道注册表未接线 / 共 0 条」，
+    // 而 `apply-ok.json` 里明明写着 keyed 35 条。**静默降级比崩溃更难查。**
+    // 现在由 `test/host-keyed.mjs` 钉住：真装配出来的 /channels 必须有 keyed 行。
+    registry: channelsView,
     // 装配自证（apply-ok.json）：页面顶上显示「上次装配于 …」。
     //
     // 为什么要它：用户（和我自己）问的第一个问题往往是「我现在跑的是不是最新代码」。

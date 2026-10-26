@@ -307,6 +307,34 @@
 
 证据：`node test/docs-consistency.mjs` → `pass=9 fail=0`（含 `目录 keyed 34 / keyless 1 / service 6` 一行自证）。
 
+
+### 补记 8（2026-10-26 19:00：两处**用户肉眼发现**的静默缺陷）
+
+用户在设置页截图里同时看到两件怪事：「渠道注册表未接线 / 共 0 条」与「本地覆盖文件：[object Object]」。
+两条都不是崩溃，页面照样渲染 —— 这正是它们能活下来的原因。
+
+#### ① `/channels` 少了整个 `registry` 依赖（我今早自己删的）
+
+- **怎么坏的**：加 `applyMarker` 时用「替换」而不是「插入」，把 `registry: channelsView,` 那一行吃掉了。
+  `git log -S 'registry: channelsView'` 指向 `c73bbe1`。
+- **表现**：`/channels` 拿到 `wired: false` → 页面显示「渠道注册表未接线 / 共 0 条」，
+  而 `apply-ok.json` 里明明写着 `keyed: 35 / total: 43`。**静默降级比崩溃更难查**：
+  所有测试全绿，因为离线套件用的是自己造的 `registryStub`，永远看不见 `index.js` 里那一行在不在。
+- **修**：补回依赖，并在 `test/host-keyed.mjs` 加 3 条**只有真实装配能回答**的断言
+  （`wired === true` / keyed 行数 ≥ 30 / `keyStates` 同时下发）。27 → **31 项**。
+
+#### ② 状态条把字符串与 React 元素相加 → `[object Object]`
+
+- 原文：`t('catLocalFile') + '：' + h('code', {…}, …)` —— 字符串 + vnode 做 `+` 运算，结果恒为
+  `'…：[object Object]'`。**这个 bug 从 0.4.0 就在**，只是那一行被「路径对不对」的问题盖住了。
+- **修**：标签与 `<code>` 都放进子节点数组，让渲染器各自处理。
+- 顺带把「本地覆盖文件路径」的**三种后端形状**（字符串 / `{path}` / 缺失）归一成纯函数
+  `localOverridePath()` 并单独测（认不出形状时整行不显示，绝不 `String()` 出垃圾）。
+- 全仓扫了一遍同类写法（字符串 `+ h(...)`）：**只有那一处**，现已只剩注释。
+
+**证据**：`node test/render.mjs` → `pass=64`（+3：三种形状归一 / 状态条不出 `[object Object]` / 路径确实显示出来）；
+`npm run test:host` → `通过 31 项`；`npm run check` 86 文件全过。
+
 ### 未实测 / 边界
 
 - **新渠道的真实对话未在本轮跑**：10 条新增里 8 条需要 key（本机没有），
