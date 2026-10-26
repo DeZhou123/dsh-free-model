@@ -127,7 +127,15 @@ const KEYED_CHANNELS_BASE = [
       + '这 5 条逐条 POST /chat/completions（max_tokens=16）→ 全部 200 且 usage.cost=0：nemotron-3-ultra-550b-a55b 965ms、nemotron-3.5-lightning 898ms、'
       + 'dots-3-note-preview 2203ms、north-mini-code 863ms、laguna-s-2.1 2728ms（前四条 finish_reason=length：16 token 全花在 reasoning 上，正文为空，属预期）；'
       + '同批排除并留证：thinkingmachines/inkling:free 与 inkling-small:free → 403「only available on agentic harnesses」（目录里有、普通 API 调不通），'
-      + 'nvidia/nemotron-3-super-120b-a12b:free → 404 Provider returned error（两次），google/gemma-4-31b-it:free、gemma-4-26b-a4b-it:free、poolside/laguna-xs-2.1:free、liquid/lfm-2.5-2.6b:free → 429 上游暂时限流',
+      + 'nvidia/nemotron-3-super-120b-a12b:free → 404 Provider returned error（两次），google/gemma-4-31b-it:free、gemma-4-26b-a4b-it:free、poolside/laguna-xs-2.1:free、liquid/lfm-2.5-2.6b:free → 429 上游暂时限流'
+      + '；2026-10-26 第二轮兜底复核（静态 8 条 → 11 条）：GET /api/v1/models → 200，仍是实时 467 条 / `:free` 17 条，原静态 8 条**全部仍在实时目录里**（交集 8 = 静态 8，无失效行）；'
+      + '剩下 9 条逐条 POST /chat/completions（max_tokens=32，429/502 按 45–60s 退避最多 4 轮）——「目录里有」不等于「调得通」，所以就按真实回复取舍：'
+      + '补进 3 条（均 200、usage.cost=0，且正文就是 `2+2 equals 4.`）：nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free 2020ms（finish=stop，256K ctx / 65536 输出 / text+audio+image+video / tools）、'
+      + 'poolside/laguna-xs-2.1:free 4655ms（首轮 429，退避第 2 轮转 200；262144 / 32768 / tools，与已在表的 laguna-s-2.1 同族）、liquid/lfm-2.5-2.6b:free 1834ms（2.6B 小模型，65536 / 8192 / tools）；'
+      + '排除并留证（这些也是本轮实测，别再当候选捞回来）：thinkingmachines/inkling:free 与 inkling-small:free → 403「only available on agentic harnesses」**复现**（不是瞬态，普通 API 就是不给调）；'
+      + 'google/gemma-4-31b-it:free → 先两次 429、第 3 轮 HTTP 400「User location is not supported for the API use」，google/gemma-4-26b-a4b-it:free → 首次即同一 400：**本机地理位置被上游拒绝**，与 key 和限流都无关；'
+      + 'nvidia/nemotron-3-super-120b-a12b:free → 5 次全 404（provider 侧 "Function ...: Not found for account"）；'
+      + 'nvidia/nemotron-3.5-content-safety:free → 200 / cost=0 但正文是分类器输出「User Safety: safe」、tools=false —— 它是审核模型不是 chat 模型，**不**进兜底表（实时目录里依然有它）',
     unknown: true,
     unknownFields: ['freeTier'],
     models: [
@@ -139,6 +147,9 @@ const KEYED_CHANNELS_BASE = [
       { id: 'dots-studio/dots-3-note-preview:free', name: 'Dots Studio: Dots3-Note Preview (free)', contextWindow: 512000, maxTokens: 460800, vision: true, tools: true },
       { id: 'cohere/north-mini-code:free', name: 'Cohere: North Mini Code (free)', contextWindow: 256000, maxTokens: 64000, vision: false, tools: true },
       { id: 'poolside/laguna-s-2.1:free', name: 'Poolside: Laguna S 2.1 (free)', contextWindow: 262144, maxTokens: 32768, vision: false, tools: true },
+      { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', name: 'NVIDIA: Nemotron 3 Nano Omni (free)', contextWindow: 256000, maxTokens: 65536, vision: true, tools: true },
+      { id: 'poolside/laguna-xs-2.1:free', name: 'Poolside: Laguna XS 2.1 (free)', contextWindow: 262144, maxTokens: 32768, vision: false, tools: true },
+      { id: 'liquid/lfm-2.5-2.6b:free', name: 'LiquidAI: LFM2.5-2.6B (free)', contextWindow: 65536, maxTokens: 8192, vision: false, tools: true },
     ],
   },
   {

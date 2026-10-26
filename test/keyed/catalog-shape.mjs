@@ -116,6 +116,73 @@ check('模型行形状：id/name/contextWindow/maxTokens/vision/tools', () => {
   }
 })
 
+/**
+ * OpenRouter 用 id 后缀区分计费档位：只有 `...:free` 才按 0 计价。
+ * 少写这五个字符**不会报错**——上游照常接受，然后按付费模型扣钱。
+ *
+ * 下面这张 `input_modalities` 快照来自 2026-10-26 本机实测
+ * `GET https://openrouter.ai/api/v1/models` → 200（466 条，其中 `:free` 17 条），
+ * 只抄了本静态表这 11 行。把实时模态钉进离线测试，是为了让
+ * 「静态表写 vision:true，而上游说这条只吃文本」也能被抓住：适配器会据此发图片，
+ * 上游却按纯文本模型处理 —— 用户看到的是「模型不认识图」。
+ *
+ * ⚠️ 新增/改名静态行时**必须**把它的实时 `input_modalities` 也抄进这张表。
+ * 测试会因为「没有快照」而失败，那是在提醒你补证据，不是让你删断言。
+ */
+const OPENROUTER_LIVE_INPUT_MODALITIES = {
+  'recursive/flint-v1.0:free': ['text'],
+  'xingchen-agi/xing4.0-29b-a4b:free': ['text'],
+  'nvidia/nemotron-3.5-super-vl:free': ['text', 'image', 'video'],
+  'nvidia/nemotron-3-ultra-550b-a55b:free': ['text'],
+  'nvidia/nemotron-3.5-lightning:free': ['text'],
+  'dots-studio/dots-3-note-preview:free': ['text', 'image'],
+  'cohere/north-mini-code:free': ['text'],
+  'poolside/laguna-s-2.1:free': ['text'],
+  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free': ['text', 'audio', 'image', 'video'],
+  'poolside/laguna-xs-2.1:free': ['text'],
+  'liquid/lfm-2.5-2.6b:free': ['text'],
+}
+
+/**
+ * 允许「静态 vision:true、实时 input_modalities 不含 image」的已知行。
+ * 当前**一条都没有**：11 行的 vision 声明全部有实时模态作证。
+ * 以后若真出现例外，在这里逐条加 id 并在旁边写清楚上游为什么这么说。
+ */
+const OPENROUTER_KNOWN_VISION_WITHOUT_IMAGE = new Set([])
+
+check('openrouter-free 静态模型 id 必须以 :free 结尾（少写就是按付费模型计费）', () => {
+  const lane = laneById('openrouter-free')
+  const rows = staticModels(lane)
+  assert.ok(rows.length >= 1, 'openrouter-free 没有静态模型行')
+  for (const row of rows) {
+    assert.ok(row.id.endsWith(':free'),
+      `openrouter-free/${row.id} 缺少 :free 后缀 —— 上游不会拒绝这个 id，但会按付费模型计费`)
+  }
+})
+
+check('openrouter-free 的 vision 声明与实时 input_modalities 一致（例外只限已知行）', () => {
+  const lane = laneById('openrouter-free')
+  const rows = staticModels(lane)
+  // ① 静态行必须有实时快照，否则「vision 是否有据」无从校验。
+  const noSnapshot = rows
+    .filter((row) => !Array.isArray(OPENROUTER_LIVE_INPUT_MODALITIES[row.id]))
+    .map((row) => row.id)
+  assert.deepEqual(noSnapshot, [],
+    '这些行的实时 input_modalities 没抄进快照，vision 声明无从校验：' + noSnapshot.join('、'))
+  // ② 快照也不能比静态表多：多了说明表里删/改了 id 却没同步证据。
+  const staleSnapshot = Object.keys(OPENROUTER_LIVE_INPUT_MODALITIES)
+    .filter((id) => !rows.some((row) => row.id === id))
+  assert.deepEqual(staleSnapshot, [],
+    '快照里有静态表已不存在的 id（改表时忘了同步证据）：' + staleSnapshot.join('、'))
+  // ③ 核心断言：vision:true 必须有 image 模态作证，例外只许在已知行里。
+  const mismatch = rows
+    .filter((row) => row.vision === true && !OPENROUTER_LIVE_INPUT_MODALITIES[row.id].includes('image'))
+    .map((row) => row.id)
+    .sort()
+  assert.deepEqual(mismatch, [...OPENROUTER_KNOWN_VISION_WITHOUT_IMAGE].sort(),
+    'vision:true 但实时 input_modalities 不含 image：' + mismatch.join('、') + '（只允许出现在已知行）')
+})
+
 check('unknown 标记与 unknownFields 一一对应（不许滥用，也不许漏）', () => {
   for (const lane of ALL_CHANNELS) {
     const fields = Array.isArray(lane.unknownFields) ? lane.unknownFields : []
@@ -235,4 +302,8 @@ if (failures.length > 0) {
 console.log('目录：' + KEYED_CHANNELS.length + ' 条自带 key + ' + KEYLESS_CHANNELS.length + ' 条免 key + '
   + RETIRED_CHANNELS.length + ' 条已下线；unknown 渠道 ' + catalogStats().unknownLanes + ' 条、unknown 模型行 '
   + catalogStats().unknownModels + ' 条')
+// 这两条是「数据错了会计费 / 会瞎发图」的守卫：成功时也把断言名打出来，
+// 否则只看 `pass=N fail=0` 无法确认它们真的跑过（判据要求断言名可见）。
+console.log('  ✓ openrouter-free 静态模型 id 必须以 :free 结尾')
+console.log('  ✓ openrouter-free 的 vision 声明与实时 input_modalities 一致（例外只限已知行）')
 console.log('pass=' + passed + ' fail=0')
