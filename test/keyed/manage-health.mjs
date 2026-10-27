@@ -21,6 +21,7 @@
 
 import assert from 'node:assert/strict'
 import { createKeyedManager, healthKindOf } from '../../src/lanes/keyed/manage.js'
+import { createKeyedAdapter } from '../../src/lanes/keyed/adapter.js'
 import { createHealthStore } from '../../src/lanes/health.js'
 import { laneById, staticModels } from '../../src/lanes/keyed/catalog.js'
 
@@ -32,6 +33,8 @@ async function check(name, fn) {
     // 不 await 的话断言在汇总行之后才跑，`pass=0 fail=0` 看起来「全过」。
     await fn()
     passed += 1
+    // 每条都打名字：失败时能直接看出是哪一条，而不是只有一个总数。
+    console.log('  ✓ ' + name)
   } catch (error) {
     failures.push({ name, message: error instanceof Error ? error.message : String(error) })
   }
@@ -363,6 +366,120 @@ await check('真实对话链路：429 + Retry-After: 300 进账本后冷却 ≈ 
     'Retry-After: 300 没进账本，实际冷却 ' + cooldown + 'ms')
 })
 
+
+// ── 0.7.0：模型下拉隐藏（只藏明确不可用；判定 fail-open）─────────────────────
+//
+// 这一组断言守两件相反的事，缺一件都会让「隐藏」变成新的静默故障：
+// ① 只藏**明确不可用**的三类（revoked / 404 长锁 / 手动关掉）；短冷却必须仍然可见；
+// ② 判据的任何一类「读不到」（抛错 / 未知 / 超时）都必须**回到改动前的清单**，
+//    否则健康簿坏掉的表现就是「用户的模型凭空消失」。
+
+/** 目录行的可比较快照：`source` 挂在数组对象上，JSON.stringify 会把数组项之外的属性丢掉。 */
+const snapshotModels = (rows) => JSON.stringify({ rows, source: rows.source })
+
+/** 离线适配器：`/models` 一律失败 → 静态表（不碰网络，也不依赖 gzip 目录）。 */
+const offlineFetch = async () => { throw new Error('offline fixture') }
+
+await check('已从下拉隐藏：revoked / 404 长锁 / 手动关掉才隐藏，429 的 60 秒冷却仍然可见', async () => {
+  const { manager, health } = makeManager()
+  assert.equal(manager.pickerVerdict('groq').hidden, false, '没测过的渠道不该隐藏')
+
+  health.recordFailure('groq', { kind: 'rate-limited', status: 429 })
+  const record429 = health.get('groq')
+  assert.equal(record429.state, 'cooldown')
+  assert.ok(record429.until - NOW <= 61_000, '429 的基准应当是 60 秒：' + (record429.until - NOW))
+  assert.equal(manager.pickerVerdict('groq').hidden, false, '429 的 60 秒冷却被隐藏了：下拉会每 60 秒抖一次')
+
+  health.recordFailure('groq', { kind: 'not-found', status: 404 })
+  const locked = manager.pickerVerdict('groq')
+  assert.equal(locked.hidden, true, '404 长锁没有从下拉隐藏')
+  assert.equal(locked.code, 'not-found')
+  assert.ok(locked.reason.includes('404'), '隐藏原因里看不出是 404：' + locked.reason)
+  assert.ok(/还有 .+小时/.test(locked.reason), '隐藏原因没有剩余时间：' + locked.reason)
+  assert.equal(health.get('groq').kind, 'not-found', '健康记录没留下 kind，隐藏判据只能猜文本')
+  assert.equal(health.get('groq').status, 404, '健康记录没留下 status，404 长锁与额度冷却分不开')
+
+  health.recordFailure('zai', { kind: 'invalid-key', status: 401 })
+  assert.equal(manager.pickerVerdict('zai').hidden, true, '已吊销的渠道没有隐藏')
+  assert.equal(manager.pickerVerdict('zai').code, 'revoked')
+
+  await manager.setEnabled('deepinfra', false)
+  assert.equal(manager.pickerVerdict('deepinfra').hidden, true, '被用户关掉的渠道没有隐藏')
+  assert.equal(manager.pickerVerdict('deepinfra').code, 'disabled')
+  await manager.setEnabled('deepinfra', true)
+  assert.equal(manager.pickerVerdict('deepinfra').hidden, false, '重新打开开关后没有恢复可见')
+})
+
+await check('已从下拉隐藏：适配器 listModels 对隐藏车道返回空目录（宿主据此把整组从下拉滤掉）', async () => {
+  const stored = {}
+  const health = createHealthStore({ persist: false, now: harness.now })
+  let liveAdapter
+  const manager = createKeyedManager({
+    health,
+    readCredential: async (name) => stored[name],
+    writeCredential: async (name, value) => { stored[name] = value },
+    unsetCredential: async (name) => { delete stored[name] },
+    register: (route, adapter) => { liveAdapter = adapter; return () => {} },
+    fetchImpl: offlineFetch,
+  })
+  const saved = await manager.saveKey('groq', 'sk-test')
+  assert.equal(saved.mounted, true, '没挂上适配器，测不到 listModels：' + JSON.stringify(saved))
+  const expected = snapshotModels(await createKeyedAdapter({ lane: laneById('groq'), apiKey: 'sk-test', fetchImpl: offlineFetch }).listModels('groq'))
+
+  // 429：冷却中但**可见**（清单与改动前逐字节相同）。
+  health.recordFailure('groq', { kind: 'rate-limited', status: 429 })
+  assert.equal(snapshotModels(await liveAdapter.listModels('groq')), expected, '短冷却把模型清单改掉了')
+
+  // 404 长锁：隐藏 = 空目录。
+  health.recordFailure('groq', { kind: 'not-found', status: 404 })
+  const hidden = await liveAdapter.listModels('groq')
+  assert.equal(hidden.length, 0, '404 长锁的渠道仍然列出了模型：' + hidden.length)
+  assert.equal(hidden.source, 'hidden', '隐藏时的来源标记不对：' + hidden.source)
+  assert.ok(String(hidden.hiddenReason).includes('404'), '隐藏原因没带出去：' + hidden.hiddenReason)
+})
+
+await check('已从下拉隐藏 fail-open：判据抛错 / 健康簿读不到 / 未知 / 超时，模型清单与改动前逐字节相同', async () => {
+  const lane = laneById('groq')
+  const baseline = snapshotModels(await createKeyedAdapter({ lane, apiKey: 'sk-test', fetchImpl: offlineFetch }).listModels('groq'))
+
+  // ① 判据自己抛错：适配器必须照常返回全量目录（而不是整个选择器空白）。
+  const throwing = createKeyedAdapter({
+    lane,
+    apiKey: 'sk-test',
+    fetchImpl: offlineFetch,
+    hiddenFromPicker: () => { throw new Error('verdict exploded') },
+  })
+  assert.equal(snapshotModels(await throwing.listModels('groq')), baseline, '判据抛错时模型清单变了（没有 fail-open）')
+
+  // ② 管理器那侧：健康簿的 get() 抛错（文件读不出来 / 账本实现坏了）。
+  const stored = {}
+  const realHealth = createHealthStore({ persist: false, now: harness.now })
+  const brokenHealth = { ...realHealth, get: () => { throw new Error('health.json unreadable') } }
+  let liveAdapter
+  const manager = createKeyedManager({
+    health: brokenHealth,
+    readCredential: async (name) => stored[name],
+    writeCredential: async (name, value) => { stored[name] = value },
+    unsetCredential: async (name) => { delete stored[name] },
+    register: (route, adapter) => { liveAdapter = adapter; return () => {} },
+    fetchImpl: offlineFetch,
+  })
+  const saved = await manager.saveKey('groq', 'sk-test')
+  assert.equal(saved.mounted, true)
+  assert.equal(manager.pickerVerdict('groq').hidden, false, '健康簿读不到时隐藏了渠道（应当 fail-open）')
+  assert.equal(manager.pickerVerdict('groq').code, 'fail-open')
+  assert.equal(snapshotModels(await liveAdapter.listModels('groq')), baseline, '健康簿读不到时模型清单变了（没有 fail-open）')
+
+  // ③ state:'unknown'：没测过 ≠ 不可用。
+  const neverTested = createKeyedAdapter({ lane, apiKey: 'sk-test', fetchImpl: offlineFetch, hiddenFromPicker: () => undefined })
+  assert.equal(snapshotModels(await neverTested.listModels('groq')), baseline)
+
+  // ④ 探测超时：30 秒抖动冷却，仍然可见。
+  const { manager: timeoutManager, health: timeoutHealth } = makeManager()
+  timeoutHealth.recordFailure('groq', { kind: 'timeout' })
+  assert.equal(timeoutHealth.get('groq').state, 'cooldown')
+  assert.equal(timeoutManager.pickerVerdict('groq').hidden, false, '探测超时把渠道从下拉里藏了')
+})
 
 console.log('\n通过 ' + passed + ' 项')
 if (failures.length > 0) {

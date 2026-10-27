@@ -381,6 +381,10 @@ window.__ModuleLoader__.load({
       keyedFilterDisabled: '已关闭',
       keyedNoMatch: '没有匹配的渠道：换个关键词，或把筛选切回「全部」。',
       keyedSummary: '共 {total} 条 · 就绪 {ready} · 待配置 {pending} · 冷却 {cool} · 吊销 {revoked}',
+      // 模型下拉的隐藏（0.7.0）：藏了哪条必须能看见、能点回来。
+      keyedHiddenPicker: '已从下拉隐藏',
+      keyedHiddenFooter: '已从下拉隐藏 {count} · 重新探测全部',
+      keyedHiddenProbing: '正在重探隐藏的渠道…',
 
       // 第二页：本地与网关
       serviceProbe: '重新探测',
@@ -662,6 +666,9 @@ window.__ModuleLoader__.load({
       keyedFilterDisabled: 'Disabled',
       keyedNoMatch: 'No channel matches: change the keyword, or switch the filter back to All.',
       keyedSummary: '{total} channels · ready {ready} · needs key {pending} · cooling {cool} · revoked {revoked}',
+      keyedHiddenPicker: 'Hidden from picker',
+      keyedHiddenFooter: 'Hidden from picker {count} · re-probe all',
+      keyedHiddenProbing: 'Re-probing hidden channels…',
 
       serviceProbe: 'Probe again',
       serviceProbing: 'Probing…',
@@ -1671,6 +1678,17 @@ window.__ModuleLoader__.load({
           h(StatePill, { key: 'st', state: channel?.state, t }),
           // 健康徽章与「就绪」**并排**，不合并：一个答「凭据配好了没」，一个答「上次真打上游成没成」。
           h(HealthPill, { key: 'hp', health, t }),
+          // 「已从下拉隐藏」红片（0.7.0）：它回答的是「为什么选择器里看不到这条渠道」。
+          // 只在下拉**真的**藏了它时出现（判据在管理器里，与适配器 listModels 同源）；
+          // 原因（含剩余时间）放 title —— 卡片上已经有一行健康徽章，不再加一整段文字。
+          channel?.hiddenFromPicker === true
+            ? h('span', {
+                key: 'hd',
+                className: 'ow-pill strong ow-hiddenpill',
+                title: safeText(channel?.hiddenReason, 200),
+                'data-hidden-from-picker': 'true',
+              }, [h('span', { key: 'd', className: 'ow-dot err' }), t('keyedHiddenPicker')])
+            : null,
           typeof channel?.modelCount === 'number'
             ? h('span', { key: 'c', className: 'ow-count' }, t('keyedModels').replace('{count}', String(channel.modelCount)))
             : null,
@@ -2290,6 +2308,37 @@ window.__ModuleLoader__.load({
         }
       }, [t])
       /**
+       * 重探「已从下拉隐藏」的渠道（0.7.0）。
+       *
+       * 与「测试全部已配置」分工：那个探**所有**配置好的（30+ 条时点一次要等很久，
+       * 而免费渠道按 IP 限流），这个只探被藏起来的几条 —— 页脚那个数字点下去
+       * 必须立刻有反应。`force` 是必须的：被藏的渠道多半刚失败过，缓存里只有那条失败结论。
+       */
+      const probeHiddenOf = useCallback(async (lanes) => {
+        const ids = Array.isArray(lanes) ? lanes.filter((id) => typeof id === 'string' && id !== '') : []
+        if (ids.length === 0) return
+        setBusy((current) => ({ ...current, __hidden: 'probe' }))
+        setNote('')
+        try {
+          const payload = await call('/key/probe-all', { onlyConfigured: false, force: true, lanes: ids })
+          const results = Array.isArray(payload?.results) ? payload.results : []
+          setProbes((current) => {
+            const next = { ...current }
+            for (const row of results) next[row.lane] = row
+            return next
+          })
+          setNote(t('keyedProbeAllDone')
+            .replace('{probed}', String(payload?.probed ?? results.length))
+            .replace('{skipped}', String(payload?.skipped ?? 0)))
+          // 重探之后「还在不在下拉里」由后端重新判：成功会清掉健康结论，卡片红片随之消失。
+          await reload()
+        } catch (error) {
+          setNote(t('error') + ': ' + error.message)
+        } finally {
+          setBusy((current) => ({ ...current, __hidden: '' }))
+        }
+      }, [reload, t])
+      /**
        * 开关一条渠道（0.6.0）。
        *
        * 与「清除 key」刻意分开：用户想的分明是「先别用它」，而不是把配置抹掉重来。
@@ -2380,6 +2429,11 @@ window.__ModuleLoader__.load({
       }, [mark, setErrorOf])
 
       const keyedAll = (channels ?? []).filter((row) => row.kind === 'keyed')
+      /**
+       * 被模型下拉隐藏的渠道（0.7.0）。判据在**后端**（`/channels` 的 `hiddenFromPicker`），
+       * 前端不重算：页面与下拉必须来自同一个 `pickerVerdict`，两处各算一次必然分叉。
+       */
+      const hiddenAll = keyedAll.filter((row) => row.hiddenFromPicker === true)
 
 
       // 判据抽成纯函数（`bucketOfChannel` / `matchesQuery` / `sortersFor`）：它们是这一页
@@ -2556,6 +2610,17 @@ window.__ModuleLoader__.load({
               .replace('{pending}', String(counts.pending))
               .replace('{cool}', String(counts.cooldown))
               .replace('{revoked}', String(counts.revoked))),
+          // 隐藏计数（0.7.0）：N=0 时**整行不渲染** —— 一行「已从下拉隐藏 0」
+          // 只会让人以为有东西被藏了。点了 = 只对这几条 force 重探（成功会清掉健康结论，自动回到下拉）。
+          hiddenAll.length > 0
+            ? h(Button, {
+                key: 'hid',
+                disabled: busy?.__hidden === 'probe',
+                onClick: () => void probeHiddenOf(hiddenAll.map((row) => row.id)),
+              }, busy?.__hidden === 'probe'
+                ? t('keyedHiddenProbing')
+                : t('keyedHiddenFooter').replace('{count}', String(hiddenAll.length)))
+            : null,
           h(Button, { key: 'r', onClick: () => void reload() }, t('refresh')),
         ]),
       ])
@@ -3839,6 +3904,8 @@ window.__ModuleLoader__.load({
 }
 .ow-sort { flex: 0 0 auto; }
 .ow-disabledpill { opacity: .7; }
+/* 「已从下拉隐藏」（0.7.0）：红色边框，与健康徽章的红色一致 —— 它是一条可逆的「不可见」状态。 */
+.ow-hiddenpill { color: var(--dsw-alias-state-error-primary); border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 55%, transparent); }
 
 /* 诊断快照：等宽 + 可选中（报问题的用户要能整段复制） */
 .ow-diag {
@@ -3899,6 +3966,9 @@ window.__ModuleLoader__.load({
         bucketOfChannel, matchesQuery, sortersFor,
         // 0.6.0：把「后端形状 → 可显示文本」的归一函数暴露出来，好让测试直接钉住
         localOverridePath,
+        // 0.7.0：真实中文词表。渲染测试此前只用 `t = key => key`，于是「页面文案」
+        // 这一层从来没有被验证过 —— 键名对、中文可能是空的。测试要能看到用户真正读到的字。
+        zh,
       },
       inject: ['slots', 'locale'],
       apply(ctx) {

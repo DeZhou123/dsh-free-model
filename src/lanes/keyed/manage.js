@@ -40,7 +40,7 @@ import { probeLaneChat } from './probe.js'
 import { probeLaneWindows, WINDOWS_TIMEOUT_MS } from './windows.js'
 import { laneById } from './catalog.js'
 import { resolveApiKey, resolveApiKeys } from './ready.js'
-import { createHealthStore, describeHealth } from '../health.js'
+import { createHealthStore, describeHealth, formatDuration } from '../health.js'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
@@ -102,6 +102,8 @@ export function createKeyedManager(deps = {}) {
   const probesInflight = new Map()
   /** 最近一次 descriptors() 的结果（页面的行数据就是它）。 */
   let records = []
+  /** 上一次「健康簿读不到」的 warn 时刻（`pickerVerdict` 会高频调用，日志要节流）。 */
+  let lastPickerWarnAt = 0
   /** laneId → 凭据面状态（已配置/来源/能否写/脱敏值）。 */
   let keyStates = Object.freeze({})
   /** laneId → 这条车道配了几把 key（同渠道多账号轮换，0.6.0）。 */
@@ -175,6 +177,16 @@ export function createKeyedManager(deps = {}) {
     // 渠道关掉，如果它的适配器还挂着（宿主没给 disposer 的情况），请求照样发得出去。
     // 「关掉」与「冷却中」都是「不该发请求」，那就必须走同一个判据。
     beforeRequest: (laneId) => availability(laneId),
+    // ── 模型下拉的可见性（0.7.0）────────────────────────────────────────────
+    //
+    // 与 `beforeRequest` 同一个来源、**不同的问题**：闸门回答「这次请求放不放行」，
+    // 这里回答「这条渠道的模型该不该出现在下拉里」。两者刻意分开：
+    // 60 秒的限流要拦请求（等一会就好），但不该让下拉每 60 秒抖一次。
+    //
+    // 判据必须是 fail-open 的：适配器会吞掉这里的抛错（见 adapter 的 `#pickerHidden`），
+    // 而此函数自己也做了一层 try/catch —— 两处都 fail-open 是刻意的，因为
+    // 「健康簿坏了」绝不该表现为「模型全都不见了」。
+    hiddenFromPicker: (laneId) => pickerVerdict(laneId),
     logger,
     ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
     ...(deps.readImage !== undefined ? { readImage: deps.readImage } : {}),
@@ -516,6 +528,74 @@ export function createKeyedManager(deps = {}) {
   }
 
   /**
+   * 这条车道的模型该不该从 DSH 的模型下拉里隐藏（0.7.0）  。
+   *
+   * ## 只藏「明确不可用」的三类
+   *
+   * | 来源 | 为什么算明确 | 怎么恢复 |
+   * |---|---|---|
+   * | 用户 `POST /channels/toggle` 关掉 | 这是用户自己的决定，不是猜测 | 把开关打开 |
+   * | 健康账本 `revoked`（401/invalid-key） | 换 key 之前**不可能**自己好 | 换一把 key |
+   * | 健康账本 `cooldown` + 404 长锁（6h） | 端点是错的，重试只会在同一个 404 上打转 | 等冷却结束，或重新探测 |
+   *
+   * **短冷却一律不隐藏**：429 的 60 秒、抖动/超时的 30 秒都是「等一会就好」。
+   * 把它们也藏起来，下拉会随着每次重试/退避增删模型 —— 用户看到的是「模型在抖」，
+   * 比不隐藏更糟。同理 `unknown`（没测过）与 `halfOpen`（冷却刚到期、只放一次探测）
+   * 都必须**可见**，否则要么新渠道永远进不了下拉，要么到期后没人能点它。
+   *
+   * ## fail-open 是判据的一部分，不是防御性编程
+   *
+   * 健康账本读不到 / 抛错 / 状态认不出来时返回 `{ hidden:false }`：**不隐藏**。
+   * 理由是产品性的 —— 隐藏错了的代价是「用户的模型凭空消失、且不知道去哪找回来」；
+   * 漏隐藏的代价只是「下拉里多一条已经标红的渠道」，而页面上的红徽章会告诉他原因。
+   * 两种错误的代价不对称，所以判据只往「不隐藏」一侧倒。
+   *
+   * @param {string} laneId
+   * @returns {{ hidden: boolean, reason: string, code: string }}
+   */
+  function pickerVerdict(laneId) {
+    const id = String(laneId)
+    try {
+      if (disabled.has(id)) {
+        return { hidden: true, code: 'disabled', reason: '你在设置页关掉了这条渠道（打开开关即恢复）' }
+      }
+      const record = health.get(id)
+      if (record?.state === 'revoked') {
+        return {
+          hidden: true,
+          code: 'revoked',
+          reason: '已吊销：key 被上游拒绝，换一把 key 后自动恢复'
+            + (typeof record.lastError === 'string' && record.lastError !== '' ? '（' + record.lastError.slice(0, 60) + '）' : ''),
+        }
+      }
+      // 404 长锁与「额度冷却」都是 cooldown，靠记录的 kind/status 区分（见 health.js 的说明）。
+      // 老记录没有 kind/status（升级前写的）→ 这里认不出 → 不隐藏，符合 fail-open。
+      const kind = String(record?.kind ?? '')
+      const isNotFound = record?.status === 404 || kind.includes('not-found')
+      if (record?.state === 'cooldown' && isNotFound) {
+        const until = Number.isFinite(record.until) ? record.until : null
+        const left = until === null ? null : until - Date.now()
+        return {
+          hidden: true,
+          code: 'not-found',
+          reason: '端点 404，地址可能已过期，长冷却'
+            + (left !== null && left > 0 ? '（还有 ' + formatDuration(left) + '）' : ''),
+        }
+      }
+      return { hidden: false, code: 'visible', reason: '' }
+    } catch (error) {
+      // 健康簿读不到：不隐藏（fail-open）。选择器会高频调用这里，日志按分钟节流，
+      // 否则一个坏文件能把日志刷满、把真正的原因盖住。
+      const at = Date.now()
+      if (at - lastPickerWarnAt > 60_000) {
+        lastPickerWarnAt = at
+        logger?.warn?.('[dsh-free-model] 读取健康簿失败，模型下拉按「全部可见」处理：' + (error instanceof Error ? error.message : String(error)))
+      }
+      return { hidden: false, code: 'fail-open', reason: '' }
+    }
+  }
+
+  /**
    * 开关一条渠道：写盘 + 立刻落到运行态。
    *
    * - 关：尝试释放路由（宿主给 disposer 就释放），并把它从 mounted 里摘掉；
@@ -610,16 +690,27 @@ export function createKeyedManager(deps = {}) {
    * 批量按钮走**缓存**（成功 60 秒 / 失败 20 秒）：用户连点两次不该把上游打两轮。
    * 想强刷就逐条点探测（那条才是 `force: true`）。
    *
-   * @param {{ onlyConfigured?: boolean, force?: boolean }} [options]
+   * @param {{ onlyConfigured?: boolean, force?: boolean, lanes?: string[] }} [options]
    * @returns {Promise<{ results: object[], probed: number, skipped: number }>}
    */
   async function probeAllKeys(options = {}) {
     const onlyConfigured = options.onlyConfigured !== false
     const force = options.force === true
+    /**
+     * `lanes`：只探这几条（0.7.0）。
+     *
+     * 页脚的「已从下拉隐藏 N · 重新探测全部」用它 —— 那个按钮的语义是
+     * 「把这些被藏起来的渠道再试一遍，能恢复的恢复」，不是「把 34 条全探一遍」。
+     * 探全部会真的打 34 次上游（免费渠道按 IP 限流），用户点错一次就要等很久。
+     */
+    const onlyLanes = Array.isArray(options.lanes)
+      ? new Set(options.lanes.filter((id) => typeof id === 'string' && id !== ''))
+      : undefined
     const results = []
     let skipped = 0
     for (const row of records) {
       if (row.kind !== 'keyed') continue
+      if (onlyLanes !== undefined && onlyLanes.has(row.id) === false) continue
       if (onlyConfigured) {
         const state = keyStates[row.id]
         // 免 key 渠道（没有 keystate）照样探：它们也有端点活着/死掉的区别。
@@ -653,6 +744,7 @@ export function createKeyedManager(deps = {}) {
     catalogDiagnostics,
     snapshot,
     availability,
+    pickerVerdict,
     healthSnapshot,
     resetHealth,
   }

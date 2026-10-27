@@ -489,6 +489,8 @@ export function createHealthStore(deps) {
         until: null,
         failures: 0,
         consecutive: 0,
+        kind: null,
+        status: null,
         lastError: null,
         lastOkAt: null,
         lastFailureAt: null,
@@ -506,6 +508,20 @@ export function createHealthStore(deps) {
     const previous = lanes.get(id)
     const failures = (previous?.failures ?? 0) + 1
     const errorText = sanitizeErrorText(failure?.reason ?? failure?.message ?? classification.reason)
+    /**
+     * 这次失败的**分类与状态码**（0.7.0）。
+     *
+     * ## 为什么要把它们留在记录里
+     *
+     * 「从模型下拉里隐藏」只该藏**明确不可用**的渠道，而 `cooldown` 这个词同时覆盖了
+     * 60 秒的限流、30 秒的抖动和 6 小时的 404 长锁 —— 只看 `state` 分不开它们，
+     * 按 `lastError` 猜文本又会把上游正文当成判据（用户改一行报错文案就变判据）。
+     *
+     * 所以把**判定的输入**（kind / status）一并记下来：隐藏判据读它，不猜文本。
+     * 只存归一化后的短标识；`status` 只存数字。两者都不含凭据。
+     */
+    const failureKind = normalizeFailureKind(failure?.kind)
+    const failureStatus = Number.isFinite(failure?.status) ? Number(failure.status) : null
 
     // ⓪ 400 这类「不是渠道的问题」：计数照记（诊断要看），但不进冷却、不动 consecutive。
     if (classification.state === 'ok') {
@@ -514,6 +530,8 @@ export function createHealthStore(deps) {
         until: null,
         failures,
         consecutive: 0,
+        kind: failureKind,
+        status: failureStatus,
         lastError: errorText,
         lastOkAt: previous?.lastOkAt ?? null,
         lastFailureAt: at,
@@ -570,6 +588,8 @@ export function createHealthStore(deps) {
       until,
       failures,
       consecutive,
+      kind: failureKind,
+      status: failureStatus,
       lastError: errorText,
       lastOkAt: previous?.lastOkAt ?? null,
       lastFailureAt: at,
@@ -589,6 +609,8 @@ export function createHealthStore(deps) {
       until: null,
       failures: previous?.failures ?? 0,
       consecutive: 0,
+      kind: null,
+      status: null,
       lastError: null,
       lastOkAt: at,
       lastFailureAt: previous?.lastFailureAt ?? null,
@@ -689,11 +711,23 @@ function serializable(record) {
     until: Number.isFinite(record.until) ? record.until : null,
     failures: Number.isFinite(record.failures) ? record.failures : 0,
     consecutive: Number.isFinite(record.consecutive) ? record.consecutive : 0,
+    // 失败分类 / 状态码：隐藏判据的**输入**（404 长锁与 60 秒限流靠它们区分）。
+    // 老文件没有这两个字段时一律写 null —— 读的一方必须把「不知道」当成「别隐藏」。
+    kind: normalizeFailureKind(record.kind),
+    status: Number.isFinite(record.status) ? Number(record.status) : null,
     lastError: typeof record.lastError === 'string' ? sanitizeErrorText(record.lastError) : null,
     lastOkAt: Number.isFinite(record.lastOkAt) ? record.lastOkAt : null,
     lastFailureAt: Number.isFinite(record.lastFailureAt) ? record.lastFailureAt : null,
     decidedAt: Number.isFinite(record.decidedAt) ? record.decidedAt : null,
   }
+}
+
+/** 失败分类归一化：只留短标识（`[a-z0-9._-]`，≤40 字符），其余一律 null。 */
+function normalizeFailureKind(value) {
+  if (typeof value !== 'string') return null
+  const text = value.trim().toLowerCase()
+  if (text === '') return null
+  return /^[a-z0-9._-]{1,40}$/.test(text) ? text : null
 }
 
 /**

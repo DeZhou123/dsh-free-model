@@ -87,6 +87,23 @@ const registryStub = () => {
   }
 }
 
+/** 带两条 keyed 记录的注册表桩（`/channels` 的隐藏字段要真有 keyed 行才看得到）。 */
+const registryWithKeyed = (records) => {
+  const registry = buildRegistry({ keyed: records })
+  return {
+    channels: projectRegistryView(registry.channels, { nativeMounted: ['buddy', 'workbuddy'] }),
+    counts: registry.counts,
+    fingerprint: registry.fingerprint,
+    rejected: registry.rejected,
+    layers: registry.byLayer,
+  }
+}
+
+const pickerFixtureLanes = [
+  { id: 'hidden-lane', displayName: '隐藏的渠道', kind: 'keyed', baseURL: 'https://x.example/v1', apiKeyEnv: 'X_KEY', models: [{ id: 'm', name: 'm' }] },
+  { id: 'visible-lane', displayName: '可见的渠道', kind: 'keyed', baseURL: 'https://y.example/v1', apiKeyEnv: 'Y_KEY', models: [{ id: 'm2', name: 'm2' }] },
+]
+
 await check('未接线时 /channels 明确报未接线，而不是回一份空的「正常」', async () => {
   const handler = createRoutes(makeDeps())
   const res = await call(handler, 'GET', '/api/free-model/channels')
@@ -504,6 +521,67 @@ await check('未知路由仍是 404（新端点的加入不许把兜底打掉）
   const res = await call(createRoutes(makeDeps()), 'GET', '/api/free-model/nope')
   assert.equal(res.status, 404)
   assert.ok(res.json().error.includes('nope'))
+})
+
+// ── 0.7.0：模型下拉隐藏（页面读同一份判定）────────────────────────────────────
+
+await check('/channels 的 keyed 行带 hiddenFromPicker / hiddenReason；判定抛错时 fail-open', async () => {
+  const manager = {
+    pickerVerdict: (id) => (id === 'hidden-lane'
+      ? { hidden: true, code: 'not-found', reason: '端点 404，地址可能已过期，长冷却（还有 6 小时）' }
+      : { hidden: false, code: 'visible', reason: '' }),
+  }
+  const handler = createRoutes(makeDeps({
+    registry: () => registryWithKeyed(pickerFixtureLanes),
+    keyed: { manager: () => manager, keyStates: () => ({}), keyCounts: () => ({}) },
+  }))
+  const payload = (await call(handler, 'GET', '/api/free-model/channels')).json()
+  const hiddenRow = payload.channels.find((row) => row.id === 'hidden-lane')
+  const visibleRow = payload.channels.find((row) => row.id === 'visible-lane')
+  assert.equal(hiddenRow.hiddenFromPicker, true, '被隐藏的 keyed 行没标出来')
+  assert.ok(hiddenRow.hiddenReason.includes('404'), '隐藏原因没下发：' + hiddenRow.hiddenReason)
+  assert.equal(visibleRow.hiddenFromPicker, false, '可见的 keyed 行被标成隐藏了')
+  assert.equal(visibleRow.hiddenReason, undefined)
+
+  // 判定抛错：整条 /channels 不许 500，且该行必须回到「可见」（fail-open）。
+  const broken = createRoutes(makeDeps({
+    registry: () => registryWithKeyed(pickerFixtureLanes),
+    keyed: {
+      manager: () => ({ pickerVerdict: () => { throw new Error('health exploded') } }),
+      keyStates: () => ({}),
+      keyCounts: () => ({}),
+    },
+  }))
+  const res = await call(broken, 'GET', '/api/free-model/channels')
+  assert.equal(res.status, 200)
+  assert.equal(
+    res.json().channels.find((row) => row.id === 'hidden-lane').hiddenFromPicker,
+    false,
+    '判定抛错时把渠道隐藏了（应当 fail-open）',
+  )
+})
+
+await check('/key/probe-all 支持 lanes 过滤（页脚「重新探测全部」只探被隐藏的那几条）', async () => {
+  const seen = []
+  const handler = createRoutes(makeDeps({
+    keyed: {
+      manager: () => ({
+        probeAllKeys: async (options) => {
+          seen.push(options)
+          return { results: [{ lane: options.lanes?.[0] ?? 'x', ok: true }], probed: 1, skipped: 0 }
+        },
+      }),
+      keyStates: () => ({}),
+      keyCounts: () => ({}),
+    },
+  }))
+  const res = await makeCallWithBody(handler, 'POST', '/api/free-model/key/probe-all', {
+    onlyConfigured: false,
+    force: true,
+    lanes: ['groq', '', 7],
+  })
+  assert.equal(res.status, 200)
+  assert.deepEqual(seen, [{ onlyConfigured: false, force: true, lanes: ['groq'] }], 'lanes 没被清洗/透传：' + JSON.stringify(seen))
 })
 
 console.log(`通过 ${passed} 项`)

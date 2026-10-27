@@ -780,6 +780,7 @@ export function frameData(block) {
  *   readImage?: (attachment: any) => Promise<{ data: Uint8Array, mediaType: string }>,
  *   readImageRequest?: (attachment: any, target: any) => Promise<{ data: Uint8Array, mediaType: string }>,
  *   timeoutMs?: number,
+ *   hiddenFromPicker?: (laneId: string) => { hidden: boolean, reason: string },
  * }} options
  * @returns {KeyedAdapter}
  */
@@ -852,6 +853,21 @@ export class KeyedAdapter extends LlmAdapter {
      * 区别只在原因不同（渠道下线 / 没 key / 正在冷却）。
      */
     this.beforeRequest = typeof options.beforeRequest === 'function' ? options.beforeRequest : undefined
+    /**
+     * 模型下拉的可见性判据（0.7.0）。
+     *
+     * ## 为什么隐藏要发生在 `listModels` 而不是卸载路由
+     *
+     * 宿主的选择器只认目录：`buildModelCatalog()` 逐 provider 调 `listModels()`，
+     * 再把 `models.length === 0` 的组整组滤掉。所以**返回空目录 = 从下拉里消失**，
+     * 而不必去赌宿主给不给 disposer（`setEnabled` 的注释里已经承认过这一点）。
+     *
+     * 反过来，路由保留让「恢复」成为一次纯读：判据一变，下一次 `listModels()` 就有模型了，
+     * 不需要重新注册、也不会撞上 `DUPLICATE_ADAPTER`。
+     *
+     * 判据的抛错在这里和判据自身两处都吞掉（fail-open）：健康是增强，不是依赖。
+     */
+    this.hiddenFromPicker = typeof options.hiddenFromPicker === 'function' ? options.hiddenFromPicker : undefined
     /** 实时目录缓存。 */
     this.catalogModels = undefined
     this.catalogSource = 'static'
@@ -903,6 +919,23 @@ export class KeyedAdapter extends LlmAdapter {
     this.failure = { ...classified, at: new Date().toISOString(), model: modelKey }
     this.#notify(false, classified)
     return failureToError(this.lane, classified)
+  }
+
+  /**
+   * 问一次「这条车道的模型该不该从下拉里消失」（0.7.0）。
+   *
+   * 返回 `undefined` = 没有判据、或判据自己炸了 → **一律可见**（fail-open）。
+   * 这里再吞一次异常是刻意的：`listModels` 的契约是「绝不抛」（宿主把它当成
+   * 模型选择器的整体失败），而判据的实现将来可能被替换。
+   */
+  #pickerHidden() {
+    if (this.hiddenFromPicker === undefined) return undefined
+    try {
+      const verdict = this.hiddenFromPicker(this.lane.id)
+      return verdict !== null && typeof verdict === 'object' ? verdict : undefined
+    } catch {
+      return undefined
+    }
   }
 
   /** 运行期换 key（页面填完 key 之后可以直接换，不必重挂）。接受单值或数组。 */
@@ -1001,6 +1034,18 @@ export class KeyedAdapter extends LlmAdapter {
    */
   async listModels(providerId) {
     const provider = typeof providerId === 'string' && providerId !== '' ? providerId : this.lane.id
+    // ── 隐藏：只回一个空目录（0.7.0）───────────────────────────────────────
+    //
+    // 宿主（`buildModelCatalog`）会把空 models 的 provider 组整组滤掉，所以这就是
+    // 「从下拉里消失」的实现；**不要**在这里卸载路由 —— 恢复就不必重新注册了。
+    // 判据抛错时 `#pickerHidden` 返回 undefined，走下面正常路径（fail-open）。
+    const verdict = this.#pickerHidden()
+    if (verdict?.hidden === true) {
+      const out = []
+      out.source = 'hidden'
+      out.hiddenReason = typeof verdict.reason === 'string' ? verdict.reason : ''
+      return out
+    }
     const rows = await this.#catalog()
     // ⚠️ 行列就是 OpenCodeAdapter 的那四个字段：上下文窗口走 resolveModel 的
     // `context.contextWindow`，不塞进目录行（宿主的 LlmModelInfo 里没有它）。

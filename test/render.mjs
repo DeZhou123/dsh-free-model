@@ -901,6 +901,39 @@ check('冷却到期会自动刷新（否则「还有 42 秒」永远停在那）
   assert.ok(flat(tree).includes('keyedHealthCooldown'), '缺少冷却文案')
 })
 
+// ── 0.7.0：模型下拉隐藏（卡片红片 + 页脚计数）────────────────────────────────
+check('已从下拉隐藏：卡片红色状态片 + 页脚 N 条计数；N=0 时两处都不渲染', () => {
+  // 这一条刻意用**真实中文词表**（而不是 `t = key => key`）：键名对、中文为空
+  // 是渲染测试此前覆盖不到的一类坏法，而「已从下拉隐藏」正是要给人读的文案。
+  const zhText = module.__test.zh
+  assert.ok(zhText !== undefined, '__test 没有导出 zh 词表')
+  const tZh = (key) => zhText[key] ?? key
+  const hiddenRow = {
+    ...keyedRow,
+    hiddenFromPicker: true,
+    hiddenReason: '端点 404，地址可能已过期，长冷却（还有 6 小时）',
+  }
+  // 卡片：一颗红片，title 里带原因（含剩余时间）。不能是 [object Object]。
+  const card = KeyedCard({ channel: hiddenRow, t: tZh })
+  const cardText = flat(card)
+  assert.ok(cardText.includes('已从下拉隐藏'), '卡片上缺少「已从下拉隐藏」状态片')
+  assert.equal(cardText.includes('[object Object]'), false, '状态片渲染出了 [object Object]')
+  const chips = collectElements(card, (node) => typeof node.props?.className === 'string' && node.props.className.includes('ow-hiddenpill'))
+  assert.equal(chips.length, 1, '「已从下拉隐藏」状态片应恰好一颗，实际 ' + chips.length)
+  assert.ok(String(chips[0].props.title).includes('404'), '状态片的 title 没带原因：' + chips[0].props.title)
+
+  // 页脚：N>0 才渲染「已从下拉隐藏 N · 重新探测全部」。
+  const page = KeyedPage({ t: tZh, channels: [hiddenRow], wired: true, keyStates: {}, probes: {}, health: {} })
+  const pageText = flat(page)
+  const footer = /已从下拉隐藏 \d+ · 重新探测全部/.exec(pageText)
+  assert.ok(footer !== null, '页脚缺少「已从下拉隐藏 N · 重新探测全部」：' + pageText.slice(0, 400))
+  console.log('  页脚：' + footer[0])
+
+  // N=0：两处都不许出现 —— 一行「隐藏 0 条」只会让人以为有东西被藏了。
+  const clean = KeyedPage({ t: tZh, channels: [keyedRow], wired: true, keyStates: {}, probes: {}, health: {} })
+  assert.equal(flat(clean).includes('已从下拉隐藏'), false, 'N=0 时页脚/卡片不该渲染隐藏行')
+})
+
 // ── 0.6.0：筛选/排序的纯函数（从组件里抽出来的那三个）──────────────────────
 const { bucketOfChannel, matchesQuery, sortersFor } = module.__test
 

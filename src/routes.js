@@ -168,7 +168,16 @@ export function createRoutes(deps) {
         const body = await readJson(req)
         const onlyConfigured = body?.onlyConfigured !== false
         const force = body?.force === true
-        const outcome = await manager.probeAllKeys({ onlyConfigured, force })
+        // `lanes`：页脚「已从下拉隐藏 N · 重新探测全部」只重探被隐藏的那几条（0.7.0）。
+        // 不传 = 老行为（全部）。上限 60 条只是防一个手写的巨大数组。
+        const lanes = Array.isArray(body?.lanes)
+          ? body.lanes.filter((id) => typeof id === 'string' && id !== '').slice(0, 60)
+          : undefined
+        const outcome = await manager.probeAllKeys({
+          onlyConfigured,
+          force,
+          ...(lanes === undefined ? {} : { lanes }),
+        })
         return send(200, { ok: true, ...outcome })
       }
       // ── 诊断快照（0.6.0）：一段可复制的纯文本，给「报问题」用 ────────────────
@@ -496,6 +505,19 @@ async function channelsOverview(deps) {
   }
   // 被关掉的渠道（页面渲染开关态）。缺字段时给空数组，页面不必判 null。
   const disabled = deps.keyed?.manager?.()?.disabledLanes?.() ?? []
+  // 模型下拉的隐藏判据（0.7.0）。与适配器 `listModels` 用的是**同一个** `pickerVerdict`：
+  // 页面上的「已从下拉隐藏」因此不是另一套猜测，而是下拉那边事实的投影。
+  // 判据抛错时 safeCall 返回 `{error}` → `hidden !== true` → 标成可见（fail-open）。
+  const manager = deps.keyed?.manager?.()
+  if (manager !== undefined && typeof manager.pickerVerdict === 'function') {
+    for (const row of view.channels ?? []) {
+      if (row === null || typeof row !== 'object' || row.kind !== 'keyed') continue
+      const verdict = safeCall(() => manager.pickerVerdict(row.id))
+      const hidden = verdict?.hidden === true
+      row.hiddenFromPicker = hidden
+      if (hidden && typeof verdict.reason === 'string' && verdict.reason !== '') row.hiddenReason = verdict.reason
+    }
+  }
   return { wired: true, ...view, keyCounts, modelSuspects: suspects, disabledLanes: disabled }
 }
 
