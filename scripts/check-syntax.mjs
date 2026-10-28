@@ -14,7 +14,7 @@
  * 失败时不早退：把所有解析失败的文件都列出来（CI 日志里一次能看到全部），最后以 1 退出。
  */
 import { spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -43,13 +43,40 @@ function walk(absPath, out) {
   }
 }
 
+/**
+ * ## 缺失的条目要跳过，不是抛错（2026-10-28 01:40 实测）
+ *
+ * `package.json` 的 `files` 白名单是
+ * `index.js, client.js, src, scripts, catalog, icon.svg, cordis.patch.yml, README.md, CHANGELOG.md`
+ * —— **没有 `test`**。也就是说 `npm i dsh-free-model` 之后，包里根本没有 `test/` 目录。
+ *
+ * 而这一段原来无条件 `statSync(abs)`，于是**在任何安装副本上**跑 `npm run check` 都是：
+ *
+ *   Error: ENOENT: no such file or directory, stat '...\dsh-free-model\test'
+ *
+ * 后果不是"检查失败"，是**检查根本跑不起来** —— 而 `npm run check` 是发布前最后一道语法闸。
+ * 一个在安装副本上必崩的闸，等于没有闸。
+ *
+ * 判据：`existsSync` 为 false 的条目**跳过并记一行**（不静默：人要能看出"这次少查了哪一块"）。
+ * 只跳过"不存在"，不跳过"读不了" —— 后者是真故障，仍该抛。
+ */
 const files = [];
+const missing = [];
 for (const entry of ENTRIES) {
   const abs = join(ROOT, entry);
+  if (!existsSync(abs)) { missing.push(entry); continue; }
   if (statSync(abs).isDirectory()) {
     walk(abs, files);
   } else if (EXTENSIONS.has(entry.slice(entry.lastIndexOf('.')))) {
     files.push(abs);
+  }
+}
+if (missing.length > 0) {
+  // 发布包里缺 test/ 是正常的；缺 src/ 或 index.js 才是坏事 —— 分开说。
+  const critical = missing.filter((name) => name !== 'test');
+  console.log('跳过不存在的条目：' + missing.join(', ') + '（发布包的 files 白名单不含它们时属正常）');
+  if (critical.length > 0) {
+    console.log('⚠ 这些**不该**缺：' + critical.join(', ') + ' —— 包可能装坏了');
   }
 }
 
