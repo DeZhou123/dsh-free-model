@@ -119,7 +119,10 @@ const KEYED_CHANNELS_BASE = [
     // 目录免 key 可读（实测 2026-10-26 两轮 200）：探测通过≠有额度。
     openCatalog: true,
     note: '免费型号随时上下架，静态表只是兜底（运行时以 /models 实时结果为准）；模型 id 里那个 ":free" 后缀是价格档位，忘掉它就会按付费模型计费。',
-    evidence: '2026-10-25 GET https://openrouter.ai/api/v1/models → 200；free 三条取自实测 pricing.prompt=0 的行；'
+    // 「key 判定」这一句是给 evidence-gate.mjs 的 ① 用的：门禁要求三条实测渠道都写清
+    // 状态码 + 耗时 + key 判定。这里的判定是「目录免 key 可读」——与紧邻的注释同一条事实，
+    // 只是写进 evidence 才可被机器断言。**不是新测出来的结论**。
+    evidence: '2026-10-25 GET https://openrouter.ai/api/v1/models → 200（匿名、不带 key 也可读，即免 key 可读）；free 三条取自实测 pricing.prompt=0 的行；'
       + '2026-10-26 live chat 200 / cost=0：POST /chat/completions（nvidia/nemotron-3-ultra-550b-a55b:free，max_tokens=8）'
       + ' → 200 / 1919ms / usage.cost=0（prompt_tokens=22 + completion_tokens=8，其中 reasoning_tokens=9，所以正文被截成半句）'
       + '；2026-10-26 补表实测（静态兜底扩容）：GET /api/v1/models → 200，实时 467 条、其中 `:free` 17 条，17 条 pricing.prompt/completion 全为 "0"；'
@@ -586,7 +589,8 @@ export const KEYLESS_CHANNELS = [
     freeTier: '完全免费、无需注册：文本每次请求间隔≥30 秒（同一 IP 串行），超了回 402 + Retry-After；带自己的 key 可解除按 IP 限速',
     region: 'global',
     note: '⚠️ 限速是「一次只跑一个、间隔 30 秒」，所以它只适合当兜底车道；上游**用 402 表示「等一下再来」**，与别家的「额度用尽」撞码，页面要按 Retry-After 区分。模型只有 GPT-OSS 20B 一个。⚠️ 2026-10-26 实测它**忽略 max_tokens**（要 8 个 token 回了 534 个），所以一次请求可能跑十几秒 —— 适合兜底，不适合当主模型。',
-    evidence: '2026-10-25 GET https://text.pollinations.ai/models → 200，返回 [{"name":"openai-fast","tier":"anonymous","tools":true,...}]；'
+    // key 判定：这条是 keyless（apiKeyEnv: null），实测匿名即可调 —— 写进 evidence 供 evidence-gate.mjs 断言。
+    evidence: '2026-10-25 GET https://text.pollinations.ai/models → 200（匿名、无需 key，即 keyless 实测可调），返回 [{"name":"openai-fast","tier":"anonymous","tools":true,...}]；'
       + '官方 APIDOCS.md 原文确认 POST /openai（或 /v1/chat/completions）且 Free · no signup · rate-limited；'
       + '2026-10-26 live chat 200 / 13862ms / 忽略 max_tokens：POST /chat/completions（openai-fast，max_tokens=8）→ 200 / 13862ms / '
       + '上游回中文文本，usage 实测 completion_tokens=534（要 8 个回了 534 个）——所以它慢，别指望用它压成本',
