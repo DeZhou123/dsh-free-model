@@ -1,6 +1,6 @@
 {
   "name": "dsh-free-model",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "type": "module",
   "private": true,
   "description": "Free-channel console for DSH: one settings section, three tabs. Account lanes (CodeBuddy / WorkBuddy, mounted by this plugin; the host accountPool is reused when present), local service lanes (OpenCode free tier, FreeLLMAPI gateway, Ollama) with HTTP probes, and 21 bring-your-own-key / keyless channels (OpenRouter free, Groq, Cerebras, Google AI Studio, Cloudflare, Mistral, DashScope, ModelScope, Zhipu, Moonshot, Qianfan, Volcano, SiliconFlow, StepFun, Spark, Hunyuan, MiniMax, NVIDIA NIM, Together, SambaNova, Pollinations). Own-key lanes can be filled in, tested and cleared right on the page (11-way probe classification) and a saved key mounts the lane immediately. Channel data is a three-layer catalog (shipped <- remote JSON <- local override) so new channels arrive without a release; a version check covers plugin upgrades. Every channel carries a readiness state and an actionable reason instead of a button that always fails.",
