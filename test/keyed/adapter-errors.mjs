@@ -444,14 +444,21 @@ await checkAsync('重试策略：串行限速渠道不自己重试，其余最�
   const policy = normal.providerRetryPolicy()
   assert.equal(policy.mode, 'normal')
   assert.equal(policy.maxRetries, 1, '普通渠道的重试上限必须是 1（默认 5 次会刷穿免费额度）')
-  assert.ok(policy.backoff.initialDelayMs >= 1_000, '退避起点太短')
-  assert.ok(policy.backoff.maxDelayMs <= 30_000)
+  // 形状必须是**扁平**的：宿主不对适配器返回值做解析（逐字保存），退避调度器读的是顶层
+  // initialDelayMs / maxDelayMs / jitterRatio（@deepseek-ai/dsh-llm-retry 的 localDelay）。
+  // 写成 backoff: { … } 会让这三个字段 undefined ⇒ NaN ⇒ setTimeout(fn, NaN) 视为 0ms，
+  // 退避等于没写 —— 这条断言就是那次缺陷的回归闸门（2026-11-05）。
+  assert.ok(Number.isFinite(policy.initialDelayMs) && policy.initialDelayMs >= 1_000, '退避起点必须是顶层有限数：' + policy.initialDelayMs)
+  assert.ok(Number.isFinite(policy.maxDelayMs) && policy.maxDelayMs <= 30_000, '退避上限必须是顶层有限数：' + policy.maxDelayMs)
+  assert.ok(Number.isFinite(policy.jitterRatio), '抖动比必须是顶层有限数：' + policy.jitterRatio)
+  assert.equal(policy.backoff, undefined, 'backoff 是配置文件的形状，适配器返回值里不许出现（调度器读不到）')
   assert.ok(Array.isArray(policy.retryableCodes) && policy.retryableCodes.includes('RATE_LIMIT'))
   // pollinations 是「同一 IP 间隔 ≥30 秒」的串行限速渠道：重试只会把窗口推远。
   const serial = mk({ lane: { ...laneById('pollinations'), serialRateLimit: true }, apiKey: null })
   const serialPolicy = serial.providerRetryPolicy()
   assert.equal(serialPolicy.maxRetries, 0, '串行限速渠道不该自己重试')
   assert.deepEqual(serialPolicy.retryableCodes, [])
+  assert.ok(Number.isFinite(serialPolicy.initialDelayMs), '串行车道也必须是扁平形状：' + serialPolicy.initialDelayMs)
 })
 await checkAsync('key 轮换：401 换下一把 key 重试一次，成功即返回', async () => {
   const seen = []

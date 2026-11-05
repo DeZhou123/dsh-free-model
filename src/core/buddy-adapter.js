@@ -437,6 +437,45 @@ class BuddyAdapter extends LlmAdapter {
     return { id, name: this.product.displayName };
   }
   /**
+   * 本车道自己的重试策略（2026-11-05 补）。
+   *
+   * ## 此前为什么是隐患
+   *
+   * 这个类只 `extends LlmAdapter`，不走 `src/lanes/keyed/adapter.js`，也**没有**声明
+   * `providerRetryPolicy()` ⇒ 落回宿主的默认表 `resolveRetryPolicy(undefined)`：
+   * **maxRetries=5、500ms 起翻倍到 10s，且 `RATE_LIMIT` 属于可重试码**。
+   * 对一般渠道这没问题；对本车道是双重浪费——
+   *
+   *  - 本家的 429 文案是「所有账号均受限，请稍后再试 / 账号额度已用尽…请改用其它模型」，
+   *    额度是按**账号**算的，等 500ms/1s/2s/4s/8s 再打同一堵墙不会变好，只会把配额刷得更薄；
+   *  - 同刻另一条车道（或同一产品的另一个账号）通常是活的，**换道比等待快**。
+   *    实测口径：2026-11-03 的 A 侧账本里 raccoon 一族单次故障烧掉 16 次重试，用户看到的是
+   *    「请求一直在重试」而不是「已经换了一条车道」。
+   *
+   * 所以这里只留「渠道确实答了话、且答案可能是瞬时」的那四类：
+   * 一次重试、2 秒起、上限 30 秒（与 keyed 适配器同一口径）。`RATE_LIMIT` 刻意不在列表里
+   * —— 让失败尽快上抛给模型调度器（`dsh-model-orchestrator` 的 `agent/request-error`），
+   * 由它去换渠道/换模型。
+   *
+   * ## 形状必须是**扁平**的
+   *
+   * 宿主不对适配器的返回值做解析：`@deepseek-ai/dsh-llm` 的类型层逐字保存
+   * （`lib/types/index.js` 的 `adapter.providerRetryPolicy(provider) ?? resolveRetryPolicy(undefined, …)`），
+   * 而退避调度器读的是**顶层** `initialDelayMs` / `maxDelayMs` / `jitterRatio`
+   * （`@deepseek-ai/dsh-llm-retry` 的 `localDelay`）。写成 `backoff: { … }` 会让这三个字段变
+   * `undefined` ⇒ `NaN` ⇒ `setTimeout(fn, NaN)` 视为 0ms，退避等于没写。
+   */
+  providerRetryPolicy() {
+    return {
+      mode: 'normal',
+      maxRetries: 1,
+      retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'],
+      initialDelayMs: 2_000,
+      maxDelayMs: 30_000,
+      jitterRatio: 0.2,
+    };
+  }
+  /**
    * 模型列表：优先使用 /v3/config 动态拉取的远端列表，否则回退静态默认。
    * 动态拉取失败时静默回退（与 Rust fetch_models 的 Vec::new() 语义一致）。
    */

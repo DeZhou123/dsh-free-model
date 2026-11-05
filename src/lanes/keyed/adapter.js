@@ -979,6 +979,17 @@ export class KeyedAdapter extends LlmAdapter {
    *    「1 次」是刻意的：免费渠道重试到第三次基本都在撞同一堵墙，而用户能感觉到卡。
    *
    * 上界是**可算的**：最坏 1 次重试 + 2 秒等待，不会出现"一个请求在后台默默重试十几次"。
+   *
+   * ## 形状必须是**扁平**的（2026-11-05 修）
+   *
+   * 原来这里返回的是 `backoff: { initialDelayMs, maxDelayMs, jitterRatio }` —— 那是
+   * **配置文件**的形状（宿主 `resolveRetryPolicy` 读的就是它），不是**适配器返回值**的形状。
+   * 宿主对适配器的返回值不做解析、逐字保存（`@deepseek-ai/dsh-llm` 类型层：
+   * `adapter.providerRetryPolicy(provider) ?? resolveRetryPolicy(undefined, …)`），
+   * 而退避调度器读的是**顶层**三个字段（`@deepseek-ai/dsh-llm-retry` 的 `localDelay`）。
+   * 后果实测（复刻 `localDelay` 逐字跑）：嵌套形状的第一次重试延迟 = `NaN`，
+   * `setTimeout(fn, NaN)` 按 Node 语义视为 **0ms** —— 也就是说这段策略**从来没生效过**：
+   * 本该等 2 秒的重试是立刻打的，对串行限速渠道正是最坏的时机。
    */
   providerRetryPolicy() {
     if (this.lane.serialRateLimit === true) {
@@ -986,14 +997,18 @@ export class KeyedAdapter extends LlmAdapter {
         mode: 'normal',
         maxRetries: 0,
         retryableCodes: [],
-        backoff: { initialDelayMs: 1_000, maxDelayMs: 1_000, jitterRatio: 0 },
+        initialDelayMs: 1_000,
+        maxDelayMs: 1_000,
+        jitterRatio: 0,
       }
     }
     return {
       mode: 'normal',
       maxRetries: 1,
       retryableCodes: ['RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT'],
-      backoff: { initialDelayMs: 2_000, maxDelayMs: 30_000, jitterRatio: 0.2 },
+      initialDelayMs: 2_000,
+      maxDelayMs: 30_000,
+      jitterRatio: 0.2,
     }
   }
 
