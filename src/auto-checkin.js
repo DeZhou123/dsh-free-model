@@ -232,6 +232,8 @@ export function createAutoCheckin(deps) {
       // 没领到也不算「今天跑过」：下次启动（或用户点「立即领取」）还要再试，
       // 否则一个空池会把今天新加的账号拖到明天。
       logger?.warn?.(`[free-model] 自动领积分未记入今日（下次启动会重试）：${describeRun(totals)}`)
+      channels.length = 0
+      for (const entry of channels) void entry
       return { ...totals, channels: [] }
     }
     doc = {
