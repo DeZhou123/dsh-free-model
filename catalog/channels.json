@@ -1888,7 +1888,7 @@
       "displayName": "FreeLLMAPI 本地网关",
       "kind": "service",
       "backend": "gateway",
-      "endpoint": "http://127.0.0.1:31415",
+      "endpoint": "http://127.0.0.1:3001",
       "category": "本地",
       "capability": {
         "tools": true,
@@ -1899,7 +1899,7 @@
         "claim": false
       },
       "probe": {
-        "url": "http://127.0.0.1:31415/v1/models",
+        "url": "http://127.0.0.1:3001/v1/models",
         "method": "GET",
         "okStatus": [
           200,
