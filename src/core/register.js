@@ -1,4 +1,4 @@
-﻿/**
+/**
  * `ctx.llm.registerAdapter` 的**重启幂等**包装 + Token 记账包装。
  *
  * ## 为什么必须幂等
@@ -163,7 +163,33 @@ export function wrapAdapterWithTokenLedger(providers, adapter) {
           }
         }
       }
-      return Reflect.get(target, prop, target)
+      const value = Reflect.get(target, prop, target)
+      /**
+       * ⚠️⚠️ **原型方法必须把 this 绑回 target，不能直接返回裸函数。**
+       *
+       * ## 这是一次真实故障，不是一个理论风险
+       *
+       * 适配器是 class 实例，`listModels` / `resolveModel` 等**大量使用私有成员**
+       * （`this.#catalog()`、`this.#pickerHidden()`、`this.#rowFor()`）。私有字段/
+       * 私有方法走的是 JS 的**品牌检查**（brand check）：接收者必须真的是那个类的实例。
+       *
+       * 裸返回 `Reflect.get(target, prop, target)` 时，宿主以 `adapter.listModels(p)`
+       * 的形式调用，此时 `this` 是 **Proxy**，不是适配器 —— 品牌检查直接抛：
+       *
+       *     TypeError: Receiver must be an instance of class KeyedAdapter
+       *
+       * 于是模型目录整体空白（models: 0），而 stream 路径因为上面单独绑过 target
+       * 反而正常 —— 这正是「能用但没模型」这种极难定位的现象。
+       *
+       * 修复：`typeof value === 'function'` 时一律 `.bind(target)`。
+       * - 性能可忽略：每次 get 产生一个 bound 包装，宿主按需取用；
+       * - 语义正确：所有方法看到的 `this` 恒为原适配器；
+       * - 不破坏任何用途（下面显式跳过 `constructor`）。
+       */
+      if (typeof value === 'function' && prop !== 'constructor') {
+        return value.bind(target)
+      }
+      return value
     },
   })
 }

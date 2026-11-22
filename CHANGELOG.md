@@ -3,6 +3,56 @@
 格式：`## [版本] · 日期` → `### 新增 / 改动 / 修复 / 证据`。
 写下来的规矩：**每条都要能被验证**（命令、文件、实测输出），做不到就标 `未实测`。
 
+## [0.6.3] · 2026-11-22
+
+> 主题：**修掉「模型目录整组空白」的根因** —— Token 记账 Proxy 丢掉了方法的接收者。
+
+### 修复
+
+- **`src/core/register.js`：Proxy 的 `get` 陷阱现在把原型方法 `bind` 回原适配器。**
+
+  这是 0.6.0 起就潜伏、直到 0.6.2 才被定位的 P0：`wrapAdapterWithTokenLedger`
+  为了记账给适配器套了一层 `Proxy`，而陷阱的兜底分支是裸返回
+  `Reflect.get(target, prop, target)` —— 拿到的是**未绑定的原型函数**。
+  宿主以 `adapter.listModels(provider)` 的形式调用时，`this` 就是 **Proxy**，
+  而 `KeyedAdapter` 的 `listModels` / `resolveModel` 大量使用私有成员
+  （`#catalog()` / `#pickerHidden()` / `#rowFor()`）。私有成员走 JS 品牌检查，
+  接收者不是真实例就直接抛：
+
+  ```
+  TypeError: Receiver must be an instance of class KeyedAdapter
+  ```
+
+  后果极具迷惑性：**推理照常可用**（`stream` 在陷阱里单独绑过 target），
+  只是模型目录整组空白（`models: 0`），页面看上去像“这条渠道没配好”。
+  实测中招的三条车道：`openrouter-free` / `groq` / `pollinations`。
+
+### 证据
+
+最小复现（真实插件代码，包装前后各调一次）：
+
+```
+proxy instanceof KeyedAdapter : true
+direct  listModels   -> OK n=0
+proxied listModels   -> ERR: Receiver must be an instance of class KeyedAdapter
+proxied resolveModel -> ERR: Receiver must be an instance of class KeyedAdapter
+```
+
+修复后同一脚本：
+
+```
+direct  listModels   -> OK n=0
+proxied listModels   -> OK n=0
+proxied resolveModel -> OK llama-3.1-8b-instant
+```
+
+### 新增
+
+- **`test/register-proxy.mjs`（回归闸门，6 项）**：不检查“代码里有没有 bind”这种形状，
+  而是**按宿主的方式真的调一遍** `wrapped.listModels()` / `resolveModel()`，
+  断言不抛且结果与直调逐字一致。已验证其区分能力：把修复撤掉后 3 项转红
+  （`Receiver must be an instance of class KeyedAdapter`），加回来 6 项全绿。
+  已接入 `test:all`。
 ## [0.6.0] · 2026-10-26
 
 > 主题：**渠道从 21 条扩到 34 条（另加 3 条本地推理服务车道）**，每条带本轮实测证据；
