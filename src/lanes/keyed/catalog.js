@@ -138,21 +138,40 @@ const KEYED_CHANNELS_BASE = [
       + '排除并留证（这些也是本轮实测，别再当候选捞回来）：thinkingmachines/inkling:free 与 inkling-small:free → 403「only available on agentic harnesses」**复现**（不是瞬态，普通 API 就是不给调）；'
       + 'google/gemma-4-31b-it:free → 先两次 429、第 3 轮 HTTP 400「User location is not supported for the API use」，google/gemma-4-26b-a4b-it:free → 首次即同一 400：**本机地理位置被上游拒绝**，与 key 和限流都无关；'
       + 'nvidia/nemotron-3-super-120b-a12b:free → 5 次全 404（provider 侧 "Function ...: Not found for account"）；'
-      + 'nvidia/nemotron-3.5-content-safety:free → 200 / cost=0 但正文是分类器输出「User Safety: safe」、tools=false —— 它是审核模型不是 chat 模型，**不**进兜底表（实时目录里依然有它）',
+      + 'nvidia/nemotron-3.5-content-safety:free → 200 / cost=0 但正文是分类器输出「User Safety: safe」、tools=false —— 它是审核模型不是 chat 模型，**不**进兜底表（实时目录里依然有它）'
+      // ── 2026-11-22 第三轮复核：静态表 11 条里 6 条已死，补 4 条新的 ──
+      // 判据与前两轮一致：逐条 POST /chat/completions（max_tokens 16–64），按真实回复取舍。
+      // 死亡 6 条（上游 404 no longer available，不是限流、不会自愈，必须移出静态表）：
+      //   xingchen-agi/xing4.0-29b-a4b:free、dots-studio/dots-3-note-preview:free、cohere/north-mini-code:free、
+      //   poolside/laguna-s-2.1:free、poolside/laguna-xs-2.1:free、liquid/lfm-2.5-2.6b:free（各 93–129ms 即回 404）
+      // 存活 5 条（全部 200）：recursive/flint-v1.0 667ms、nemotron-3.5-super-vl 625ms、nemotron-3-ultra-550b 496ms、
+      //   nemotron-3.5-lightning 419ms、nemotron-3-nano-omni-30b-a3b-reasoning 438ms（后四条 cost=0）
+      // 新增 4 条（实时目录里新出现的 free 档，字段直接取实时 context_length / max_completion_tokens /
+      //   architecture.input_modalities / supported_parameters，然后逐条 live 验证）：
+      //   inclusionai/ling-3.2-flash:free 887ms（首轮 429，退避 45s 后第 2 轮 200，cost=0）、
+      //   baidu/ernie-5.5-flash-preview:free 664ms、particle-ai/particle-1:free 720ms、liquid/lfm-3-1.7b:free 689ms
+      //   —— 四条 usage.cost 均为 0，正文都是 4（问的是 2+2）
+      // 本轮仍排除：google/gemma-4-26b-a4b-it:free 与 gemma-4-31b-it:free → 两次均 429 Provider returned error
+      //   （与 10-26 那次 400 User location is not supported 不同，这次是纯限流，所以它们是**候补而非失效**：
+      //   限流解除后可重新验证，别当死条目删掉）
+      + '；2026-11-22 第三轮复核（静态 11 → 9 条）：原静态 11 条里 6 条上游已下架（404 no longer available：xingchen-agi/xing4.0-29b-a4b、'
+      + 'dots-studio/dots-3-note-preview、cohere/north-mini-code、poolside/laguna-s-2.1、poolside/laguna-xs-2.1、liquid/lfm-2.5-2.6b），'
+      + '已从静态表移除；存活 5 条逐条 200（flint-v1.0 667ms / nemotron-3.5-super-vl 625ms / nemotron-3-ultra-550b 496ms / '
+      + 'nemotron-3.5-lightning 419ms / nemotron-3-nano-omni-30b-a3b-reasoning 438ms）；实时目录新增 4 条 free 并逐条实测通过'
+      + '（ling-3.2-flash 887ms 退避后 200、ernie-5.5-flash-preview 664ms、particle-1 720ms、lfm-3-1.7b 689ms，四条 cost 全 0）；'
+      + 'gemma-4-26b/31b 两次 429 Provider returned error（限流，非失效，留作候补）',
     unknown: true,
     unknownFields: ['freeTier'],
     models: [
       { id: 'recursive/flint-v1.0:free', name: 'Recursive: Flint (free)', contextWindow: 262144, maxTokens: 235929, vision: false, tools: true },
-      { id: 'xingchen-agi/xing4.0-29b-a4b:free', name: 'XingChen: Xing4.0 29B A4B (free)', contextWindow: 262144, maxTokens: 235929, vision: false, tools: true },
+      { id: 'inclusionai/ling-3.2-flash:free', name: 'inclusionAI: Ling 3.2 Flash (free)', contextWindow: 1048576, maxTokens: 262144, vision: true, tools: true },
+      { id: 'baidu/ernie-5.5-flash-preview:free', name: 'Baidu: ERNIE-5.5-Flash-Preview (free)', contextWindow: 1024000, maxTokens: 921600, vision: false, tools: true },
+      { id: 'particle-ai/particle-1:free', name: 'Particle AI: Particle-1 (free)', contextWindow: 1048576, maxTokens: 131072, vision: true, tools: true },
       { id: 'nvidia/nemotron-3.5-super-vl:free', name: 'NVIDIA: Nemotron 3.5 Super VL (free)', contextWindow: 1000000, maxTokens: 131072, vision: true, tools: true },
       { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', name: 'NVIDIA: Nemotron 3 Ultra (free)', contextWindow: 1000000, maxTokens: 65536, vision: false, tools: true },
       { id: 'nvidia/nemotron-3.5-lightning:free', name: 'NVIDIA: Nemotron 3.5 Lightning (free)', contextWindow: 1000000, maxTokens: 65536, vision: false, tools: true },
-      { id: 'dots-studio/dots-3-note-preview:free', name: 'Dots Studio: Dots3-Note Preview (free)', contextWindow: 512000, maxTokens: 460800, vision: true, tools: true },
-      { id: 'cohere/north-mini-code:free', name: 'Cohere: North Mini Code (free)', contextWindow: 256000, maxTokens: 64000, vision: false, tools: true },
-      { id: 'poolside/laguna-s-2.1:free', name: 'Poolside: Laguna S 2.1 (free)', contextWindow: 262144, maxTokens: 32768, vision: false, tools: true },
       { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', name: 'NVIDIA: Nemotron 3 Nano Omni (free)', contextWindow: 256000, maxTokens: 65536, vision: true, tools: true },
-      { id: 'poolside/laguna-xs-2.1:free', name: 'Poolside: Laguna XS 2.1 (free)', contextWindow: 262144, maxTokens: 32768, vision: false, tools: true },
-      { id: 'liquid/lfm-2.5-2.6b:free', name: 'LiquidAI: LFM2.5-2.6B (free)', contextWindow: 65536, maxTokens: 8192, vision: false, tools: true },
+      { id: 'liquid/lfm-3-1.7b:free', name: 'LiquidAI: LFM3-1.7B (free)', contextWindow: 262144, maxTokens: 8192, vision: false, tools: true },
     ],
   },
   {
@@ -174,13 +193,24 @@ const KEYED_CHANNELS_BASE = [
       + '2026-10-26 边缘 403 Forbidden，带/不带 key 同码，key 有效性未判定：POST /chat/completions（openai/gpt-oss-120b）→ 403 / 307ms，'
       + 'server: cloudflare、cf-ray …-SIN，匿名 GET /models 与 POST /chat/completions 同样 403。'
       + ' ⚠️ **同日晚些时候复测已回到 401**（由复核任务独立复现）：那次 403 是**边缘拦截的瞬时态**，不是渠道坏了 ——'
-      + ' 这正好印证了健康账本里「403 判冷却、不判永久吊销」那条改动。',
+      + ' 这正好印证了健康账本里「403 判冷却、不判永久吊销」那条改动。'
+      // ── 2026-11-22 复核：key 有效、边缘正常，静态表 3 条里 1 条已死 ──
+      // GET /openai/v1/models → 200（11 条，含 whisper / orpheus / prompt-guard 这些非对话模型）；
+      // POST /chat/completions 实测：openai/gpt-oss-120b 580ms 200、openai/gpt-oss-20b 489ms 200、
+      //   llama-3.3-70b-versatile → 404 The model does not exist → 已移出静态表。
+      // 补两条（同一次 GET 里存在且实测 200）：openai/gpt-oss-safeguard-20b 482ms、qwen/qwen3.8-27b 343ms。
+      // 限速口径实测（x-ratelimit-* 响应头）：limit-requests 1000、limit-tokens 8000/分钟、remaining-tokens 7983
+      //   —— 8000 TPM 是硬约束，长上下文会话会立刻 429，当主力会反复断流。
+      + '；2026-11-22 复核：key 有效（GET /models 200，11 条）、边缘无拦截；POST 实测 gpt-oss-120b 580ms / gpt-oss-20b 489ms 均 200，'
+      + 'llama-3.3-70b-versatile → 404 does not exist（已移出静态表），补入 gpt-oss-safeguard-20b 482ms 与 qwen/qwen3.8-27b 343ms；'
+      + '响应头实测 x-ratelimit-limit-tokens=8000（TPM）、limit-requests=1000 —— 8000 TPM 是硬约束，长会话会立刻 429',
     unknown: true,
-    unknownFields: ['models', 'freeTier'],
+    unknownFields: ['freeTier'],
     models: [
-      { id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B', contextWindow: 131072, maxTokens: 32768, vision: false, tools: true, unknown: true },
-      { id: 'openai/gpt-oss-20b', name: 'GPT-OSS 20B', contextWindow: 131072, maxTokens: 32768, vision: false, tools: true, unknown: true },
-      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', contextWindow: 131072, maxTokens: 32768, vision: false, tools: true, unknown: true },
+      { id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B', contextWindow: 131072, maxTokens: 32768, vision: false, tools: true },
+      { id: 'openai/gpt-oss-20b', name: 'GPT-OSS 20B', contextWindow: 131072, maxTokens: 32768, vision: false, tools: true },
+      { id: 'openai/gpt-oss-safeguard-20b', name: 'GPT-OSS Safeguard 20B', contextWindow: 131072, maxTokens: 32768, vision: false, tools: true },
+      { id: 'qwen/qwen3.8-27b', name: 'Qwen3.8 27B (Groq)', contextWindow: 131072, maxTokens: 32768, vision: false, tools: true },
     ],
   },
   {

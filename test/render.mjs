@@ -536,7 +536,7 @@ const serviceRow = {
   kind: 'service',
   backend: 'gateway',
   origin: 'shipped',
-  endpoint: 'http://127.0.0.1:31415',
+  endpoint: 'http://127.0.0.1:3001',
   category: '本地',
   capability: { tools: true, vision: true },
   credits: { balance: false, claim: false },
@@ -550,7 +550,7 @@ check('服务车道卡：展示名 + endpoint + 状态 + reason + 模型数', ()
   assert.ok(walk(tree, 'ServiceLaneCard') > 4, '卡片渲染节点过少')
   const text = flat(tree)
   assert.ok(text.includes('FreeLLMAPI 本地网关'), '缺少展示名')
-  assert.ok(text.includes('http://127.0.0.1:31415'), '缺少 endpoint')
+  assert.ok(text.includes('http://127.0.0.1:3001'), '缺少 endpoint')
   assert.ok(text.includes('3 个模型'), '缺少模型数（占位符没被替换？）')
   const pills = collectElements(tree, (node) => node.props?.['data-state'] !== undefined)
   assert.equal(pills.length, 1, '缺少状态药丸')

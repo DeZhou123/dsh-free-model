@@ -3,6 +3,62 @@
 格式：`## [版本] · 日期` → `### 新增 / 改动 / 修复 / 证据`。
 写下来的规矩：**每条都要能被验证**（命令、文件、实测输出），做不到就标 `未实测`。
 
+## [0.6.4] · 2026-11-22
+
+> 主题：**把免费车道的「声明」重新对齐到上游现状** —— 静态表里一半模型已经下架，而页面照旧列着它们。
+
+### 修复
+
+- **src/lanes/service.js：freellmapi 服务车道的端口 31415 → 3001。**
+
+  31415 是 E:/06AI/17FreeLLMAPI 桌面版的旧口，2026-11-20 已停用移除；实际在跑的是
+  dsh-freellmapi 插件内置路由器，监听 3001。端口写错的表现是「网关明明在跑，插件页面上却
+  一直是未启动」，而且每次探针都要白等一个连接拒绝。实测：GET 127.0.0.1:3001/v1/models → 200、
+  GET 127.0.0.1:31415/v1/models → 连接拒绝。
+
+### 改动
+
+- **src/lanes/keyed/catalog.js：openrouter-free 静态表 11 条 → 9 条（删 6 死行、补 4 新行）。**
+
+  逐条 POST /chat/completions 复核（2026-11-22）：
+
+  | 结果 | 条目 | 实测 |
+  | --- | --- | --- |
+  | 已下架（移出） | xingchen-agi/xing4.0-29b-a4b、dots-studio/dots-3-note-preview、cohere/north-mini-code、poolside/laguna-s-2.1、poolside/laguna-xs-2.1、liquid/lfm-2.5-2.6b | 全部 404 no longer available，93–129ms |
+  | 存活（保留） | recursive/flint-v1.0、nemotron-3.5-super-vl、nemotron-3-ultra-550b-a55b、nemotron-3.5-lightning、nemotron-3-nano-omni-30b-a3b-reasoning | 全部 200，419–667ms，cost=0 |
+  | 新增 | inclusionai/ling-3.2-flash、baidu/ernie-5.5-flash-preview、particle-ai/particle-1、liquid/lfm-3-1.7b | 200，664–887ms，cost=0，正文为 4 |
+  | 候补（未收录） | google/gemma-4-26b-a4b-it、gemma-4-31b-it | 4 轮退避后仍 429 Provider returned error（限流，非失效） |
+
+  新行的 contextWindow / maxTokens / vision 全部取自实时 GET /api/v1/models 的
+  context_length / top_provider.max_completion_tokens / architecture.input_modalities，不是猜的。
+
+- **src/lanes/keyed/catalog.js：groq 静态表 3 条 → 4 条（删 1 死行、补 2 行、清 unknown）。**
+
+  llama-3.3-70b-versatile → 404 does not exist（已移出）；补 openai/gpt-oss-safeguard-20b（482ms）
+  与 qwen/qwen3.8-27b（343ms）；openai/gpt-oss-120b（580ms）与 openai/gpt-oss-20b（489ms）实测存活，
+  因此把三行的 unknown: true 去掉、unknownFields 从 models/freeTier 收窄为只留 freeTier。
+
+  顺带记下真实限速口径（响应头实测，此前只有文字描述）：x-ratelimit-limit-requests=1000、
+  x-ratelimit-limit-tokens=8000、remaining-tokens=7983 —— **8000 TPM 是硬约束**，长上下文会话会立刻 429。
+
+- **test/keyed/catalog-shape.mjs：OPENROUTER_LIVE_INPUT_MODALITIES 快照同步到新的 9 行。**
+
+  这张表是把「上游实时模态」钉进离线测试的闸门：静态表写 vision:true 而上游说只吃文本时，
+  适配器会发图片、上游按纯文本处理，用户看到的是「模型不认识图」。改表不同步它，测试会红。
+
+### 证据
+
+```
+# 声明 15 条，实测存活 8 条（改前）
+node _tmp/probe-declared.mjs        → alive 8 / 15
+# 改后逐条复核
+node --import ./test/hooks.mjs test/keyed/catalog-shape.mjs  → pass=18 fail=0
+node --import ./test/hooks.mjs test/render.mjs               → pass=65 fail=0
+node --import ./test/hooks.mjs test/lanes-registry.mjs       → pass=27 fail=0
+node --import ./test/hooks.mjs test/keyed/keys-flow.mjs      → pass=43 fail=0
+node --import ./test/hooks.mjs test/host-keyed.mjs           → pass=31 fail=0
+```
+
 ## [0.6.3] · 2026-11-22
 
 > 主题：**修掉「模型目录整组空白」的根因** —— Token 记账 Proxy 丢掉了方法的接收者。

@@ -131,16 +131,14 @@ check('模型行形状：id/name/contextWindow/maxTokens/vision/tools', () => {
  */
 const OPENROUTER_LIVE_INPUT_MODALITIES = {
   'recursive/flint-v1.0:free': ['text'],
-  'xingchen-agi/xing4.0-29b-a4b:free': ['text'],
+  'inclusionai/ling-3.2-flash:free': ['text', 'image'],
+  'baidu/ernie-5.5-flash-preview:free': ['text'],
+  'particle-ai/particle-1:free': ['text', 'image'],
   'nvidia/nemotron-3.5-super-vl:free': ['text', 'image', 'video'],
   'nvidia/nemotron-3-ultra-550b-a55b:free': ['text'],
   'nvidia/nemotron-3.5-lightning:free': ['text'],
-  'dots-studio/dots-3-note-preview:free': ['text', 'image'],
-  'cohere/north-mini-code:free': ['text'],
-  'poolside/laguna-s-2.1:free': ['text'],
   'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free': ['text', 'audio', 'image', 'video'],
-  'poolside/laguna-xs-2.1:free': ['text'],
-  'liquid/lfm-2.5-2.6b:free': ['text'],
+  'liquid/lfm-3-1.7b:free': ['text'],
 }
 
 /**

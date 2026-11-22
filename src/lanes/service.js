@@ -64,14 +64,20 @@ export const SERVICE_LANES = Object.freeze([
     displayName: 'FreeLLMAPI 本地网关',
     kind: 'service',
     backend: 'gateway',
-    endpoint: 'http://127.0.0.1:31415',
+    // ⚠️ 端口 3001 是 dsh-freellmapi 插件内置路由器的实际监听口（2026-11-22 实测：
+    //   GET 127.0.0.1:3001/v1/models → 200，/v1/providers → 200）。
+    //   原来这里写的是 31415 —— 那是 E:\06AI\17FreeLLMAPI 桌面版的旧口，2026-11-20 已
+    //   停用并移除自启（空壳：api_keys=0、requests=0，从未承载流量）。端口写错的表现是
+    //   「网关明明在跑，插件页面上却一直是未启动」，而且探针每次都要白等一个连接拒绝。
+    endpoint: 'http://127.0.0.1:3001',
     category: '本地',
     capability: Object.freeze({ tools: true, vision: true }),
     credits: Object.freeze({ balance: false, claim: false }),
     note: '免费额度聚合器（一把 key 聚合多家上游）。它的 LLM 路由由 dsh-llm-pi-ai 注册，'
-      + '本插件只观测、不重复注册；这里显示的是「网关进程 + 凭据是否就绪」。',
+      + '本插件只观测、不重复注册；这里显示的是「网关进程 + 凭据是否就绪」。端口 3001 与'
+      + ' llm-pi-ai 的 freellmapi.baseURL 必须一致，改一处就得改另一处。',
     probe: Object.freeze({
-      url: 'http://127.0.0.1:31415/v1/models',
+      url: 'http://127.0.0.1:3001/v1/models',
       method: 'GET',
       okStatus: [200, 401, 403],
       // 401 也算「进程活着」：能返回 401 说明网关在跑，只是缺/错 key。
