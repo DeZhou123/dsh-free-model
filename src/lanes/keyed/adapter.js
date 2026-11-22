@@ -69,6 +69,34 @@ const CATALOG_TTL_MS = 5 * 60 * 1000
  * 60 秒与成功 TTL 对齐：失败就等一轮，别拿同一堵墙反复撞。
  */
 const CATALOG_FAILURE_TTL_MS = 60_000
+/**
+ * 按车道声明的判据过滤**实时**目录（v0.6.5）。
+ *
+ * ## 为什么必须有这一层
+ *
+ * 上游的 `/models` 是「这个平台有哪些模型」，不是「这个车道能免费调用哪些」。
+ * OpenRouter 的实时目录 476 条里有 465 条是付费档，只有 11 条带 `:free`。
+ * 不过滤的后果不是「多几个候选」，而是 orchestrator 按能力打分**必然挑中付费档**
+ * （付费档就是更强的模型），于是每一次请求都撞 402，把健康账本刷成冷却，
+ * 真正免费的 11 条反而一次没被用上 —— 这正是 2026-11-22 health.json 里那条 402 的形状。
+ *
+ * ## 判据为什么用 id 后缀而不是 pricing
+ *
+ * 两者在免费档上等价（`:free` 行的 pricing.prompt/completion 实测都是 "0"），
+ * 但后缀判据不需要假设上游 pricing 结构稳定；而且它的语义就是「价格档位标记」。
+ *
+ * 过滤后若一条不剩，**不**回退成全量：让调用方走「目录为空 → 静态表兜底」那条已有的路，
+ * 静态表本身只收经过实测的免费档。宁可退回 9 条已验证的，也不放 465 条付费的进来。
+ *
+ * @param {Array<object>} rows 归一化后的目录行
+ * @param {object} lane 车道定义
+ * @returns {Array<object>}
+ */
+function applyLiveModelFilter(rows, lane) {
+  if (lane?.liveModelFilter !== 'free-suffix') return rows
+  return rows.filter((row) => String(row?.id ?? '').endsWith(':free'))
+}
+
 /** 单张图片的请求体预算（OpenAI 兼容端点普遍按 base64 体积计费与限制）。 */
 const REQUEST_IMAGE_MAX_BYTES = 2 * 1024 * 1024
 /** 图片像素预算（≈1,037 视觉 token），与 buddy 车道的默认值一致。 */
@@ -1542,7 +1570,7 @@ export class KeyedAdapter extends LlmAdapter {
       if (!response.ok) throw new Error('HTTP ' + response.status)
       const payload = await response.json()
       const data = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.models) ? payload.models : []
-      const rows = data
+      let rows = data
         .map((raw) => {
           const id = typeof raw?.id === 'string' ? raw.id : typeof raw?.name === 'string' ? raw.name : ''
           if (id === '') return undefined
@@ -1561,7 +1589,12 @@ export class KeyedAdapter extends LlmAdapter {
           }
         })
         .filter((row) => row !== undefined)
-      if (rows.length === 0) throw new Error('目录为空')
+      // v0.6.5：实时目录必须过车道声明的免费判据（否则付费档会混进候选池 → 402）。
+      const liveTotal = rows.length
+      rows = applyLiveModelFilter(rows, this.lane)
+      if (rows.length === 0) {
+        throw new Error(liveTotal === 0 ? '目录为空' : '目录 ' + liveTotal + ' 条里没有符合免费判据的模型')
+      }
       this.catalogModels = rows
       this.catalogSource = 'live'
       this.catalogAt = now

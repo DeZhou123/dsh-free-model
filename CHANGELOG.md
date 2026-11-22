@@ -3,6 +3,48 @@
 格式：`## [版本] · 日期` → `### 新增 / 改动 / 修复 / 证据`。
 写下来的规矩：**每条都要能被验证**（命令、文件、实测输出），做不到就标 `未实测`。
 
+## [0.6.5] · 2026-11-22
+
+> 主题：**免费车道不能再拿付费模型去撞上游** —— 实时目录是"平台有什么"，不是"你能白嫖什么"。
+
+### 修复
+
+- **src/lanes/keyed/adapter.js：实时 `/models` 目录按车道声明的免费判据过滤。**
+  `#fetchCatalog` 原来把上游目录**原样**收成候选池。OpenRouter 的 `/models` 返回的是
+  "这个平台上有哪些模型"，2026-11-22 实测 **476 条里 `:free` 只有 11 条**，剩下 465 条
+  全是付费档。于是 `dsh-model-orchestrator` 按能力打分**必然**挑中 kimi-k3.1-pro /
+  gpt-6.2-astra 这类付费模型，每一次请求都撞 402 —— 真正免费的 11 条反而一次没被用上。
+  新增模块级纯函数 `applyLiveModelFilter(rows, lane)`：`lane.liveModelFilter === 'free-suffix'`
+  时只留 id 以 `:free` 结尾的行；过滤后为空则**抛错**走已有的「静态表兜底」路径，
+  绝不回退成全量（宁可退回 9 条实测过的免费档，也不放 465 条付费的进来）。
+
+- **src/lanes/keyed/catalog.js：`openrouter-free` 新增 `liveModelFilter: 'free-suffix'`。**
+  判据用 id 后缀而不是 `pricing` 字段：两者在免费档上等价（实测 `:free` 行
+  `pricing.prompt/completion` 都是 `"0"`），但后缀判据不依赖上游 pricing 结构稳定，
+  且上游文档本来就把 `:free` 写成价格档位标记。
+
+### 测试
+
+- **新增 `test/keyed/live-free-filter.mjs`（7 项，全离线、喂假 `/models` 响应）。**
+  守四件事：① 车道的判据声明存在 ② 混合目录（1 免费 + 2 付费）只留免费行
+  ③ 上游全是付费档时回退静态表、不抛错到用户面前 ④ 静态表本身只收 `:free`
+  ⑤ 未声明判据的车道（groq）不受影响 ⑥ `catalogDiagnostics().liveCount` 是**过滤后**的计数。
+
+### 证据
+
+- `GET https://openrouter.ai/api/v1/models` → **200**，实时 **476** 条，其中 id 带 `:free` 的 **11** 条：
+  `inclusionai/ling-3.2-flash:free`、`baidu/ernie-5.5-flash-preview:free`、`liquid/lfm-3-1.7b:free`、
+  `particle-ai/particle-1:free`、`recursive/flint-v1.0:free`、`nvidia/nemotron-3.5-super-vl:free`、
+  `nvidia/nemotron-3.5-lightning:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、
+  `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`google/gemma-4-26b-a4b-it:free`、
+  `google/gemma-4-31b-it:free`；这 11 条的 `pricing.prompt` 与 `pricing.completion` 全为 `"0"`。
+- 过滤前的故障形状：`~/.dsh/free-model/health.json` 里 `openrouter-free` 的
+  `lastError` = `This request would exceed your available credits given your current in-flight requests … / 402`
+  （`failures: 3`, `kind: rate-limited`, `status: 402`）；`model_orchestrator action=lanes`
+  给出的 openrouter-free 车道 15 条里有 13 条不带 `:free`。
+- 静态表 9 条与实时 11 条的关系：9 条**全部**仍在实时目录里，多出的 2 条是
+  `gemma-4-26b/31b:free`（上游 429 限流，属候补而非失效，故未进静态表）。
+
 ## [0.6.4] · 2026-11-22
 
 > 主题：**把免费车道的「声明」重新对齐到上游现状** —— 静态表里一半模型已经下架，而页面照旧列着它们。

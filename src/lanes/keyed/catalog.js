@@ -118,7 +118,17 @@ const KEYED_CHANNELS_BASE = [
     region: 'global',
     // 目录免 key 可读（实测 2026-10-26 两轮 200）：探测通过≠有额度。
     openCatalog: true,
-    note: '免费型号随时上下架，静态表只是兜底（运行时以 /models 实时结果为准）；模型 id 里那个 ":free" 后缀是价格档位，忘掉它就会按付费模型计费。',
+    // ⚠️ 2026-11-22 (v0.6.5)：实时目录必须按免费判据过滤，否则会把付费模型当免费模型用。
+    // 根因实测：GET /api/v1/models → 200，实时 476 条，其中 `:free` 只有 11 条 —— 剩下 465 条
+    // 全是付费模型。而 keyed 适配器的 #fetchCatalog 是「原样收下上游目录」，于是
+    //   orchestrator 的候选池 = 476 条 → 按 utility 打分挑中最强的 kimi-k3.1-pro / gpt-6.2-astra
+    // → 这些是付费档 → 命中 402「This request would exceed your available credits …」。
+    // 证据：~/.dsh/free-model/health.json 里 openrouter-free 的 lastError 就是那条 402，
+    // 而 orchestrator lanes 里这一族给出的 openrouter-free 车道 15 条中有 13 条不带 `:free`。
+    // 判据用 id 后缀（不是 pricing 字段）：pricing 在免费档上就是 prompt/completion = "0"，
+    // 两者等价，但后缀判据不需要在多处解析 pricing 结构，且上游文档把它写成价格档位标记。
+    liveModelFilter: 'free-suffix',
+    note: '免费型号随时上下架，静态表只是兜底（运行时以 /models 实时结果为准，并按 ":free" 后缀过滤）；模型 id 里那个 ":free" 后缀是价格档位，忘掉它就会按付费模型计费。',
     // 「key 判定」这一句是给 evidence-gate.mjs 的 ① 用的：门禁要求三条实测渠道都写清
     // 状态码 + 耗时 + key 判定。这里的判定是「目录免 key 可读」——与紧邻的注释同一条事实，
     // 只是写进 evidence 才可被机器断言。**不是新测出来的结论**。
